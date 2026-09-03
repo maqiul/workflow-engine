@@ -5,6 +5,7 @@ include(
     "workflow-persistence-flyway",
     "workflow-persistence-jpa",
     "workflow-persistence-mybatis",
+    "workflow-rest",
     "workflow-sample",
     "workflow-tests"
 )
