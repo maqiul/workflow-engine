@@ -54,6 +54,8 @@ public class JpaInstanceRepository implements InstanceRepository {
             entity.setParentInstanceId(instance.getParentInstanceId());
             entity.setParentTokenId(instance.getParentTokenId());
             entity.setParentNodeId(instance.getParentNodeId());
+            // getRootInstanceId() 永不为 null（未设置时回退自身 id），库里因此总有可用值
+            entity.setRootInstanceId(instance.getRootInstanceId());
             em.merge(entity);
 
             // Token 差量同步。
@@ -174,6 +176,9 @@ public class JpaInstanceRepository implements InstanceRepository {
         setFinal(instance, "parentInstanceId", e.getParentInstanceId());
         setFinal(instance, "parentTokenId", e.getParentTokenId());
         setFinal(instance, "parentNodeId", e.getParentNodeId());
+        // 流程树根必须原样读回：丢了会让父子各持一把锁，ABBA 防护失效。
+        // 该行为由 InstanceRootPersistenceTest 守着，并经变异校验确认抽掉即红。
+        instance.assignRootInstanceId(e.getRootInstanceId());
         // status 是非 final 字段,用反射或直接赋值都行
         try {
             java.lang.reflect.Field statusField = ProcessInstance.class.getDeclaredField("status");

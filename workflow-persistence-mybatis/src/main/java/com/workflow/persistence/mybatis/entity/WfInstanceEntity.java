@@ -55,6 +55,13 @@ public class WfInstanceEntity {
     @TableField("parent_node_id")
     private String parentNodeId;
 
+    /**
+     * 流程树根实例 id —— 引擎加锁的单位。
+     * 必须落库：否则重建后丢失，父子将各持一把锁（ABBA 防护失效）。
+     */
+    @TableField("root_instance_id")
+    private String rootInstanceId;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getProcessKey() { return processKey; }
@@ -74,5 +81,9 @@ public class WfInstanceEntity {
     public String getParentTokenId() { return parentTokenId; }
     public void setParentTokenId(String parentTokenId) { this.parentTokenId = parentTokenId; }
     public String getParentNodeId() { return parentNodeId; }
+
+    public String getRootInstanceId() { return rootInstanceId; }
+
+    public void setRootInstanceId(String rootInstanceId) { this.rootInstanceId = rootInstanceId; }
     public void setParentNodeId(String parentNodeId) { this.parentNodeId = parentNodeId; }
 }

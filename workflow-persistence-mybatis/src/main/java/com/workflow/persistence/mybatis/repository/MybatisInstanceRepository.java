@@ -55,6 +55,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 entity.setParentInstanceId(instance.getParentInstanceId());
                 entity.setParentTokenId(instance.getParentTokenId());
                 entity.setParentNodeId(instance.getParentNodeId());
+                // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
+                entity.setRootInstanceId(instance.getRootInstanceId());
                 instanceMapper.insert(entity);
             } else {
                 entity.setProcessKey(instance.getProcessKey());
@@ -66,6 +68,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 entity.setParentInstanceId(instance.getParentInstanceId());
                 entity.setParentTokenId(instance.getParentTokenId());
                 entity.setParentNodeId(instance.getParentNodeId());
+                // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
+                entity.setRootInstanceId(instance.getRootInstanceId());
                 instanceMapper.updateById(entity);
             }
 
@@ -158,6 +162,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
         setFinal(instance, "parentInstanceId", e.getParentInstanceId());
         setFinal(instance, "parentTokenId", e.getParentTokenId());
         setFinal(instance, "parentNodeId", e.getParentNodeId());
+        // 读回流程树根，保持与写入库的值一致
+        instance.assignRootInstanceId(e.getRootInstanceId());
         try {
             java.lang.reflect.Field statusField = ProcessInstance.class.getDeclaredField("status");
             statusField.setAccessible(true);
