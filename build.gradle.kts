@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.workflow"
-version = "1.0.0"
+version = "3.7.0"
 
 // 统一依赖版本
 val fastjson2Version = "2.0.49"
@@ -17,7 +17,7 @@ val assertjVersion = "3.25.3"
 
 allprojects {
     group = "com.workflow"
-    version = "1.0.0"
+    version = "3.7.0"
 
     repositories {
         // 优先使用国内镜像，避免 Maven Central 拉取慢

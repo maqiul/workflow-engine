@@ -2,7 +2,71 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.6.0 已完成** — 抄送功能落地，181/181 测试全绿。
+项目状态：**v3.7.0 已完成** — P0 正确性加固（并发锁 + 事务边界 + 查询能力做实），177/177 可运行测试全绿。
+
+---
+
+## [3.7.0] - 2026-09-03
+
+P0 正确性加固：修的是"会不会出事"，不是"有没有功能"。详见 README §17。
+
+### 新增
+
+- **流程树锁**（`com.workflow.concurrency`）：`InstanceLockProvider` 接口 + `LocalInstanceLocks` 实现
+  - 锁粒度是**流程树根**（`ProcessInstance.rootInstanceId`），不是单个实例
+  - `tryLock(30s)` + 公平锁 + 引用计数回收；可重入以支持 `advanceToken` 递归与子流程回调
+  - `WorkflowConflictException`：乐观锁 CAS 失败的统一信号
+- **事务边界抽象**（`com.workflow.tx`）：`TransactionRunner` / `TransactionContext` / `UndoLogTransactionRunner`
+  - 三组钩子：undo（逆序回滚）、`beforeCommit`（数据库提交）、`afterCommit`（提交后副作用）
+  - 嵌套事务复用最外层，只有最外层提交或回滚
+- **实例列表查询跨仓储补齐**：`findByProcessKey` / `findAll` / `findByStatus` / `findByProcessKeyAndVersion`
+  在 JPA 与 MyBatis-Plus 上补齐实现（此前只有内存版有）
+- **任务全局查询补齐**：`TaskRepository.findAll` / `findByNodeId` / `findByStatus` 补齐两套真实仓储
+- `IWorkflowEngine.allTasks()` / `allInstances()` —— 供查询构建器使用
+- `ProcessInstance.snapshot()` / `replaceTask()`、`TaskInstance.copy()` / `reconstruct()` / `recordSystemApproval()`、`Token.copy()`
+- `tests.support.ExplodingAuditLogRepository`：故意让最后一步写入失败的事务探针
+
+### 修复
+
+- **并发丢失更新**：两名审批人同时通过同一 ALL 会签任务，修复前 30 轮中任务仅 24 轮完成、`completedApprovers` 仅 24 轮为 2、下游恰 1 待办仅 **15** 轮
+- **通过 vs 驳回竞态**：修复前两者可同时生效并泄漏「Token 不存在或已消耗」类内部异常
+- **事务半完成状态**：`completeTask` 中途失败（如审计库故障）后任务永久停在 `COMPLETED` 而 Token 未推进 —— InMemory / JPA / MyBatis 三条路径全部修复
+- **JPA stale 实体**：`JpaInstanceRepository.save` 原用 bulk DELETE + 重插同步 Token，绕过 persistence context 导致提交时 `OptimisticLockException`；改差量同步
+- **`transferTaskInternal` 漏 `instanceRepo.save`**：实例任务列表变更未落库（旧模型靠共享引用"免费"生效）
+- **`TaskQuery` 四处缺陷**：`queryAllTasks()` 永返空列表；`processDefinitionKey` / `processDefinitionVersion` / `processVariable` 从未参与匹配（过滤条件空转）；`orderByCreateTime()` 实为按 id 排序；`count()` 复用带 skip/limit 的 `list()` 导致 `limit(5).count()` 永不超过 5
+- **domain 缺字段**：`TaskInstance` 补 `createTime`（DB `wf_task.create_time` 一直存在，读回时被丢弃）
+- **CI 假红**：无 Docker 环境下 4 个跨库测试由 `FAILED` 改为 `skipped`（`requireDocker()`，零新依赖）
+
+### 破坏性变更
+
+- **InMemory 仓储改为拷贝语义**：`save` 存入副本、`findById` 返回副本。
+  直接修改从仓储读出的对象**不再影响库内数据**，必须显式 `save`。
+  同理 `TaskQuery` 返回的是查询时刻的快照，任务后续变更不会反映在已取出的对象上。
+  受影响写法：`TaskInstance t = engine.getTask(id); t.setStatus(...)` —— 静默无效。
+- **`TaskQuery` 的过滤条件现在真的生效了**：此前 `processDefinitionKey` 等条件空转、
+  且不带 `processInstanceId` 时永远返回空。修正后同一查询的**结果集可能变化**（通常是从空变成有、从多变少）。
+- **`TaskQuery.count()` 语义修正**：不再受 `limit()` / `offset()` 截断，返回真实命中数。
+- **`TaskQuery.singleResult()` 命中多条时抛异常**，不再静默返回第一条。
+- **引擎默认启用锁与事务**：一次业务动作内跨仓储写入改为整体生效或整体撤销；
+  监听器异常仍被吞（不阻断主流程），但仓储写入异常会回滚整个动作。
+  如需退回旧行为：`engine.withoutConcurrencyControl()`。
+- **超时调度改为事务提交后生效**：`scheduler.cancel/schedule` 不再在事务内直接执行，
+  回滚时不会留下"任务已 PENDING 但无超时调度"的不一致。
+
+### 测试
+
+- 新增 `ConcurrencySafetyTest`（3 用例 × 30 轮竞态）、`JpaTransactionAtomicityTest`、
+  `MybatisTransactionAtomicityTest`、`JpaConcurrencyTest`（15 轮）、
+  `InstanceQueryConsistencyTest`、`TaskQueryTest`（7 用例 × 3 套仓储）
+- 总数 **44 类 / 209 用例 / 32 skipped / 0 failed**，可运行 177 全绿；`gradle build` SUCCESSFUL
+- 修正 3 处依赖"对象引用泄漏"的旧断言（`SignStrategyTest` 直接断言手中旧快照）
+
+### 说明
+
+- `revision` 乐观锁**未在本版启用**：JPA/H2 并发探针实测 15/15 正确，说明分段锁已覆盖单 JVM；
+  乐观锁买的是跨实例/集群安全，与 Phase 7（集群部署）一并实施。
+- `ProcessInstance.reconstruct()` 旧签名保留兼容，但持久层应改用带 `rootInstanceId` / `revision` /
+  `createTime` 的新签名，否则子实例会丢失流程树根、任务创建时间会被刷成当前时刻。
 
 ---
 

@@ -23,6 +23,7 @@
 - [14. 构建与运行](#14-构建与运行)
 - [15. 关键工程决策与坑](#15-关键工程决策与坑)
 - [16. 后续可扩展方向](#16-后续可扩展方向)
+- [17. 并发与事务模型](#17-并发与事务模型)
 
 ---
 
@@ -922,6 +923,100 @@ H2 中 `key` 是保留字,`WfProcessDefEntity.key` 字段必须映射到 `key_` 
 6. **可视化设计器**——若需要,可用 bpmn.js + 后端导出 ProcessBuilder JSON
 7. **多租户隔离**——所有表加 `tenant_id`,仓储方法过滤
 8. **REST API 化**——把 IWorkflowEngine 包成 Spring Boot Controller
+
+---
+
+## 17. 并发与事务模型
+
+v3.7 加入。这一章讲的是**正确性保证**，不是功能清单 —— 决定引擎能不能给别人用的正是这部分。
+
+### 17.1 三层防线
+
+一次 `completeTask` 会跨 `instance` / `task` / `token` / `audit_log` 多张表写入。三层各解决一件事：
+
+| 层 | 解决什么 | 不做会怎样（实测数据，30 轮竞态） |
+|----|----------|-----------------------------------|
+| **流程树锁** | 同一 JVM 内同树操作串行化 | 会签任务仅 **24/30** 轮完成、下游恰 1 待办仅 **15/30** 轮 |
+| **事务边界** | 一次动作内多表写入整体生效或整体撤销 | 审计库故障后任务**永久停在 COMPLETED**、Token 未推进，实例不可自愈 |
+| **乐观锁重试** | 跨 JVM 的 CAS 失败重试 | 当前未启用，见 17.5 |
+
+### 17.2 为什么锁粒度是"流程树根"而不是"单个实例"
+
+引擎有两条方向相反的嵌套路径：
+
+```
+startSubProcess        父实例 ──推进──▶ 子实例
+onSubProcessCompleted  子实例 ──回写──▶ 父实例
+```
+
+若按 `instanceId` 各自加锁，线程 A 走第一条、线程 B 走第二条即构成 **ABBA 死锁**。
+
+因此 `ProcessInstance` 携带 `rootInstanceId`，子实例创建时继承父树的根，**父子共用一把锁**：同一棵流程树串行，不同树并行。
+
+```java
+ProcessInstance child = new ProcessInstance(subKey, ver, parent.getId(), ...);
+child.assignRootInstanceId(parent.getRootInstanceId());   // 关键
+```
+
+锁本身：`ReentrantLock`（可重入，支持 `advanceToken` 递归）、`tryLock(30s)`（防监听器卡死把整棵树永久钉住）、引用计数回收（防锁对象按流程实例数无界堆积）。
+
+### 17.3 顺序：必须先拿锁，再开事务
+
+```java
+locks.executeLocked(root, () -> tx.execute(body));   // ✅
+tx.execute(() -> locks.executeLocked(root, body));   // ❌ 留下"已提交但锁已释放"窗口
+```
+
+反过来会让并发者读到未完成的中间态。
+
+### 17.4 调度器动作：提交后才生效
+
+超时调度器活在 JVM 内存里，**不受数据库事务保护**。若在事务内直接 `scheduler.cancel(taskId)`，一旦回滚，库里任务恢复 `PENDING` 而调度已被取消 —— 产生"永不过期的待办"。
+
+```java
+// 登记到提交后播放，回滚即丢弃
+afterCommitSchedule(() -> scheduler.cancel(taskId));
+```
+
+同理适用于外部通知等副作用。
+
+### 17.5 InMemory 仓储是拷贝语义（重要）
+
+`save` 存入副本，`findById` 也返回副本 —— 仓库持有的对象绝不外泄。这是事务 before-image 可信的前提。
+
+```java
+TaskInstance t = engine.getTask(taskId);
+t.setStatus(TaskStatus.COMPLETED);      // ❌ 静默无效，改的是副本
+engine.completeTask(taskId, "u1", true); // ✅ 必须走引擎
+```
+
+这也是 `TaskQuery` 返回值的语义：**查询时刻的快照**，任务后续变更不会反映在已取出的对象上，要再查。
+
+> 旧实现共享对象引用，"改引用即改库"，掩盖了三处 bug（含 `transferTask` 漏 `instanceRepo.save`）并导致 JPA 与内存版行为不一致 —— 这正是当初那批反射双写代码出现的根因。
+
+### 17.6 跨 JVM / 集群部署
+
+分段锁只在单 JVM 内有效。多实例部署**必须**叠加数据库乐观锁：
+
+- 表加 `REV_` 列，`update ... where REV_ = ?`，影响 0 行即冲突
+- 抛 `WorkflowConflictException`，引擎按 `conflictRetries` 重读最新状态后重试
+- 领域对象 `revision` 字段与仓储 CAS 开关已就位，DDL 与映射待集群阶段启用
+
+实测：JPA/H2 双线程抢同一会签任务 **15/15 正确**，说明单 JVM 下分段锁已足够；乐观锁买的是跨实例安全，不是单进程正确性。
+
+### 17.7 退回旧行为
+
+```java
+WorkflowEngine legacy = engine.withoutConcurrencyControl();  // 无锁 + 无事务
+```
+
+仅用于压测对比。`concurrency` 包另提供 `LocalInstanceLocks(long timeoutMillis)` 自定义等锁上限。
+
+### 17.8 并发下的异常语义
+
+迟到者会被前置校验拒绝，抛 `IllegalStateException: 任务非 PENDING 状态: X` —— 这是**预期行为**（告知调用方"这条待办已被他人处理"），不是引擎缺陷。上层应捕获并提示刷新，而非当作崩溃。
+
+不可接受的是内部一致性异常（`ConcurrentModificationException`、`Token 不存在或已消耗`）—— `ConcurrencySafetyTest` 正是按这条界线设计断言的。
 
 ---
 
