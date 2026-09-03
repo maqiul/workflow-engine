@@ -1,0 +1,21 @@
+.gradle/
+build/
+**/build/
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+bin/
+local.properties
+
+# 会话临时笔记
+*_TODO.md
+
+# 构建/调试日志产物
+*.log
+tmp-json-test/
+
+# 本地解压的 Gradle 发行版与安装包（勿入库）
+gradle-8.5/
+gradle-8.5-bin.zip

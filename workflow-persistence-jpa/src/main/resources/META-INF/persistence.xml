@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="https://jakarta.ee/xml/ns/persistence https://jakarta.ee/xml/ns/persistence/persistence_3_1.xsd"
+             version="3.1">
+
+    <persistence-unit name="workflow-pu" transaction-type="RESOURCE_LOCAL">
+        <provider>org.hibernate.jpa.HibernatePersistenceProvider</provider>
+
+        <class>com.workflow.persistence.jpa.entity.WfProcessDefEntity</class>
+        <class>com.workflow.persistence.jpa.entity.WfInstanceEntity</class>
+        <class>com.workflow.persistence.jpa.entity.WfTokenEntity</class>
+        <class>com.workflow.persistence.jpa.entity.WfTaskEntity</class>
+
+        <properties>
+            <!-- H2 内存数据库(测试/演示) -->
+            <property name="jakarta.persistence.jdbc.driver" value="org.h2.Driver"/>
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:mem:workflow_db;DB_CLOSE_DELAY=-1;MODE=MySQL"/>
+            <property name="jakarta.persistence.jdbc.user" value="sa"/>
+            <property name="jakarta.persistence.jdbc.password" value=""/>
+
+            <!-- Hibernate 配置 -->
+            <property name="hibernate.dialect" value="org.hibernate.dialect.H2Dialect"/>
+            <!-- 建表统一交给 Flyway(V1__init.sql),Hibernate 只做实体映射 -->
+            <property name="hibernate.hbm2ddl.auto" value="none"/>
+            <property name="hibernate.show_sql" value="true"/>
+            <property name="hibernate.format_sql" value="true"/>
+
+            <!-- 连接池(通过 HikariCP DataSource 由 JpaPersistence 注入,
+                 这里只是兜底,生产应使用真实 DataSource) -->
+            <property name="hibernate.connection.provider_disables_autocommit" value="true"/>
+        </properties>
+    </persistence-unit>
+</persistence>
