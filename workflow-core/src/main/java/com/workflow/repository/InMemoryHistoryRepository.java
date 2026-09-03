@@ -1,6 +1,7 @@
 package com.workflow.repository;
 
 import com.workflow.runtime.HistoricActivityInstance;
+import com.workflow.runtime.HistoricTaskInstance;
 import com.workflow.tx.TransactionContext;
 
 import java.util.Comparator;
@@ -26,6 +27,8 @@ public class InMemoryHistoryRepository implements HistoryRepository {
     private static final String UNDO_PREFIX = "histAct:";
 
     private final ConcurrentHashMap<String, HistoricActivityInstance> byId = new ConcurrentHashMap<>();
+    /** 以 taskId 作键：一个任务只该有一条历史，重复写天然覆盖而非新增。 */
+    private final ConcurrentHashMap<String, HistoricTaskInstance> taskById = new ConcurrentHashMap<>();
 
     @Override
     public void save(HistoricActivityInstance activity) {
@@ -105,6 +108,78 @@ public class InMemoryHistoryRepository implements HistoryRepository {
             }
         }
         return removed;
+    }
+
+    // ========== 历史任务 ==========
+    //
+    // HistoricTaskInstance 完全不可变，因此 undo 的 before-image 直接持有引用即可 ——
+    // 不像活动记录那样有 volatile endTime 会被原地改写，需要显式 copy。
+
+    private static final String TASK_UNDO_PREFIX = "histTask:";
+
+    @Override
+    public void saveTask(HistoricTaskInstance task) {
+        Objects.requireNonNull(task);
+        String id = task.getTaskId();
+        TransactionContext.recordUndo(TASK_UNDO_PREFIX + id, taskRestoreAction(id, taskById.get(id)));
+        taskById.put(id, task);
+    }
+
+    private Runnable taskRestoreAction(String id, HistoricTaskInstance before) {
+        return () -> {
+            if (before == null) {
+                taskById.remove(id);
+            } else {
+                taskById.put(id, before);
+            }
+        };
+    }
+
+    @Override
+    public List<HistoricTaskInstance> findTasksByInstanceId(String instanceId) {
+        return taskById.values().stream()
+                .filter(t -> t.getInstanceId().equals(instanceId))
+                .sorted(byEndTime())
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<HistoricTaskInstance> findTasksInvolving(String userId) {
+        return taskById.values().stream()
+                .filter(t -> t.involves(userId))
+                .sorted(byEndTime())
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public OptionalDouble averageClosedTaskDuration(String processKey, String nodeId) {
+        // 历史里只有已落定的任务，无需再过滤未闭合
+        return taskById.values().stream()
+                .filter(t -> t.getProcessKey().equals(processKey) && t.getNodeId().equals(nodeId))
+                .mapToLong(HistoricTaskInstance::getDuration)
+                .average();
+    }
+
+    @Override
+    public int deleteTasksBefore(long cutoffMillis) {
+        List<String> victims = taskById.values().stream()
+                .filter(t -> t.getEndTime() < cutoffMillis)
+                .map(HistoricTaskInstance::getTaskId)
+                .collect(Collectors.toList());
+        int removed = 0;
+        for (String id : victims) {
+            TransactionContext.recordUndo(TASK_UNDO_PREFIX + id, taskRestoreAction(id, taskById.get(id)));
+            if (taskById.remove(id) != null) {
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    private static Comparator<HistoricTaskInstance> byEndTime() {
+        // 同毫秒完成的任务靠随机 UUID 定序会让审批链顺序失真，必须用 seq
+        return Comparator.comparingLong(HistoricTaskInstance::getEndTime)
+                .thenComparingLong(HistoricTaskInstance::getSeq);
     }
 
     private static Comparator<HistoricActivityInstance> byStartTime() {

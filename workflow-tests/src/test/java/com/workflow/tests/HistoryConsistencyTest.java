@@ -75,6 +75,7 @@ class HistoryConsistencyTest {
         switch (which) {
             case "JPA" -> {
                 jpa.inTransaction(em -> {
+                    em.createNativeQuery("DELETE FROM wf_hist_task").executeUpdate();
                     em.createNativeQuery("DELETE FROM wf_hist_activity").executeUpdate();
                     em.createNativeQuery("DELETE FROM wf_task").executeUpdate();
                     em.createNativeQuery("DELETE FROM wf_token").executeUpdate();
@@ -268,6 +269,119 @@ class HistoryConsistencyTest {
             assertThat(applyNow.getStatus()).isEqualTo(TaskStatus.PENDING);
             ProcessInstance inst = s.instRepo().findById(id);
             assertThat(inst.getStatus()).isEqualTo(InstanceStatus.RUNNING);
+        }
+    }
+
+    // ---------- 5. 历史任务：谁批的、怎么结束的 ----------
+
+    @Test
+    @DisplayName("三套仓储都留下每个已落定任务的处理人与结束原因")
+    void taskHistoryRecordsAssigneeAndReason() throws Exception {
+        for (String which : ALL) {
+            Suite s = suite(which);
+            registerTwoStep(s);
+            WorkflowEngine engine = engineOf(s);
+
+            String id = engine.start("hist-cons", Map.of());
+            Thread.sleep(20);
+            String applyTask = pendingTask(s, id, "apply");
+            engine.completeTask(applyTask, "u1", true);
+            engine.completeTask(pendingTask(s, id, "manager"), "u2", true);
+
+            List<com.workflow.runtime.HistoricTaskInstance> tasks =
+                    s.histRepo().findTasksByInstanceId(id);
+            assertThat(tasks).as("%s: 两张落定待办各一条历史", which).hasSize(2);
+            assertThat(tasks).extracting(com.workflow.runtime.HistoricTaskInstance::getNodeId)
+                    .as("%s: 按结束时间排序应先 apply 后 manager", which)
+                    .containsExactly("apply", "manager");
+
+            com.workflow.runtime.HistoricTaskInstance apply = tasks.get(0);
+            assertThat(apply.getEndReason()).isEqualTo(TaskStatus.COMPLETED);
+            assertThat(apply.getCompletedBy()).containsExactly("u1");
+            assertThat(apply.getTaskId()).isEqualTo(applyTask);
+            assertThat(apply.getDuration())
+                    .as("%s: 任务耗时须覆盖人类等待", which).isGreaterThanOrEqualTo(20L);
+            assertThat(apply.involves("u1")).isTrue();
+            assertThat(apply.involves("u9")).isFalse();
+
+            // 按人检索：候选人快照与完成人都要能命中
+            assertThat(s.histRepo().findTasksInvolving("u1"))
+                    .as("%s: u1 应命中 apply（不得把 u1 误配成 u11 之类）", which)
+                    .extracting(com.workflow.runtime.HistoricTaskInstance::getTaskId)
+                    .containsExactly(applyTask);
+            assertThat(s.histRepo().findTasksInvolving("u2"))
+                    .as("%s: u2 只命中 manager", which).hasSize(1);
+            assertThat(s.histRepo().findTasksInvolving("nobody")).isEmpty();
+            assertThat(s.histRepo().averageClosedTaskDuration("hist-cons", "apply"))
+                    .as("%s: 有样本就应有平均办理时长", which).isPresent();
+            engine.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("会签部分完成不得产生多条任务历史")
+    void taskHistoryIsIdempotentPerTask() {
+        for (String which : ALL) {
+            Suite s = suite(which);
+            s.procRepo().save(ProcessBuilder.create("hist-sign")
+                    .start("start")
+                    .userTask("review", "会签", Candidate.ofAll("u1", "u2"))
+                    .end("end")
+                    .connect("start", "review")
+                    .connect("review", "end")
+                    .build());
+            WorkflowEngine engine = engineOf(s);
+            String id = engine.start("hist-sign", Map.of());
+            String taskId = pendingTask(s, id, "review");
+
+            engine.completeTask(taskId, "u1", true);   // 部分完成，任务仍 PENDING
+            assertThat(s.histRepo().findTasksByInstanceId(id))
+                    .as("%s: 未落定的任务不该进历史", which).isEmpty();
+
+            engine.completeTask(taskId, "u2", true);   // 全员完成
+            List<com.workflow.runtime.HistoricTaskInstance> tasks =
+                    s.histRepo().findTasksByInstanceId(id);
+            assertThat(tasks).as("%s: 一张待办只应有一条历史", which).hasSize(1);
+            assertThat(tasks.get(0).getCompletedBy())
+                    .as("%s: 两位审批人都要留痕", which)
+                    .containsExactlyInAnyOrder("u1", "u2");
+            assertThat(tasks.get(0).getAssignee())
+                    .as("%s: 多人任务没有单一处理人", which).isNull();
+            engine.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("转办与驳回的结束原因都要如实记录，候选人快照不得被转办改写")
+    void taskHistoryRecordsTransferAndReject() {
+        for (String which : ALL) {
+            Suite s = suite(which);
+            registerTwoStep(s);
+            WorkflowEngine engine = engineOf(s);
+
+            String id = engine.start("hist-cons", Map.of());
+            String applyTask = pendingTask(s, id, "apply");
+            engine.transferTask(applyTask, "u1", "carol");
+
+            List<com.workflow.runtime.HistoricTaskInstance> afterTransfer =
+                    s.histRepo().findTasksByInstanceId(id);
+            assertThat(afterTransfer).as("%s: 被转办的原任务应落历史", which).hasSize(1);
+            assertThat(afterTransfer.get(0).getEndReason()).isEqualTo(TaskStatus.TRANSFERRED);
+            assertThat(afterTransfer.get(0).getCandidateUsers())
+                    .as("%s: 候选人快照须保留原始指派，否则责任链断裂", which)
+                    .containsExactly("u1");
+
+            // carol 批掉转办来的新任务
+            engine.completeTask(pendingTask(s, id, "apply"), "carol", true);
+            assertThat(s.histRepo().findTasksInvolving("carol"))
+                    .as("%s: carol 应能查到接手的那张", which).hasSize(1);
+
+            // 驳回 manager
+            engine.rejectTask(pendingTask(s, id, "manager"), "u2", "材料不全");
+            assertThat(s.histRepo().findTasksByInstanceId(id).stream()
+                    .filter(t -> t.getEndReason() == TaskStatus.REJECTED))
+                    .as("%s: 驳回须留下 REJECTED 记录", which).hasSize(1);
+            engine.shutdown();
         }
     }
 }

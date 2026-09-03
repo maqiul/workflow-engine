@@ -1,6 +1,7 @@
 package com.workflow.repository;
 
 import com.workflow.runtime.HistoricActivityInstance;
+import com.workflow.runtime.HistoricTaskInstance;
 
 import java.util.List;
 import java.util.OptionalDouble;
@@ -56,4 +57,30 @@ public interface HistoryRepository {
      * <p>未闭合活动一律保留 —— 删掉进行中的活动会让实例永久留下一个闭合不了的洞。
      */
     int deleteClosedBefore(long cutoffMillis);
+
+    // ========== 历史任务 ==========
+    //
+    // 与活动历史的关注点不同：活动回答"流程走到哪、哪一步慢"，
+    // 任务回答"这张单子由谁批的、以什么方式结束"。绩效与责任追溯只能靠后者。
+
+    /** 保存（按 taskId 幂等覆盖）一条历史任务。 */
+    void saveTask(HistoricTaskInstance task);
+
+    /** 某实例下的全部历史任务，按结束时间升序。 */
+    List<HistoricTaskInstance> findTasksByInstanceId(String instanceId);
+
+    /**
+     * 某人在这些任务上出现过（当过候选人 <b>或</b> 实际批过）。
+     *
+     * <p>只看实际处理人会漏掉"被指派但转办走了"的责任链；只看候选人又会把
+     * 或签里没出手的人算进来 —— 所以这里两者取并集，调用方按需要再过滤
+     * {@link HistoricTaskInstance#getCompletedBy()}。
+     */
+    List<HistoricTaskInstance> findTasksInvolving(String userId);
+
+    /** 某流程某节点的平均办理时长（毫秒）。 */
+    OptionalDouble averageClosedTaskDuration(String processKey, String nodeId);
+
+    /** 删除结束时间早于 {@code cutoffMillis} 的历史任务，返回删除条数。 */
+    int deleteTasksBefore(long cutoffMillis);
 }

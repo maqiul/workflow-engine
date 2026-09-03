@@ -2,6 +2,7 @@ package com.workflow.persistence.jpa.repository;
 
 import com.workflow.persistence.jpa.JpaPersistence;
 import com.workflow.persistence.jpa.entity.WfHistActivityEntity;
+import com.workflow.persistence.jpa.entity.WfHistTaskEntity;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.runtime.HistoricActivityInstance;
 import jakarta.persistence.EntityManager;
@@ -131,6 +132,98 @@ public class JpaHistoryRepository implements HistoryRepository {
                 e.getId(), e.getInstanceId(), e.getProcessKey(), e.getProcessVersion(),
                 e.getActivityId(), e.getActivityType(), e.getTokenId(), e.getTaskId(),
                 e.getStartTime(), e.getEndTime(), e.getPerformer(), e.getSeq());
+    }
+
+    // ========== 历史任务 ==========
+
+    @Override
+    public void saveTask(com.workflow.runtime.HistoricTaskInstance t) {
+        Objects.requireNonNull(t);
+        jpa.inTransaction(em -> {
+            WfHistTaskEntity e = em.find(WfHistTaskEntity.class, t.getTaskId());
+            if (e == null) {
+                e = new WfHistTaskEntity();
+                e.setTaskId(t.getTaskId());
+            }
+            e.setInstanceId(t.getInstanceId());
+            e.setProcessKey(t.getProcessKey());
+            e.setProcessVersion(t.getProcessVersion());
+            e.setNodeId(t.getNodeId());
+            e.setCandidateUsers(toCsv(t.getCandidateUsers()));
+            e.setCompletedBy(toCsv(t.getCompletedBy()));
+            e.setStartTime(t.getStartTime());
+            e.setEndTime(t.getEndTime());
+            e.setSeq(t.getSeq());
+            e.setEndReason(t.getEndReason());
+            em.merge(e);
+            return null;
+        });
+    }
+
+    @Override
+    public java.util.List<com.workflow.runtime.HistoricTaskInstance> findTasksByInstanceId(String instanceId) {
+        return jpa.inTransaction(em -> em.createQuery(
+                        "SELECT e FROM WfHistTaskEntity e WHERE e.instanceId = :iid"
+                                + " ORDER BY e.endTime, e.seq", WfHistTaskEntity.class)
+                .setParameter("iid", instanceId)
+                .getResultList().stream().map(JpaHistoryRepository::toTaskDomain).toList());
+    }
+
+    @Override
+    public java.util.List<com.workflow.runtime.HistoricTaskInstance> findTasksInvolving(String userId) {
+        // 逗号包裹存储正是为了这一句：'%,u1,%' 不会把 u1 误配到 u11 上
+        String pattern = "%," + userId + ",%";
+        return jpa.inTransaction(em -> em.createQuery(
+                        "SELECT e FROM WfHistTaskEntity e WHERE e.candidateUsers LIKE :pat"
+                                + " OR e.completedBy LIKE :pat ORDER BY e.endTime, e.seq",
+                        WfHistTaskEntity.class)
+                .setParameter("pat", pattern)
+                .getResultList().stream().map(JpaHistoryRepository::toTaskDomain).toList());
+    }
+
+    @Override
+    public OptionalDouble averageClosedTaskDuration(String processKey, String nodeId) {
+        Number avg = jpa.inTransaction(em -> (Number) em.createQuery(
+                        "SELECT AVG(e.endTime - e.startTime) FROM WfHistTaskEntity e"
+                                + " WHERE e.processKey = :pk AND e.nodeId = :aid")
+                .setParameter("pk", processKey)
+                .setParameter("aid", nodeId)
+                .getSingleResult());
+        return avg == null ? OptionalDouble.empty() : OptionalDouble.of(avg.doubleValue());
+    }
+
+    @Override
+    public int deleteTasksBefore(long cutoffMillis) {
+        return jpa.inTransaction(em -> em.createQuery(
+                        "DELETE FROM WfHistTaskEntity e WHERE e.endTime < :cutoff")
+                .setParameter("cutoff", cutoffMillis)
+                .executeUpdate());
+    }
+
+    /** 人员列表以 {@code ,u1,u2,} 形式落库，便于 LIKE 精确匹配。 */
+    private static String toCsv(java.util.Collection<String> users) {
+        if (users == null || users.isEmpty()) {
+            return ",";
+        }
+        return "," + String.join(",", users) + ",";
+    }
+
+    private static java.util.List<String> fromCsv(String csv) {
+        if (csv == null || csv.length() <= 1) {
+            return java.util.List.of();
+        }
+        String body = csv;
+        if (body.startsWith(",")) body = body.substring(1);
+        if (body.endsWith(",")) body = body.substring(0, body.length() - 1);
+        if (body.isEmpty()) return java.util.List.of();
+        return java.util.Arrays.stream(body.split(",")).filter(s -> !s.isEmpty()).toList();
+    }
+
+    private static com.workflow.runtime.HistoricTaskInstance toTaskDomain(WfHistTaskEntity e) {
+        return com.workflow.runtime.HistoricTaskInstance.reconstruct(
+                e.getTaskId(), e.getInstanceId(), e.getProcessKey(), e.getProcessVersion(),
+                e.getNodeId(), fromCsv(e.getCandidateUsers()), fromCsv(e.getCompletedBy()),
+                e.getStartTime(), e.getEndTime(), e.getEndReason(), e.getSeq());
     }
 
     /** 便于按实例清理（测试隔离用）。 */

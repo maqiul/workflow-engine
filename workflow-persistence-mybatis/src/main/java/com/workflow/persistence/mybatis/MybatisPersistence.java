@@ -136,6 +136,7 @@ public final class MybatisPersistence {
         configuration.addMapper(WfAuditLogMapper.class);
         // 历史活动：漏掉这行不会编译报错，只在 getMapper 时抛运行时异常
         configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistActivityMapper.class);
+        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistTaskMapper.class);
         // 驼峰映射默认开启
         configuration.setMapUnderscoreToCamelCase(true);
         sqlSessionFactory = new MybatisSqlSessionFactoryBuilder().build(configuration);
@@ -209,6 +210,7 @@ public final class MybatisPersistence {
     /** 清理所有表数据(测试用) */
     public void clearTables() {
         try (Connection conn = dataSource.getConnection(); Statement st = conn.createStatement()) {
+            st.execute("DELETE FROM wf_hist_task");
             st.execute("DELETE FROM wf_hist_activity");
             st.execute("DELETE FROM wf_audit_log");
             st.execute("DELETE FROM wf_task");

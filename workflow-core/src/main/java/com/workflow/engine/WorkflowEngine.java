@@ -319,6 +319,30 @@ public class WorkflowEngine implements IWorkflowEngine {
      */
     private void syncTaskInInstance(ProcessInstance instance, TaskInstance task) {
         instance.replaceTask(task.copy());
+        recordTaskHistoryIfFinal(instance, task);
+    }
+
+    /**
+     * 任务进入终态时落一条历史。
+     *
+     * <p>埋点选在这里，而不是散到 complete / reject / transfer / terminate / withdraw /
+     * 四种超时策略等八来个位置：{@code syncTaskInInstance} 是本引擎<b>所有</b>任务状态变更
+     * 的必经漏斗（上一轮为消灭反射双写而收敛出的单点），一处埋点即覆盖全部路径 ——
+     * 漏埋概率从"每个分支都得记得"降到零。
+     *
+     * <p>会签部分完成时状态仍是 PENDING，不写；只有真正落定才写。
+     * 幂等由 taskId 作主键天然保证：同一任务重复同步只会覆盖同一行。
+     */
+    private void recordTaskHistoryIfFinal(ProcessInstance instance, TaskInstance task) {
+        if (historyRepo == null) {
+            return;
+        }
+        TaskStatus st = task.getStatus();
+        if (st == null || st == TaskStatus.PENDING) {
+            return;
+        }
+        historyRepo.saveTask(com.workflow.runtime.HistoricTaskInstance.of(
+                task, instance, System.currentTimeMillis()));
     }
 
     /**
