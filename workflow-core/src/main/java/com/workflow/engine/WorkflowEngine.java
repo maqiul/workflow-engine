@@ -68,6 +68,8 @@ public class WorkflowEngine implements IWorkflowEngine {
     private final DelegationRepository delegationRepo;  // 可为 null（不启用委托）
     private final NotificationService notificationService;  // 可为 null（不启用通知）
     private final CarbonCopyRepository carbonCopyRepo;  // 可为 null（不启用抄送）
+    /** 历史活动仓储，可为 null（不记录历史）。埋点须在同一事务内写入，见 closeHistoryIfSettled。 */
+    private final com.workflow.repository.HistoryRepository historyRepo;
 
     /** 监听器列表 */
     private final List<ExecutionListener> executionListeners = new ArrayList<>();
@@ -182,6 +184,29 @@ public class WorkflowEngine implements IWorkflowEngine {
                           TransactionRunner tx,
                           int conflictRetries,
                           long retryBackoffMillis) {
+        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo,
+                notificationService, carbonCopyRepo, null, locks, tx, conflictRetries,
+                retryBackoffMillis);
+    }
+
+    /**
+     * 完整构造器 —— 额外接受历史活动仓储。
+     *
+     * @param historyRepo 历史活动仓储；null 表示不记录历史（不产生任何额外写入）
+     */
+    public WorkflowEngine(ProcessRepository processRepo,
+                          InstanceRepository instanceRepo,
+                          TaskRepository taskRepo,
+                          TimeoutScheduler scheduler,
+                          AuditLogRepository auditLogRepo,
+                          DelegationRepository delegationRepo,
+                          NotificationService notificationService,
+                          CarbonCopyRepository carbonCopyRepo,
+                          com.workflow.repository.HistoryRepository historyRepo,
+                          InstanceLockProvider locks,
+                          TransactionRunner tx,
+                          int conflictRetries,
+                          long retryBackoffMillis) {
         this.processRepo = Objects.requireNonNull(processRepo);
         this.instanceRepo = Objects.requireNonNull(instanceRepo);
         this.taskRepo = Objects.requireNonNull(taskRepo);
@@ -190,6 +215,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.delegationRepo = delegationRepo;
         this.notificationService = notificationService;
         this.carbonCopyRepo = carbonCopyRepo;
+        this.historyRepo = historyRepo;
         this.locks = locks != null ? locks : new LocalInstanceLocks();
         this.tx = tx != null ? tx : new UndoLogTransactionRunner();
         this.conflictRetries = Math.max(0, conflictRetries);
@@ -202,7 +228,7 @@ public class WorkflowEngine implements IWorkflowEngine {
      */
     public WorkflowEngine withoutConcurrencyControl() {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
-                auditLogRepo, delegationRepo, notificationService, carbonCopyRepo,
+                auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, historyRepo,
                 passthroughLocks(), TransactionRunner.noop(), 0, 0L);
     }
 
@@ -930,9 +956,101 @@ public class WorkflowEngine implements IWorkflowEngine {
     // ========== Token 推进核心 ==========
 
     /**
-     * 推进指定 Token 到下一个状态
+     * 推进指定 Token 到下一个状态 —— 同时留下历史活动记录。
+     *
+     * <p>埋点放在这一层而非散进各 case：本方法的语义恰好是
+     * 「实例在某个节点上执行了一次」，包住首尾即覆盖全部分支
+     * （递归下钻、并行 fork 的每一支、网关判定、子流程），漏埋风险远低于逐分支插桩。
+     *
+     * <p><b>UserTask 与子流程的活动中止于"仍在等待"</b>：它们的区间必须<b>跨越两次推进</b>
+     * —— 第一次进入创建待办（开启且不闭合），审批完成后再进入时才闭合。
+     * 否则 duration 表示的是"处理这条记录花了 0 毫秒"，
+     * 而效能报表要的是<b>人类等待时长</b>。
      */
     private void advanceToken(ProcessInstance instance, ProcessDefinition def, String tokenId) {
+        Token token = instance.getActiveTokens().get(tokenId);
+        if (token == null) {
+            log.debug("[引擎] Token 已不存在,跳过推进 id={}", tokenId);
+            checkAndFinalize(instance);
+            return;
+        }
+        NodeDefinition current = def.getNode(token.getCurrentNodeId());
+        openHistory(instance, current, tokenId);
+        try {
+            advanceTokenInternal(instance, def, tokenId);
+        } finally {
+            closeHistoryIfSettled(instance, current, tokenId);
+        }
+    }
+
+    /** 开启（或沿用）一条历史活动。历史写入与业务写入同事务，故不吞异常。 */
+    private void openHistory(ProcessInstance instance, NodeDefinition node, String tokenId) {
+        if (historyRepo == null) {
+            return;
+        }
+        // 同一 token 在同一节点上重复进入（UserTask 等待后二次推进）时沿用那条未闭合记录，
+        // 否则一次人类等待会被拆成多段、平均耗时被稀释
+        if (historyRepo.findOpen(instance.getId(), tokenId, node.getId()) != null) {
+            return;
+        }
+        historyRepo.save(new com.workflow.runtime.HistoricActivityInstance(
+                instance.getId(), instance.getProcessKey(), instance.getProcessVersion(),
+                node.getId(), node.getType(), tokenId, null, System.currentTimeMillis()));
+    }
+
+    /** 节点已"落地"（不再等待）时才闭合活动。 */
+    private void closeHistoryIfSettled(ProcessInstance instance, NodeDefinition node, String tokenId) {
+        if (historyRepo == null || isStillWaiting(instance, node, tokenId)) {
+            return;
+        }
+        com.workflow.runtime.HistoricActivityInstance open =
+                historyRepo.findOpen(instance.getId(), tokenId, node.getId());
+        if (open == null) {
+            return;
+        }
+        open.close(System.currentTimeMillis(), null);
+        historyRepo.save(open);
+    }
+
+    /**
+     * 该节点此刻是否仍在等待外部动作。
+     *
+     * <p>并行网关的 join 也算等待型：分支未到齐时 token 已被消耗但活动不该闭合吗？
+     * 不 —— join 的语义是"到齐即走"，其本身耗时是判定开销，故按瞬时活动处理。
+     */
+    private boolean isStillWaiting(ProcessInstance instance, NodeDefinition node, String tokenId) {
+        if (node.getType() == com.workflow.enums.NodeType.USER_TASK
+                || node.getType() == com.workflow.enums.NodeType.DYNAMIC_PARALLEL) {
+            TaskInstance t = currentTaskOf(instance, tokenId, node.getId());
+            return t != null && t.getStatus() == TaskStatus.PENDING;
+        }
+        if (node.getType() == com.workflow.enums.NodeType.SUB_PROCESS) {
+            Token now = instance.getActiveTokens().get(tokenId);
+            return now != null && node.getId().equals(now.getCurrentNodeId());
+        }
+        return false;
+    }
+
+    /**
+     * 把任务 id 补挂到当前未闭合的活动上。
+     *
+     * <p>活动是在<b>进入节点</b>时开启的，而任务要到节点处理过程中才创建，
+     * 所以只能事后补挂 —— 这样历史行与待办行才能直接对上，无需靠 node+token 反查。
+     */
+    private void attachHistoryTask(ProcessInstance instance, String nodeId,
+                                   String tokenId, String taskId) {
+        if (historyRepo == null) {
+            return;
+        }
+        com.workflow.runtime.HistoricActivityInstance open =
+                historyRepo.findOpen(instance.getId(), tokenId, nodeId);
+        if (open != null) {
+            open.attachTask(taskId);
+            historyRepo.save(open);
+        }
+    }
+
+    private void advanceTokenInternal(ProcessInstance instance, ProcessDefinition def, String tokenId) {
         Token token = instance.getActiveTokens().get(tokenId);
         if (token == null) {
             log.debug("[引擎] Token 已不存在,跳过推进 id={}", tokenId);
@@ -959,6 +1077,8 @@ public class WorkflowEngine implements IWorkflowEngine {
                     taskRepo.save(task);
                     // 对齐实例视图，避免 instance.tasks 停留在「没有这条任务」的旧相
                     syncTaskInInstance(instance, task);
+                    // 把待办 id 补挂到本次进入时开启的活动上，让历史行与待办行可直接对应
+                    attachHistoryTask(instance, current.getId(), tokenId, task.getId());
                     log.info("[引擎] 创建任务 node={} candidate={} taskId={}", current.getId(), current.getCandidate(), task.getId());
                     fireTaskCreated(task);
                     // JPA 关键:同时 save instance 让 wf_token 同步(applyToken 已推进到 review 节点)
