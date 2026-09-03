@@ -38,15 +38,17 @@ class SignStrategyTest extends EngineTestBase {
         String instanceId = engine.start("any-sign", Map.of());
         ProcessInstance inst = engine.getInstance(instanceId);
         TaskInstance task = inst.getTasks().get(0);
+        String taskId = task.getId();
         assertThat(task.getCandidate().getStrategy())
                 .isEqualTo(com.workflow.enums.CandidateStrategy.ANY);
 
         // u1 通过 - 任一通过即过
-        engine.completeTask(task.getId(), "u1", true);
+        engine.completeTask(taskId, "u1", true);
 
         inst = engine.getInstance(instanceId);
         assertThat(inst.getStatus()).isEqualTo(InstanceStatus.COMPLETED);
-        assertThat(task.getStatus()).isEqualTo(TaskStatus.COMPLETED);
+        // 必须读回仓储再断言：引擎按值而非引用交换对象，手中旧快照不会被更新
+        assertThat(engine.getTask(taskId).getStatus()).isEqualTo(TaskStatus.COMPLETED);
     }
 
     @Test
@@ -63,19 +65,21 @@ class SignStrategyTest extends EngineTestBase {
         String instanceId = engine.start("all-sign", Map.of());
         ProcessInstance inst = engine.getInstance(instanceId);
         TaskInstance task = inst.getTasks().get(0);
+        String taskId = task.getId();
         assertThat(task.getCandidate().getStrategy())
                 .isEqualTo(com.workflow.enums.CandidateStrategy.ALL);
 
         // u1 完成 - 还不够,实例继续 RUNNING
-        engine.completeTask(task.getId(), "u1", true);
+        engine.completeTask(taskId, "u1", true);
         inst = engine.getInstance(instanceId);
         assertThat(inst.getStatus()).isEqualTo(InstanceStatus.RUNNING);
-        assertThat(task.getStatus()).isEqualTo(TaskStatus.PENDING);
+        // 每次断言都读回仓储，不依赖手中对象的引用身份
+        assertThat(engine.getTask(taskId).getStatus()).isEqualTo(TaskStatus.PENDING);
 
         // u2 完成 - 全员通过,实例完成
-        engine.completeTask(task.getId(), "u2", true);
+        engine.completeTask(taskId, "u2", true);
         inst = engine.getInstance(instanceId);
         assertThat(inst.getStatus()).isEqualTo(InstanceStatus.COMPLETED);
-        assertThat(task.getStatus()).isEqualTo(TaskStatus.COMPLETED);
+        assertThat(engine.getTask(taskId).getStatus()).isEqualTo(TaskStatus.COMPLETED);
     }
 }

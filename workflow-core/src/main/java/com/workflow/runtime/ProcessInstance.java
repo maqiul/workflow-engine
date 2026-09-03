@@ -35,6 +35,15 @@ public final class ProcessInstance {
     private final String parentInstanceId;
     private final String parentTokenId;
     private final String parentNodeId;
+    /**
+     * 流程树根实例 id —— 引擎以此作为<b>加锁单位</b>。
+     *
+     * <p>子流程与父流程共享同一把锁，规避「父→子」与「子→父」两条嵌套路径构成 ABBA 死锁。
+     * null 表示尚未设置，读取时回退为自身 id（普通实例即根）。
+     */
+    private String rootInstanceId;
+    /** 乐观锁版本号；仓储 CAS 写入用。0 表示未启用（如 InMemory 无版本场景）。 */
+    private long revision;
 
     public ProcessInstance(String processKey) {
         this(processKey, 0);
@@ -76,6 +85,28 @@ public final class ProcessInstance {
                                               String parentInstanceId,
                                               String parentTokenId,
                                               String parentNodeId) {
+        return reconstruct(id, processKey, processVersion, createTime, endTime, status,
+                activeTokens, tasks, variables, parentInstanceId, parentTokenId, parentNodeId,
+                null, 0L);
+    }
+
+    /**
+     * 持久化层 / 快照专用 - 完整版（含流程树根与乐观锁版本）。
+     */
+    public static ProcessInstance reconstruct(String id,
+                                              String processKey,
+                                              int processVersion,
+                                              long createTime,
+                                              Long endTime,
+                                              InstanceStatus status,
+                                              Map<String, Token> activeTokens,
+                                              List<TaskInstance> tasks,
+                                              Map<String, Object> variables,
+                                              String parentInstanceId,
+                                              String parentTokenId,
+                                              String parentNodeId,
+                                              String rootInstanceId,
+                                              long revision) {
         ProcessInstance instance = new ProcessInstance(processKey, processVersion,
                 parentInstanceId, parentTokenId, parentNodeId);
         // 通过反射写 final 字段 - 这里 ProcessInstance 自己掌握,避免外部依赖反射 hack
@@ -87,6 +118,8 @@ public final class ProcessInstance {
         setFinal(instance, "tasks", new ArrayList<>(tasks));
         setFinal(instance, "variables", new LinkedHashMap<>(variables));
         instance.status = status;
+        instance.rootInstanceId = rootInstanceId;
+        instance.revision = revision;
         if (endTime != null) {
             instance.endTime = endTime;
         }
@@ -129,6 +162,43 @@ public final class ProcessInstance {
     public String getParentNodeId() { return parentNodeId; }
     /** 是否为子流程实例 */
     public boolean isSubProcess() { return parentInstanceId != null; }
+
+    /**
+     * 流程树根 id —— 引擎的加锁单位。
+     * 未显式赋值时，普通实例即以自身为根。
+     */
+    public String getRootInstanceId() {
+        return rootInstanceId != null ? rootInstanceId : id;
+    }
+
+    /** 由引擎在创建子实例时赋值；持久层重建时也走此入口。 */
+    public void assignRootInstanceId(String rootInstanceId) {
+        this.rootInstanceId = rootInstanceId;
+    }
+
+    public long getRevision() { return revision; }
+    public void setRevision(long revision) { this.revision = revision; }
+
+    /**
+     * 深拷贝快照（保持同一 id / 同一流程树结构）—— 事务 before-image 用。
+     *
+     * <p>Token、Task、variables 全部逐个 copy：这三者都会被引擎原地修改，
+     * 浅拷贝会让「快照」和「活对象」指向同一份状态，回滚形同虚设。
+     */
+    public ProcessInstance snapshot() {
+        Map<String, Token> tokenCopies = new LinkedHashMap<>();
+        for (Map.Entry<String, Token> e : activeTokens.entrySet()) {
+            tokenCopies.put(e.getKey(), e.getValue().copy());
+        }
+        List<TaskInstance> taskCopies = new ArrayList<>(tasks.size());
+        for (TaskInstance t : tasks) {
+            taskCopies.add(t.copy());
+        }
+        return reconstruct(id, processKey, processVersion, createTime,
+                endTime == 0L ? null : endTime, status,
+                tokenCopies, taskCopies, new LinkedHashMap<>(variables),
+                parentInstanceId, parentTokenId, parentNodeId, rootInstanceId, revision);
+    }
     public Map<String, Token> getActiveTokens() {
         return Collections.unmodifiableMap(activeTokens);
     }
@@ -153,6 +223,24 @@ public final class ProcessInstance {
     }
 
     public void addTask(TaskInstance task) {
+        tasks.add(task);
+    }
+
+    /**
+     * 用给定版本替换同 id 的任务条目（不存在则追加）。
+     *
+     * <p>存在的原因：仓储采用拷贝语义后，{@code instance.tasks} 与 {@code taskRepo}
+     * 里的对象是两份独立副本。任务状态变化时必须显式对齐，否则从实例视图读到的
+     * 仍是旧状态。引擎内所有对齐统一走此入口，不再散落反射。
+     */
+    public void replaceTask(TaskInstance task) {
+        Objects.requireNonNull(task);
+        for (int i = 0; i < tasks.size(); i++) {
+            if (tasks.get(i).getId().equals(task.getId())) {
+                tasks.set(i, task);
+                return;
+            }
+        }
         tasks.add(task);
     }
 

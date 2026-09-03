@@ -1,5 +1,8 @@
 package com.workflow.engine;
 
+import com.workflow.concurrency.InstanceLockProvider;
+import com.workflow.concurrency.LocalInstanceLocks;
+import com.workflow.concurrency.WorkflowConflictException;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.NodeDefinition;
 import com.workflow.definition.ProcessDefinition;
@@ -24,6 +27,8 @@ import com.workflow.runtime.Delegation;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
 import com.workflow.runtime.Token;
+import com.workflow.tx.TransactionRunner;
+import com.workflow.tx.UndoLogTransactionRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,6 +72,20 @@ public class WorkflowEngine implements IWorkflowEngine {
     /** 监听器列表 */
     private final List<ExecutionListener> executionListeners = new ArrayList<>();
     private final List<TaskListener> taskListeners = new ArrayList<>();
+
+    /**
+     * 并发控制：同一棵流程树的引擎动作串行化。
+     * 默认启用（单 JVM 内的正确性底线），多 JVM 部署另需仓储层乐观锁。
+     */
+    private final InstanceLockProvider locks;
+    /**
+     * 事务边界：一次业务动作跨 instance/task/token/audit 多仓储写入时整体生效或整体不生效。
+     */
+    private final TransactionRunner tx;
+    /** 乐观锁冲突时的重试次数（不含首次尝试）。 */
+    private final int conflictRetries;
+    /** 冲突重试间隔毫秒。 */
+    private final long retryBackoffMillis;
 
     /** 子流程嵌套最大深度 - 防循环引用死递归 */
     private static final int MAX_SUB_PROCESS_DEPTH = 10;
@@ -138,6 +157,31 @@ public class WorkflowEngine implements IWorkflowEngine {
                           DelegationRepository delegationRepo,
                           NotificationService notificationService,
                           CarbonCopyRepository carbonCopyRepo) {
+        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo,
+                notificationService, carbonCopyRepo, new LocalInstanceLocks(),
+                new UndoLogTransactionRunner(), 3, 20L);
+    }
+
+    /**
+     * 完整构造器 —— 显式控制并发与事务策略。
+     *
+     * @param locks              流程树锁；null 时使用 {@link LocalInstanceLocks}
+     * @param tx                 事务边界；null 时使用 {@link UndoLogTransactionRunner}
+     * @param conflictRetries    乐观锁冲突重试次数（0 表示不重试，直接向上抛）
+     * @param retryBackoffMillis 重试前的等待毫秒，给对手机会释放锁
+     */
+    public WorkflowEngine(ProcessRepository processRepo,
+                          InstanceRepository instanceRepo,
+                          TaskRepository taskRepo,
+                          TimeoutScheduler scheduler,
+                          AuditLogRepository auditLogRepo,
+                          DelegationRepository delegationRepo,
+                          NotificationService notificationService,
+                          CarbonCopyRepository carbonCopyRepo,
+                          InstanceLockProvider locks,
+                          TransactionRunner tx,
+                          int conflictRetries,
+                          long retryBackoffMillis) {
         this.processRepo = Objects.requireNonNull(processRepo);
         this.instanceRepo = Objects.requireNonNull(instanceRepo);
         this.taskRepo = Objects.requireNonNull(taskRepo);
@@ -146,10 +190,153 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.delegationRepo = delegationRepo;
         this.notificationService = notificationService;
         this.carbonCopyRepo = carbonCopyRepo;
+        this.locks = locks != null ? locks : new LocalInstanceLocks();
+        this.tx = tx != null ? tx : new UndoLogTransactionRunner();
+        this.conflictRetries = Math.max(0, conflictRetries);
+        this.retryBackoffMillis = Math.max(0, retryBackoffMillis);
+    }
+
+    /**
+     * 并发改动开关 —— 供压测或特殊嵌入场景关闭锁与事务，退回 v3.6 的裸执行语义。
+     * 返回一个新引擎实例，不修改当前实例。
+     */
+    public WorkflowEngine withoutConcurrencyControl() {
+        return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
+                auditLogRepo, delegationRepo, notificationService, carbonCopyRepo,
+                passthroughLocks(), TransactionRunner.noop(), 0, 0L);
+    }
+
+    private static InstanceLockProvider passthroughLocks() {
+        return new InstanceLockProvider() {
+            @Override
+            public <T> T executeLocked(String rootInstanceId, java.util.function.Supplier<T> action) {
+                return action.get();
+            }
+        };
     }
 
     private TimeoutScheduler createDefaultScheduler() {
         return new ScheduledTimeoutScheduler(this::onTaskTimeout);
+    }
+
+    // ========== 并发与事务模板 ==========
+
+    /**
+     * 引擎所有实例级写动作的统一入口：<b>流程树锁 → 事务 → 业务体</b>。
+     *
+     * <p>三层各自解决一个问题，缺一不可：
+     * <ol>
+     *   <li><b>锁</b> —— 同树串行。杜绝「两个审批人同时点通过」导致的丢失更新、
+     *       以及 {@code HashSet}/{@code LinkedHashMap} 被并发结构性修改。</li>
+     *   <li><b>事务</b> —— 一次动作内跨 instance / task / token / audit 的写入整体生效
+     *       或整体撤销，不留「任务已 COMPLETED 但 Token 未推进」的半完成尸体。</li>
+     *   <li><b>乐观锁重试</b> —— 跨 JVM 场景下 CAS 失败时重读最新状态再试，
+     *       次数耗尽才向调用方透出 {@link WorkflowConflictException}。</li>
+     * </ol>
+     *
+     * <p>注意锁与事务的<b>先后顺序</b>：必须先拿锁再开事务。反过来会出现
+     * 「事务已提交但锁已释放」的窗口，让并发者读到中间态。
+     *
+     * @param instanceId 目标实例 id（子流程传自身 id 即可，内部会解析到根）
+     * @param op         操作名，仅用于日志与异常定位
+     * @param body       业务体
+     */
+    private <T> T exclusive(String instanceId, String op, java.util.function.Supplier<T> body) {
+        WorkflowConflictException last = null;
+        for (int attempt = 0; attempt <= conflictRetries; attempt++) {
+            try {
+                String root = resolveRootInstanceId(instanceId);
+                return locks.executeLocked(root, () -> tx.execute(body));
+            } catch (WorkflowConflictException conflict) {
+                last = conflict;
+                if (attempt < conflictRetries) {
+                    log.warn("[并发] op={} instance={} 第 {} 次尝试冲突，退避 {}ms 后重试: {}",
+                            op, instanceId, attempt + 1, retryBackoffMillis, conflict.getMessage());
+                    sleepBeforeRetry();
+                }
+            }
+        }
+        throw new WorkflowConflictException(
+                "操作 " + op + " 在 " + (conflictRetries + 1) + " 次尝试后仍并发冲突: instance=" + instanceId,
+                instanceId, last);
+    }
+
+    /** 无返回值的 {@link #exclusive} 变体。 */
+    private void exclusiveVoid(String instanceId, String op, Runnable body) {
+        exclusive(instanceId, op, () -> {
+            body.run();
+            return null;
+        });
+    }
+
+    /**
+     * 以 taskId 为入口时，先定位其所属实例再进临界区。
+     *
+     * <p>这次定位读<b>故意放在锁外</b>：它只用于选锁，不参与状态判定；
+     * 进入临界区后业务体会重新读取任务，不信任此处快照。
+     */
+    private void exclusiveVoidByTask(String taskId, String op, Runnable body) {
+        exclusiveVoid(locateInstanceOfTask(taskId), op, body);
+    }
+
+    /** taskId → instanceId 定位（任务不存在时直接向上抛，不进入锁）。 */
+    private String locateInstanceOfTask(String taskId) {
+        return taskRepo.findById(taskId).getInstanceId();
+    }
+
+    /**
+     * 把任务最新状态对齐进实例视图。
+     *
+     * <p>仓储采用拷贝语义，{@code instance.tasks} 与 {@code taskRepo} 各持一份副本；
+     * 落库实例前必须显式对齐，让「实例里看到的任务」和「待办列表里查到的任务」一致。
+     * 所有对齐统一走这里 —— 取代此前散落在 5 处的 {@code setAccessible} 反射。
+     */
+    private void syncTaskInInstance(ProcessInstance instance, TaskInstance task) {
+        instance.replaceTask(task.copy());
+    }
+
+    /**
+     * 查询某 token 在某节点上的当前任务 —— 以 {@code taskRepo} 为唯一真相。
+     *
+     * <p>不再翻 {@code instance.getTasks()}：那份列表只有在有人记得同步时才正确，
+     * 而「记得同步」正是过去所有状态错乱 bug 的来源。
+     */
+    private TaskInstance currentTaskOf(ProcessInstance instance, String tokenId, String nodeId) {
+        return taskRepo.findByInstanceId(instance.getId()).stream()
+                .filter(t -> t.getTokenId().equals(tokenId)
+                        && t.getNodeId().equals(nodeId)
+                        && t.getStatus() != TaskStatus.TRANSFERRED
+                        && t.getStatus() != TaskStatus.TERMINATED)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * 解析流程树根 —— 锁的单位。
+     *
+     * <p>读不到实例（新建流程、已删除）时退化为自身 id：此时它必然就是根。
+     */
+    private String resolveRootInstanceId(String instanceId) {
+        if (instanceId == null) {
+            return null;
+        }
+        try {
+            return instanceRepo.findById(instanceId).getRootInstanceId();
+        } catch (RuntimeException notYetStored) {
+            return instanceId;
+        }
+    }
+
+    private void sleepBeforeRetry() {
+        if (retryBackoffMillis <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(retryBackoffMillis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("并发冲突重试等待被中断", ex);
+        }
     }
 
     /**
@@ -301,15 +488,19 @@ public class WorkflowEngine implements IWorkflowEngine {
 
         Token token = new Token(instance.getId(), def.getStartNodeId());
         instance.addToken(token);
-        instanceRepo.save(instance);
 
-        log.info("[引擎] 发起流程 instance={} key={} v{} initiator={}", instance.getId(), def.getKey(), def.getVersion(), initiator);
-        audit(AuditEventType.PROCESS_STARTED, instance.getId(), null, initiator != null ? initiator : "system",
-                "发起流程 key=" + def.getKey() + " v" + def.getVersion());
-        fireExecutionStarted(instance);
-        // 推进第一个 Token
-        advanceToken(instance, def, token.getId());
-        return instance.getId();
+        // 实例 id 此刻尚未落库，resolveRoot 会退化为「自身即根」——正是我们要的锁粒度
+        return exclusive(instance.getId(), "start", () -> {
+            instanceRepo.save(instance);
+
+            log.info("[引擎] 发起流程 instance={} key={} v{} initiator={}", instance.getId(), def.getKey(), def.getVersion(), initiator);
+            audit(AuditEventType.PROCESS_STARTED, instance.getId(), null, initiator != null ? initiator : "system",
+                    "发起流程 key=" + def.getKey() + " v" + def.getVersion());
+            fireExecutionStarted(instance);
+            // 推进第一个 Token
+            advanceToken(instance, def, token.getId());
+            return instance.getId();
+        });
     }
 
     /**
@@ -328,12 +519,14 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     @Override
     public void completeTask(String taskId, String userId, boolean approved) {
-        if (approved) {
-            completeAndAdvance(taskId, userId);
-        } else {
-            // approved=false 等同于 reject,但保留 rejectTask API 接收 reason
-            rejectTaskInternal(taskId, userId, "未提供理由");
-        }
+        exclusiveVoidByTask(taskId, "completeTask", () -> {
+            if (approved) {
+                completeAndAdvance(taskId, userId);
+            } else {
+                // approved=false 等同于 reject,但保留 rejectTask API 接收 reason
+                rejectTaskInternal(taskId, userId, "未提供理由");
+            }
+        });
     }
 
     private void completeAndAdvance(String taskId, String userId) {
@@ -367,25 +560,10 @@ public class WorkflowEngine implements IWorkflowEngine {
             throw new IllegalStateException("任务非 PENDING 状态: " + task.getStatus());
         }
 
-        // 同步 instance 视图里同一 task 的状态 - JPA 仓储下 task 与 instance.tasks 是不同对象,
-        // 不更新 instance 视图里那份,advanceToken 会拿旧 PENDING 状态做判断。
-        TaskInstance taskInInstance = instance.getTasks().stream()
-                .filter(t -> t.getId().equals(taskId))
-                .findFirst()
-                .orElse(null);
-
         boolean taskCompleted = task.recordCompletion(actualApprover);
         taskRepo.save(task);
-        if (taskInInstance != null) {
-            taskInInstance.setStatus(task.getStatus());
-            try {
-                java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                f.setAccessible(true);
-                f.set(taskInInstance, new java.util.HashSet<>(task.getCompletedApprovers()));
-            } catch (Exception ex) {
-                throw new RuntimeException("同步 instance 视图 task 状态失败", ex);
-            }
-        }
+        // 把最新状态对齐进实例视图 —— 取代原先「两份对象 + setAccessible 反射双写」的做法
+        syncTaskInInstance(instance, task);
         
         String auditDetail = "任务整体完成=" + taskCompleted;
         if (delegatedBy != null) {
@@ -397,7 +575,8 @@ public class WorkflowEngine implements IWorkflowEngine {
 
         if (taskCompleted) {
             // 任务整体完成 -> 取消超时调度(会签场景:部分完成不取消,继续等待剩余人)
-            scheduler.cancel(taskId);
+            // 放到提交后执行：本次事务若回滚，任务仍是 PENDING，调度必须原样保留
+            afterCommitSchedule(() -> scheduler.cancel(taskId));
             // 推进该 Token 到下一个节点
             advanceToken(instance, def, task.getTokenId());
         }
@@ -405,7 +584,7 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     @Override
     public void rejectTask(String taskId, String userId, String reason) {
-        rejectTaskInternal(taskId, userId, reason);
+        exclusiveVoidByTask(taskId, "rejectTask", () -> rejectTaskInternal(taskId, userId, reason));
     }
 
     private void rejectTaskInternal(String taskId, String userId, String reason) {
@@ -420,9 +599,10 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
         task.setStatus(TaskStatus.REJECTED);
         taskRepo.save(task);
+        syncTaskInInstance(instance, task);
 
-        // 取消超时调度
-        scheduler.cancel(taskId);
+        // 取消超时调度 —— 放到提交后：事务回滚时任务仍是 PENDING，调度必须保留
+        afterCommitSchedule(() -> scheduler.cancel(taskId));
 
         // 找上一个 USER_TASK
         String prevUserTask = PathNavigator.findPreviousUserTask(def, task.getNodeId());
@@ -453,6 +633,12 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     @Override
     public void transferTask(String taskId, String fromUserId, String toUserId) {
+        exclusiveVoidByTask(taskId, "transferTask",
+                () -> transferTaskInternal(taskId, fromUserId, toUserId));
+    }
+
+    /** 转办实现 —— 必须在 {@link #exclusiveVoidByTask} 内调用。 */
+    private void transferTaskInternal(String taskId, String fromUserId, String toUserId) {
         TaskInstance task = taskRepo.findById(taskId);
         ensureRunning(task);
 
@@ -465,8 +651,11 @@ public class WorkflowEngine implements IWorkflowEngine {
         task.setStatus(TaskStatus.TRANSFERRED);
         taskRepo.save(task);
 
-        // 取消原任务的超时调度
-        scheduler.cancel(taskId);
+        // 同步 instance 视图：instance 与 task 是两份独立对象，转办后待办列表必须反映 TRANSFERRED
+        syncTaskInInstance(instance, task);
+
+        // 取消原任务的超时调度（调度器活在 JVM 内存，回滚时不该生效 → 登记到提交后）
+        afterCommitSchedule(() -> scheduler.cancel(taskId));
 
         ProcessDefinition def = defOf(instance);
         NodeDefinition nodeDef = def.getNode(task.getNodeId());
@@ -475,12 +664,17 @@ public class WorkflowEngine implements IWorkflowEngine {
                 nodeDef.getId(), newCand);
         instance.addTask(newTask);
         taskRepo.save(newTask);
+        // 实例视图与任务列表必须落库：仓储采用拷贝语义后，不再存在「改引用即改库」的便利
+        instanceRepo.save(instance);
 
         // 新任务继承原节点的超时配置(若有)
         if (nodeDef.hasTimeout()) {
-            scheduler.schedule(newTask.getId(), instance.getId(),
-                    nodeDef.getTimeoutMillis(), nodeDef.getTimeoutPolicy(),
-                    nodeDef.getTimeoutTargetUserId());
+            String newTaskId = newTask.getId();
+            String instanceId = instance.getId();
+            long timeout = nodeDef.getTimeoutMillis();
+            TimeoutPolicy policy = nodeDef.getTimeoutPolicy();
+            String target = nodeDef.getTimeoutTargetUserId();
+            afterCommitSchedule(() -> scheduler.schedule(newTaskId, instanceId, timeout, policy, target));
         }
 
         log.info("[引擎] 转办 task={} from={} to={}", taskId, fromUserId, toUserId);
@@ -489,48 +683,63 @@ public class WorkflowEngine implements IWorkflowEngine {
         fireTaskTransferred(task, fromUserId, toUserId);
     }
 
+    /** 把调度器等不受事务保护的副作用推迟到事务提交后执行。 */
+    private void afterCommitSchedule(Runnable action) {
+        com.workflow.tx.TransactionContext.afterCommit(action);
+    }
+
     // ========== 实例级操作 ==========
 
     @Override
     public void suspend(String instanceId) {
-        ProcessInstance instance = instanceRepo.findById(instanceId);
-        instance.suspend();
-        instanceRepo.save(instance);
-        log.info("[引擎] 暂停实例 {}", instanceId);
-        audit(AuditEventType.PROCESS_SUSPENDED, instanceId, null, "system", "流程挂起");
-        fireExecutionSuspended(instance);
+        exclusiveVoid(instanceId, "suspend", () -> {
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            instance.suspend();
+            instanceRepo.save(instance);
+            log.info("[引擎] 暂停实例 {}", instanceId);
+            audit(AuditEventType.PROCESS_SUSPENDED, instanceId, null, "system", "流程挂起");
+            fireExecutionSuspended(instance);
+        });
     }
 
     @Override
     public void resume(String instanceId) {
-        ProcessInstance instance = instanceRepo.findById(instanceId);
-        instance.resume();
-        instanceRepo.save(instance);
-        log.info("[引擎] 恢复实例 {}", instanceId);
-        audit(AuditEventType.PROCESS_RESUMED, instanceId, null, "system", "流程恢复");
-        fireExecutionResumed(instance);
+        exclusiveVoid(instanceId, "resume", () -> {
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            instance.resume();
+            instanceRepo.save(instance);
+            log.info("[引擎] 恢复实例 {}", instanceId);
+            audit(AuditEventType.PROCESS_RESUMED, instanceId, null, "system", "流程恢复");
+            fireExecutionResumed(instance);
+        });
     }
 
     @Override
     public void terminate(String instanceId) {
-        ProcessInstance instance = instanceRepo.findById(instanceId);
-        instance.markTerminated();
-        // 关闭所有 PENDING 任务并取消超时调度
-        for (TaskInstance t : taskRepo.findByInstanceId(instanceId)) {
-            if (t.getStatus() == TaskStatus.PENDING) {
-                t.setStatus(TaskStatus.TERMINATED);
-                taskRepo.save(t);
-                scheduler.cancel(t.getId());
+        exclusiveVoid(instanceId, "terminate", () -> {
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            instance.markTerminated();
+            // 关闭所有 PENDING 任务并取消超时调度
+            List<String> cancelledTaskIds = new ArrayList<>();
+            for (TaskInstance t : taskRepo.findByInstanceId(instanceId)) {
+                if (t.getStatus() == TaskStatus.PENDING) {
+                    t.setStatus(TaskStatus.TERMINATED);
+                    taskRepo.save(t);
+                    syncTaskInInstance(instance, t);
+                    cancelledTaskIds.add(t.getId());
+                }
             }
-        }
-        instanceRepo.save(instance);
-        log.info("[引擎] 终止实例 {}", instanceId);
-        audit(AuditEventType.PROCESS_TERMINATED, instanceId, null, "system", "流程终止");
-        fireExecutionTerminated(instance);
+            instanceRepo.save(instance);
+            afterCommitSchedule(() -> cancelledTaskIds.forEach(scheduler::cancel));
+            log.info("[引擎] 终止实例 {}", instanceId);
+            audit(AuditEventType.PROCESS_TERMINATED, instanceId, null, "system", "流程终止");
+            fireExecutionTerminated(instance);
+        });
     }
 
     @Override
     public void withdraw(String instanceId, String initiator) {
+        exclusiveVoid(instanceId, "withdraw", () -> {
         ProcessInstance instance = instanceRepo.findById(instanceId);
         
         // 1. 检查实例状态
@@ -557,15 +766,18 @@ public class WorkflowEngine implements IWorkflowEngine {
         
         // 4. 终止流程，把所有 PENDING 任务置为 WITHDRAWN
         instance.markTerminated();
+        List<String> withdrawnTaskIds = new ArrayList<>();
         for (TaskInstance t : tasks) {
             if (t.getStatus() == TaskStatus.PENDING) {
                 t.setStatus(TaskStatus.WITHDRAWN);
                 taskRepo.save(t);
-                scheduler.cancel(t.getId());
+                syncTaskInInstance(instance, t);
+                withdrawnTaskIds.add(t.getId());
             }
         }
         instanceRepo.save(instance);
-        
+        afterCommitSchedule(() -> withdrawnTaskIds.forEach(scheduler::cancel));
+
         log.info("[引擎] 发起人 {} 撤回流程 {}", initiator, instanceId);
         audit(AuditEventType.PROCESS_WITHDRAWN, instanceId, null, initiator, "发起人撤回流程");
         fireExecutionTerminated(instance);
@@ -575,6 +787,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                 fireTaskWithdrawn(t);
             }
         }
+        });
     }
 
     // ========== 委托管理 ==========
@@ -719,13 +932,8 @@ public class WorkflowEngine implements IWorkflowEngine {
                 log.info("[引擎] Token {} 到达 END", tokenId);
             }
             case USER_TASK -> {
-                // 1) 找出该 token+node 上已有的非终止任务
-                TaskInstance existing = instance.getTasks().stream()
-                        .filter(t -> t.getTokenId().equals(tokenId)
-                                && t.getNodeId().equals(current.getId())
-                                && t.getStatus() != TaskStatus.TRANSFERRED
-                                && t.getStatus() != TaskStatus.TERMINATED)
-                        .findFirst().orElse(null);
+                // 1) 该 token+node 上的当前任务：以 taskRepo 为唯一真相
+                TaskInstance existing = currentTaskOf(instance, tokenId, current.getId());
                 log.debug("[引擎] advanceToken USER_TASK node={} existing={}",
                         current.getId(),
                         existing == null ? "null" : ("taskId=" + existing.getId() + " status=" + existing.getStatus()));
@@ -733,18 +941,22 @@ public class WorkflowEngine implements IWorkflowEngine {
                 if (existing == null) {
                     TaskInstance task = new TaskInstance(instance.getId(), tokenId,
                             current.getId(), current.getCandidate());
-                    instance.addTask(task);
-                    log.info("[引擎] 创建任务 node={} candidate={} taskId={}", current.getId(), current.getCandidate(), task.getId());
                     taskRepo.save(task);
+                    // 对齐实例视图，避免 instance.tasks 停留在「没有这条任务」的旧相
+                    syncTaskInInstance(instance, task);
+                    log.info("[引擎] 创建任务 node={} candidate={} taskId={}", current.getId(), current.getCandidate(), task.getId());
                     fireTaskCreated(task);
                     // JPA 关键:同时 save instance 让 wf_token 同步(applyToken 已推进到 review 节点)
                     instanceRepo.save(instance);
                     log.info("[引擎] 创建任务并保存 instance 完成");
-                    // 注册超时调度(若节点配置了超时)
+                    // 注册超时调度(若节点配置了超时)—— 提交后才生效，回滚不该留下幽灵调度
                     if (current.hasTimeout()) {
-                        scheduler.schedule(task.getId(), instance.getId(),
-                                current.getTimeoutMillis(), current.getTimeoutPolicy(),
-                                current.getTimeoutTargetUserId());
+                        String newTaskId = task.getId();
+                        String instId = instance.getId();
+                        long timeout = current.getTimeoutMillis();
+                        com.workflow.enums.TimeoutPolicy policy = current.getTimeoutPolicy();
+                        String target = current.getTimeoutTargetUserId();
+                        afterCommitSchedule(() -> scheduler.schedule(newTaskId, instId, timeout, policy, target));
                     }
                 } else if (existing.getStatus() == TaskStatus.COMPLETED) {
                     // 任务已完成 -> 把 Token 推进到下一节点
@@ -938,13 +1150,8 @@ public class WorkflowEngine implements IWorkflowEngine {
                         instanceRepo.save(instance);
                     }
                 } else if ("created".equals(created)) {
-                    // 任务已创建,检查是否完成
-                    TaskInstance existing = instance.getTasks().stream()
-                            .filter(t -> t.getTokenId().equals(tokenId)
-                                    && t.getNodeId().equals(current.getId())
-                                    && t.getStatus() != TaskStatus.TRANSFERRED
-                                    && t.getStatus() != TaskStatus.TERMINATED)
-                            .findFirst().orElse(null);
+                    // 任务已创建,检查是否完成 —— 同样以 taskRepo 为唯一真相
+                    TaskInstance existing = currentTaskOf(instance, tokenId, current.getId());
                     
                     if (existing != null && existing.getStatus() == TaskStatus.COMPLETED) {
                         // 任务完成:推进到出口
@@ -1001,7 +1208,8 @@ public class WorkflowEngine implements IWorkflowEngine {
     private void checkAndFinalize(ProcessInstance instance) {
         if (instance.isAllTokensConsumed() && instance.getStatus() == InstanceStatus.RUNNING) {
             // 若还有 PENDING 任务,说明是 UserTask 完成的瞬态,不算结束
-            boolean hasPending = instance.getTasks().stream()
+            // 以 taskRepo 为唯一真相：instance.getTasks() 是副本视图，不可用于判定
+            boolean hasPending = taskRepo.findByInstanceId(instance.getId()).stream()
                     .anyMatch(t -> t.getStatus() == TaskStatus.PENDING);
             if (!hasPending) {
                 instance.markCompleted();
@@ -1041,6 +1249,9 @@ public class WorkflowEngine implements IWorkflowEngine {
         // 创建子实例(携带父上下文)
         ProcessInstance child = new ProcessInstance(subDef.getKey(), subDef.getVersion(),
                 parent.getId(), token.getId(), nodeDef.getId());
+        // 子实例继承父树的根 —— 引擎按「流程树根」加锁，父子共享同一把锁，
+        // 从而杜绝 startSubProcess(父→子) 与 onSubProcessCompleted(子→父) 构成 ABBA 死锁
+        child.assignRootInstanceId(parent.getRootInstanceId());
         // 继承父流程变量(浅拷贝)
         parent.getVariables().forEach(child::setVariable);
         child.setVariable(SUB_DEPTH_VAR, depth);
@@ -1089,12 +1300,23 @@ public class WorkflowEngine implements IWorkflowEngine {
     // ========== 超时回调 ==========
 
     /**
+     * 超时回调入口 —— 由调度线程触发，属于<b>独立的并发入口</b>，
+     * 必须与用户手动操作走同一把流程树锁，否则会出现
+     * 「超时自动通过与人工审批同时生效」的双写。
+     */
+    private void onTaskTimeout(String taskId, String instanceId,
+                               TimeoutPolicy policy, String targetUserId) {
+        exclusiveVoid(instanceId, "onTaskTimeout",
+                () -> doTaskTimeout(taskId, instanceId, policy, targetUserId));
+    }
+
+    /**
      * 超时回调 - 由 ScheduledTimeoutScheduler 触发
      * 按节点配置的 TimeoutPolicy 执行自动动作
      *
      * 幂等保证:回调前重查任务状态,非 PENDING 则忽略(避免与用户手动操作竞态)
      */
-    private void onTaskTimeout(String taskId, String instanceId,
+    private void doTaskTimeout(String taskId, String instanceId,
                                TimeoutPolicy policy, String targetUserId) {
         TaskInstance task = taskRepo.findById(taskId);
         if (task == null || task.getStatus() != TaskStatus.PENDING) {
@@ -1119,32 +1341,10 @@ public class WorkflowEngine implements IWorkflowEngine {
 
         switch (policy) {
             case AUTO_APPROVE -> {
-                // 自动通过:直接设置状态并记录 SYSTEM_USER,绕过候选人校验
-                try {
-                    java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                    f.setAccessible(true);
-                    @SuppressWarnings("unchecked")
-                    Set<String> approvers = (Set<String>) f.get(task);
-                    approvers.add(SYSTEM_USER);
-                } catch (Exception e) {
-                    throw new RuntimeException("反射设置 completedApprovers 失败", e);
-                }
-                task.setStatus(TaskStatus.COMPLETED);
+                // 自动通过:记录 SYSTEM_USER 并直接完成 —— 候选人校验在 domain 内部豁免
+                task.recordSystemApproval(SYSTEM_USER);
                 taskRepo.save(task);
-                // 同步 instance 视图里同一 task 的状态(与 completeAndAdvance 同理)
-                TaskInstance taskInInstance = instance.getTasks().stream()
-                        .filter(t -> t.getId().equals(taskId))
-                        .findFirst().orElse(null);
-                if (taskInInstance != null) {
-                    taskInInstance.setStatus(TaskStatus.COMPLETED);
-                    try {
-                        java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                        f.setAccessible(true);
-                        f.set(taskInInstance, new java.util.HashSet<>(task.getCompletedApprovers()));
-                    } catch (Exception ex) {
-                        throw new RuntimeException("同步 instance 视图 task 状态失败", ex);
-                    }
-                }
+                syncTaskInInstance(instance, task);
                 ProcessDefinition def = defOf(instance);
                 advanceToken(instance, def, task.getTokenId());
                 audit(AuditEventType.TIMEOUT_AUTO_APPROVED, instanceId, taskId, SYSTEM_USER,
@@ -1154,13 +1354,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                 // 自动驳回:退回上一 UserTask
                 task.setStatus(TaskStatus.REJECTED);
                 taskRepo.save(task);
-                // 同步 instance 视图里同一 task 的状态
-                TaskInstance taskInInstance = instance.getTasks().stream()
-                        .filter(t -> t.getId().equals(taskId))
-                        .findFirst().orElse(null);
-                if (taskInInstance != null) {
-                    taskInInstance.setStatus(TaskStatus.REJECTED);
-                }
+                syncTaskInInstance(instance, task);
                 ProcessDefinition def = defOf(instance);
                 String prevUserTask = PathNavigator.findPreviousUserTask(def, task.getNodeId());
                 if (prevUserTask == null) {
@@ -1183,14 +1377,17 @@ public class WorkflowEngine implements IWorkflowEngine {
             case AUTO_TERMINATE -> {
                 // 自动终止:关闭实例和所有 PENDING 任务
                 instance.markTerminated();
+                List<String> terminatedIds = new ArrayList<>();
                 for (TaskInstance t : taskRepo.findByInstanceId(instanceId)) {
                     if (t.getStatus() == TaskStatus.PENDING) {
                         t.setStatus(TaskStatus.TERMINATED);
                         taskRepo.save(t);
-                        scheduler.cancel(t.getId());
+                        syncTaskInInstance(instance, t);
+                        terminatedIds.add(t.getId());
                     }
                 }
                 instanceRepo.save(instance);
+                afterCommitSchedule(() -> terminatedIds.forEach(scheduler::cancel));
                 audit(AuditEventType.TIMEOUT_AUTO_TERMINATED, instanceId, taskId, SYSTEM_USER,
                         "超时自动终止");
             }
@@ -1198,25 +1395,22 @@ public class WorkflowEngine implements IWorkflowEngine {
                 // 自动转办:原任务置为 TRANSFERRED,新建目标用户任务
                 task.setStatus(TaskStatus.TRANSFERRED);
                 taskRepo.save(task);
-                // 同步 instance 视图里同一 task 的状态
-                TaskInstance taskInInstance = instance.getTasks().stream()
-                        .filter(t -> t.getId().equals(taskId))
-                        .findFirst().orElse(null);
-                if (taskInInstance != null) {
-                    taskInInstance.setStatus(TaskStatus.TRANSFERRED);
-                }
+                syncTaskInInstance(instance, task);
                 ProcessDefinition def = defOf(instance);
                 NodeDefinition nodeDef = def.getNode(task.getNodeId());
                 Candidate newCand = Candidate.ofAny(targetUserId);
                 TaskInstance newTask = new TaskInstance(instance.getId(), task.getTokenId(),
                         nodeDef.getId(), newCand);
-                instance.addTask(newTask);
                 taskRepo.save(newTask);
-                // 新任务继承原节点超时配置
+                syncTaskInInstance(instance, newTask);
+                // 新任务继承原节点超时配置 —— 提交后才登记
                 if (nodeDef.hasTimeout()) {
-                    scheduler.schedule(newTask.getId(), instance.getId(),
-                            nodeDef.getTimeoutMillis(), nodeDef.getTimeoutPolicy(),
-                            nodeDef.getTimeoutTargetUserId());
+                    String newTaskId = newTask.getId();
+                    String instId = instance.getId();
+                    long timeout = nodeDef.getTimeoutMillis();
+                    TimeoutPolicy autoPolicy = nodeDef.getTimeoutPolicy();
+                    String autoTarget = nodeDef.getTimeoutTargetUserId();
+                    afterCommitSchedule(() -> scheduler.schedule(newTaskId, instId, timeout, autoPolicy, autoTarget));
                 }
                 audit(AuditEventType.TIMEOUT_AUTO_TRANSFERRED, instanceId, taskId, SYSTEM_USER,
                         "超时自动转办给 toUser=" + targetUserId + " newTaskId=" + newTask.getId());

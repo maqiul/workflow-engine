@@ -29,6 +29,8 @@ public final class TaskInstance {
     private final Candidate candidate;
     private final Set<String> completedApprovers;
     private volatile TaskStatus status;
+    /** 乐观锁版本号；仓储写入时 CAS，冲突抛 WorkflowConflictException。0 表示未启用。 */
+    private volatile long revision;
 
     public TaskInstance(String instanceId, String tokenId, String nodeId, Candidate candidate) {
         this.id = UUID.randomUUID().toString();
@@ -38,6 +40,46 @@ public final class TaskInstance {
         this.candidate = Objects.requireNonNull(candidate);
         this.completedApprovers = new HashSet<>();
         this.status = TaskStatus.PENDING;
+        this.revision = 0L;
+    }
+
+    /**
+     * 持久化层 / 快照专用：按给定字段重建，<b>不</b>生成新 id。
+     */
+    public static TaskInstance reconstruct(String id, String instanceId, String tokenId,
+                                           String nodeId, Candidate candidate,
+                                           Set<String> completedApprovers,
+                                           TaskStatus status, long revision) {
+        TaskInstance t = new TaskInstance(instanceId, tokenId, nodeId, candidate);
+        t.setIdViaReflection(id);
+        t.completedApprovers.clear();
+        if (completedApprovers != null) {
+            t.completedApprovers.addAll(completedApprovers);
+        }
+        t.status = Objects.requireNonNull(status);
+        t.revision = revision;
+        return t;
+    }
+
+    /**
+     * 深拷贝当前状态 —— 供事务 before-image 使用。
+     *
+     * <p>必须连 {@code completedApprovers} 一起拷，否则恢复动作会把事务中途
+     * 追加进来的审批人一并撤销干净（或者反过来，快照被后续写操作污染而失去回滚能力）。
+     */
+    public TaskInstance copy() {
+        return reconstruct(id, instanceId, tokenId, nodeId, candidate,
+                new HashSet<>(completedApprovers), status, revision);
+    }
+
+    private void setIdViaReflection(String value) {
+        try {
+            java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(this, value);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("无法重建 TaskInstance.id", ex);
+        }
     }
 
     public String getId() { return id; }
@@ -50,6 +92,8 @@ public final class TaskInstance {
     }
     public TaskStatus getStatus() { return status; }
     public void setStatus(TaskStatus status) { this.status = status; }
+    public long getRevision() { return revision; }
+    public void setRevision(long revision) { this.revision = revision; }
 
     /**
      * 记录一个审批人的完成操作
@@ -75,6 +119,19 @@ public final class TaskInstance {
             }
             return false;
         }
+    }
+
+    /**
+     * 系统动作专用：记录一个<b>不在候选人列表中</b>的审批人并直接完成任务。
+     *
+     * <p>用于超时自动通过等由引擎代表 SYSTEM_USER 执行的场景 —— 这类操作者天然不在
+     * {@code candidate} 里，无法走 {@link #recordCompletion} 的候选人校验。
+     * 方法在自己类内操作私有字段，取代此前散落在引擎里的 {@code setAccessible} 反射。
+     */
+    public void recordSystemApproval(String systemUserId) {
+        Objects.requireNonNull(systemUserId);
+        completedApprovers.add(systemUserId);
+        this.status = TaskStatus.COMPLETED;
     }
 
     /**

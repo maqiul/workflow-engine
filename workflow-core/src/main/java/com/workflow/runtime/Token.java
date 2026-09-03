@@ -40,6 +40,23 @@ public final class Token {
     public void setStatus(TokenStatus status) { this.status = status; }
     public boolean isActive() { return status == TokenStatus.ACTIVE; }
 
+    /**
+     * 深拷贝（保持同一 id）—— 供事务 before-image 使用。
+     * Token 的 currentNodeId 会被 advanceToken 原地改写，因此快照必须独立。
+     */
+    public Token copy() {
+        Token t = new Token(instanceId, currentNodeId);
+        try {
+            java.lang.reflect.Field f = Token.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(t, id);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("无法重建 Token.id", ex);
+        }
+        t.status = this.status;
+        return t;
+    }
+
     @Override
     public String toString() {
         return "Token[" + id.substring(0, 8) + "@" + currentNodeId + "/" + status + "]";
