@@ -191,6 +191,11 @@ public class JpaPersistence {
         return new JpaAuditLogRepository(this);
     }
 
+    /** 提供 HistoryRepository（历史活动区间，见 README §18）。 */
+    public com.workflow.repository.HistoryRepository historyRepo() {
+        return new com.workflow.persistence.jpa.repository.JpaHistoryRepository(this);
+    }
+
     /**
      * 共享 EntityManager - 用 EMF 自带的 session 模式。
      * 注:这里简化,每个仓储拿独立 EM。生产建议每次业务操作开新 EM + 事务。

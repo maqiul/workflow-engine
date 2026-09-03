@@ -11,6 +11,7 @@
         <class>com.workflow.persistence.jpa.entity.WfInstanceEntity</class>
         <class>com.workflow.persistence.jpa.entity.WfTokenEntity</class>
         <class>com.workflow.persistence.jpa.entity.WfTaskEntity</class>
+        <class>com.workflow.persistence.jpa.entity.WfHistActivityEntity</class>
 
         <properties>
             <!-- H2 内存数据库(测试/演示) -->
