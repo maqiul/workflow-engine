@@ -200,9 +200,26 @@ public class JpaPersistence {
     }
 
     /**
-     * 便捷事务模板 - 在 lambda 里跑一段逻辑,自动开启/提交/回滚事务。
+     * 便捷事务模板 —— <b>事务感知</b>：引擎已在事务中时复用同一个 EntityManager，
+     * 否则自开一个独立短事务。
+     *
+     * <p>这是让「一次 completeTask 跨 instance / task / token / audit 四次写入」
+     * 真正原子的关键。此前每个仓储各自 {@code newEntityManager()} + 各自提交，
+     * 中途失败会留下已提交一半的实例状态 —— 内存版的 undo log 修不了它，
+     * 因为数据库根本不参与那套 undo。
+     *
+     * <p>共享 EM 由 {@link TransactionContext} 挂载，首个使用者（即引擎动作内的第一个
+     * 仓储调用）负责开启并登记提交/回滚钩子；后续仓储复用同一实例。
      */
     public <T> T inTransaction(java.util.function.Function<EntityManager, T> work) {
+        if (com.workflow.tx.TransactionContext.isActive()) {
+            return inSharedTransaction(work);
+        }
+        return inStandaloneTransaction(work);
+    }
+
+    /** 独立短事务：供引擎之外的手工调用（如测试清表）使用。 */
+    private <T> T inStandaloneTransaction(java.util.function.Function<EntityManager, T> work) {
         EntityManager em = newEntityManager();
         EntityTransaction tx = em.getTransaction();
         try {
@@ -216,6 +233,58 @@ public class JpaPersistence {
         } finally {
             em.close();
         }
+    }
+
+    /** 加入引擎已开启的事务，复用本线程本事务的 EntityManager。 */
+    private <T> T inSharedTransaction(java.util.function.Function<EntityManager, T> work) {
+        ManagedEm holder = com.workflow.tx.TransactionContext.attached(ManagedEm.class);
+        if (holder == null) {
+            final EntityManager em = newEntityManager();
+            em.getTransaction().begin();
+            holder = new ManagedEm(em);
+            com.workflow.tx.TransactionContext.attachIfAbsent(holder);
+            final ManagedEm bound = holder;
+            // 提交：先落盘再结束数据库事务，无论如何都要关掉 EM 防泄漏
+            com.workflow.tx.TransactionContext.beforeCommit(() -> {
+                try {
+                    em.flush();
+                    if (em.getTransaction().isActive()) {
+                        em.getTransaction().commit();
+                    }
+                } catch (RuntimeException ex) {
+                    try {
+                        if (em.getTransaction().isActive()) em.getTransaction().rollback();
+                    } finally {
+                        em.close();
+                    }
+                    throw ex;
+                } finally {
+                    if (em.isOpen()) em.close();
+                }
+            });
+            // 回滚：撤销数据库改动并释放 EM
+            com.workflow.tx.TransactionContext.onRollback(() -> {
+                try {
+                    if (em.getTransaction().isActive()) {
+                        em.getTransaction().rollback();
+                    }
+                } finally {
+                    if (em.isOpen()) em.close();
+                }
+            });
+        }
+        EntityManager em = holder.em;
+        T result = work.apply(em);
+        // 原生查询不会触发 Hibernate 自动 flush；不主动 flush，
+        // 后一个仓储的原生 DELETE/SELECT 就看不见前一个仓储刚写的行。
+        em.flush();
+        return result;
+    }
+
+    /** 本事务共享的 EntityManager 包装（用作 {@code TransactionContext} 的挂载标识）。 */
+    private static final class ManagedEm {
+        final EntityManager em;
+        ManagedEm(EntityManager em) { this.em = em; }
     }
 
     /**

@@ -56,12 +56,22 @@ public class JpaInstanceRepository implements InstanceRepository {
             entity.setParentNodeId(instance.getParentNodeId());
             em.merge(entity);
 
-            // Token 全量同步:delete-all + persist
-            em.createQuery("DELETE FROM WfTokenEntity t WHERE t.instanceId = :iid")
+            // Token 差量同步。
+            //
+            // 不能再用「bulk DELETE 全部 + 重插」：bulk 语句绕过 persistence context，
+            // 而共享事务下这些实体往往已经是托管状态，em.find 会拿回那个已被自己
+            // DELETE 掉的 stale 实例，于是提交时变成 UPDATE 一行不存在的记录，
+            // 抛 OptimisticLockException。旧代码每次新建 EntityManager，
+            // 缓存是干净的，恰好把这个问题掩盖掉了。
+            Map<String, WfTokenEntity> existing = new LinkedHashMap<>();
+            em.createQuery("SELECT t FROM WfTokenEntity t WHERE t.instanceId = :iid",
+                            WfTokenEntity.class)
                     .setParameter("iid", instance.getId())
-                    .executeUpdate();
+                    .getResultList()
+                    .forEach(te -> existing.put(te.getId(), te));
+
             for (Token t : instance.getActiveTokens().values()) {
-                WfTokenEntity te = em.find(WfTokenEntity.class, t.getId());
+                WfTokenEntity te = existing.remove(t.getId());
                 if (te == null) {
                     te = new WfTokenEntity();
                     te.setId(t.getId());
@@ -70,10 +80,14 @@ public class JpaInstanceRepository implements InstanceRepository {
                     te.setStatus(t.getStatus());
                     em.persist(te);
                 } else {
-                    te.setInstanceId(instance.getId());
+                    // 查询结果本就是托管实体，直接改字段即可，无需 merge
                     te.setCurrentNodeId(t.getCurrentNodeId());
                     te.setStatus(t.getStatus());
                 }
+            }
+            // 剩余的是本次已不存在的 Token（已消耗）—— 走实体生命周期删除
+            for (WfTokenEntity stale : existing.values()) {
+                em.remove(stale);
             }
             return null;
         });

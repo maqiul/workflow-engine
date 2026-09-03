@@ -69,6 +69,29 @@ public final class TransactionContext {
         f.afterCommit.add(action);
     }
 
+    /**
+     * 登记「提交时、在 after-commit 之前」执行的动作。
+     *
+     * <p>给数据库实现用：真正的 {@code EntityTransaction.commit()} 必须发生在
+     * 内存记账判定成功之后、调度器等副作用播放之前。
+     */
+    public static void beforeCommit(Runnable action) {
+        Frame f = CURRENT.get();
+        if (f == null || f.depth == 0) {
+            return;
+        }
+        f.beforeCommit.add(action);
+    }
+
+    /** 登记「回滚时」执行的动作（释放数据库连接 / 事务资源）。 */
+    public static void onRollback(Runnable action) {
+        Frame f = CURRENT.get();
+        if (f == null || f.depth == 0) {
+            return;
+        }
+        f.onRollback.add(action);
+    }
+
     /** 取回当前事务已登记的 undo（测试与调试用）。 */
     public static int undoCount() {
         Frame f = CURRENT.get();
@@ -95,11 +118,19 @@ public final class TransactionContext {
         /** 提交：最外层执行清空，内层仅减深度。 */
         public void commit() {
             if (frame.depth == 1) {
-                List<Runnable> pending = new ArrayList<>(frame.afterCommit);
+                List<Runnable> dbCommit = drain(frame.beforeCommit);
+                List<Runnable> pending = drain(frame.afterCommit);
                 frame.undo.clear();
-                frame.afterCommit.clear();
                 finish();
-                // 提交后才播放：这些动作（调度器 cancel/schedule）不受事务保护
+                try {
+                    // 先让数据库真正提交，再播放 JVM 内副作用
+                    for (Runnable action : dbCommit) {
+                        action.run();
+                    }
+                } catch (RuntimeException | Error ex) {
+                    runAll(drain(frame.onRollback)); // 释放连接等资源
+                    throw ex;
+                }
                 for (Runnable action : pending) {
                     action.run();
                 }
@@ -108,7 +139,7 @@ public final class TransactionContext {
             }
         }
 
-        /** 回滚：逆序执行全部 undo，丢弃 after-commit 副作用，最外层结束后解绑。 */
+        /** 回滚：逆序执行全部 undo，播放回滚钩子，丢弃 after-commit 副作用。 */
         public void rollback() {
             List<Map.Entry<String, Runnable>> entries =
                     new ArrayList<>(frame.undo.entrySet());
@@ -126,9 +157,14 @@ public final class TransactionContext {
                 }
             }
             frame.undo.clear();
-            frame.afterCommit.clear(); // 事务未生效，副作用一律作废
+            frame.beforeCommit.clear();
+            frame.afterCommit.clear(); // 事务未生效，提交后副作用一律作废
+            RuntimeException hookFailure = runQuietly(drain(frame.onRollback));
             frame.depth--;
             finish();
+            if (first == null) {
+                first = hookFailure;
+            }
             if (first != null) {
                 throw first;
             }
@@ -139,10 +175,44 @@ public final class TransactionContext {
             // 未显式 commit/rollback 时按回滚处理，防止连接泄漏
             if (frame.depth > 0) {
                 frame.undo.clear();
+                frame.beforeCommit.clear();
                 frame.afterCommit.clear();
+                runQuietly(drain(frame.onRollback));
                 frame.depth--;
                 finish();
             }
+        }
+
+        private static List<Runnable> drain(List<Runnable> source) {
+            if (source.isEmpty()) {
+                return List.of();
+            }
+            List<Runnable> copy = new ArrayList<>(source);
+            source.clear();
+            return copy;
+        }
+
+        private static void runAll(List<Runnable> actions) {
+            for (Runnable a : actions) {
+                a.run();
+            }
+        }
+
+        /** 播放钩子但只保留首个异常 —— 资源释放不该盖掉业务异常。 */
+        private static RuntimeException runQuietly(List<Runnable> actions) {
+            RuntimeException first = null;
+            for (Runnable a : actions) {
+                try {
+                    a.run();
+                } catch (RuntimeException ex) {
+                    if (first == null) {
+                        first = ex;
+                    } else {
+                        first.addSuppressed(ex);
+                    }
+                }
+            }
+            return first;
         }
 
         private void finish() {
@@ -162,6 +232,10 @@ public final class TransactionContext {
         final LinkedHashMap<String, Runnable> undo = new LinkedHashMap<>();
         /** 提交后才执行的副作用（调度器动作、外部通知等），回滚即丢弃。 */
         final List<Runnable> afterCommit = new ArrayList<>();
+        /** 提交时、after-commit 之前执行（数据库真正的 commit）。 */
+        final List<Runnable> beforeCommit = new ArrayList<>();
+        /** 回滚时执行（数据库 rollback + 连接释放）。 */
+        final List<Runnable> onRollback = new ArrayList<>();
         /** 仓储可在此挂载实现私有状态（EntityManager / Connection）。 */
         final Deque<Object> attachments = new ArrayDeque<>();
     }
