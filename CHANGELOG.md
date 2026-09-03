@@ -35,6 +35,10 @@ P0 正确性加固：修的是"会不会出事"，不是"有没有功能"。详�
 - **`transferTaskInternal` 漏 `instanceRepo.save`**：实例任务列表变更未落库（旧模型靠共享引用"免费"生效）
 - **`TaskQuery` 四处缺陷**：`queryAllTasks()` 永返空列表；`processDefinitionKey` / `processDefinitionVersion` / `processVariable` 从未参与匹配（过滤条件空转）；`orderByCreateTime()` 实为按 id 排序；`count()` 复用带 skip/limit 的 `list()` 导致 `limit(5).count()` 永不超过 5
 - **domain 缺字段**：`TaskInstance` 补 `createTime`（DB `wf_task.create_time` 一直存在，读回时被丢弃）
+- **流程树根未落库（自我修正）**：`rootInstanceId` 只存在于内存对象，JPA / MyBatis 重建后丢失并退化为"自身即根"，
+  使父子各持一把锁 —— §17.2 声称的 ABBA 死锁防护在真实数据库上静默失效，且只在含子流程的流程上发生。
+  新增 Flyway `V2__add_instance_root.sql`（用 `ALTER TABLE` 而非改写 `V1`，避免破坏已应用迁移的校验和）；
+  `InstanceRootPersistenceTest` 三套仓储逐个看守，并经变异校验确认抽掉读回即红。
 - **CI 假红**：无 Docker 环境下 4 个跨库测试由 `FAILED` 改为 `skipped`（`requireDocker()`，零新依赖）
 
 ### 破坏性变更

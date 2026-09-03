@@ -958,6 +958,15 @@ ProcessInstance child = new ProcessInstance(subKey, ver, parent.getId(), ...);
 child.assignRootInstanceId(parent.getRootInstanceId());   // 关键
 ```
 
+> ⚠️ **`root_instance_id` 必须落库**（`wf_instance` 表，见 Flyway `V2`）。
+> 它是锁的单位，不是展示字段：一旦某套仓储读回时丢掉它，`getRootInstanceId()` 会
+> 退化成"自身即根"，父子于是各持一把锁 —— ABBA 防护**静默失效**，而且只在真实数据库、
+> 只在含子流程的流程上发生，内存测试看不见。由 `InstanceRootPersistenceTest` 三套仓储
+> 逐个看守（该用例已做变异校验：抽掉 JPA 读回即红）。
+>
+> 通用规矩：**凡参与并发控制或路由决策的字段，加在 domain 上就必须同时落到三套仓储**，
+> 并为它写一条跨仓储往返测试。
+
 锁本身：`ReentrantLock`（可重入，支持 `advanceToken` 递归）、`tryLock(30s)`（防监听器卡死把整棵树永久钉住）、引用计数回收（防锁对象按流程实例数无界堆积）。
 
 ### 17.3 顺序：必须先拿锁，再开事务
