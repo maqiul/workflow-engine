@@ -139,15 +139,69 @@ public final class MybatisPersistence {
         sqlSessionFactory = new MybatisSqlSessionFactoryBuilder().build(configuration);
     }
 
-    /** 事务模板:开 SqlSession → 执行 → commit;异常自动回滚 */
+    /**
+     * 事务模板 —— <b>事务感知</b>：引擎已在事务中时复用同一个 SqlSession，
+     * 否则自开独立短事务。
+     *
+     * <p>与 {@code JpaPersistence.inTransaction} 同理：一次 {@code completeTask}
+     * 要写 instance / token / task / audit 四张表，各仓储各自开 session 就等于
+     * 四次独立提交，中途失败留下半完成状态。
+     *
+     * <p>MyBatis 无需像 Hibernate 那样手动 flush —— SQL 立即下发；而任何 update
+     * 都会清掉 session 级本地缓存，所以同一 session 内读写交替能看到最新值。
+     */
     public <T> T inSession(Function<SqlSession, T> action) {
+        if (com.workflow.tx.TransactionContext.isActive()) {
+            return inSharedSession(action);
+        }
+        return inStandaloneSession(action);
+    }
+
+    /** 独立短事务：供引擎之外的手工调用（如测试清表）使用。 */
+    private <T> T inStandaloneSession(Function<SqlSession, T> action) {
         try (SqlSession session = sqlSessionFactory.openSession(false)) {
             T result = action.apply(session);
             session.commit();
             return result;
-        } catch (RuntimeException ex) {
-            throw ex;
         }
+    }
+
+    /** 加入引擎已开启的事务，复用本线程本事务的 SqlSession。 */
+    private <T> T inSharedSession(Function<SqlSession, T> action) {
+        ManagedSession holder = com.workflow.tx.TransactionContext.attached(ManagedSession.class);
+        if (holder == null) {
+            final SqlSession session = sqlSessionFactory.openSession(false);
+            holder = new ManagedSession(session);
+            com.workflow.tx.TransactionContext.attachIfAbsent(holder);
+            com.workflow.tx.TransactionContext.beforeCommit(() -> {
+                try {
+                    session.commit();
+                } catch (RuntimeException ex) {
+                    try {
+                        session.rollback();
+                    } finally {
+                        session.close();
+                    }
+                    throw ex;
+                } finally {
+                    session.close();
+                }
+            });
+            com.workflow.tx.TransactionContext.onRollback(() -> {
+                try {
+                    session.rollback();
+                } finally {
+                    session.close();
+                }
+            });
+        }
+        return action.apply(holder.session);
+    }
+
+    /** 本事务共享的 SqlSession 包装（用作 {@code TransactionContext} 的挂载标识）。 */
+    private static final class ManagedSession {
+        final SqlSession session;
+        ManagedSession(SqlSession session) { this.session = session; }
     }
 
     /** 清理所有表数据(测试用) */
