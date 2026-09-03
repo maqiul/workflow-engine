@@ -94,6 +94,55 @@ public class MybatisInstanceRepository implements InstanceRepository {
         });
     }
 
+    // ========== 列表查询 ==========
+    //
+    // 这四者此前全部落到 InstanceRepository 的 default 实现，一调用就抛
+    // UnsupportedOperationException：「历史查询 / 复杂查询」只在内存版可用。
+    // 走 BaseMapper + QueryWrapper 而非手写 SQL，可自动覆盖全部列，
+    // 避开「新增列忘了写进 SELECT 导致读回丢字段」那个老坑。
+
+    @Override
+    public java.util.List<ProcessInstance> findByProcessKey(String processKey) {
+        return queryInstances(new com.baomidou.mybatisplus.core.conditions.query
+                        .QueryWrapper<WfInstanceEntity>()
+                .eq("process_key", processKey).orderByAsc("create_time"));
+    }
+
+    @Override
+    public java.util.List<ProcessInstance> findByStatus(com.workflow.enums.InstanceStatus status) {
+        return queryInstances(new com.baomidou.mybatisplus.core.conditions.query
+                        .QueryWrapper<WfInstanceEntity>()
+                .eq("status", status.name()).orderByAsc("create_time"));
+    }
+
+    @Override
+    public java.util.List<ProcessInstance> findAll() {
+        return queryInstances(new com.baomidou.mybatisplus.core.conditions.query
+                .QueryWrapper<WfInstanceEntity>().orderByAsc("create_time"));
+    }
+
+    @Override
+    public java.util.List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
+        return queryInstances(new com.baomidou.mybatisplus.core.conditions.query
+                        .QueryWrapper<WfInstanceEntity>()
+                .eq("process_key", processKey)
+                .eq("process_version", version)
+                .orderByAsc("create_time"));
+    }
+
+    private java.util.List<ProcessInstance> queryInstances(
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfInstanceEntity> qw) {
+        return mb.inSession(session -> {
+            java.util.List<WfInstanceEntity> entities = session.getMapper(WfInstanceMapper.class)
+                    .selectList(qw);
+            java.util.List<ProcessInstance> out = new java.util.ArrayList<>(entities.size());
+            for (WfInstanceEntity e : entities) {
+                out.add(rebuild(e, session));
+            }
+            return out;
+        });
+    }
+
     private ProcessInstance rebuild(WfInstanceEntity e, SqlSession session) {
         // 1) 加载 Token 和 Task
         WfTokenMapper tokenMapper = session.getMapper(WfTokenMapper.class);

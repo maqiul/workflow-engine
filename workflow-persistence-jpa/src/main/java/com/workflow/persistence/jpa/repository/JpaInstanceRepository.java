@@ -104,6 +104,57 @@ public class JpaInstanceRepository implements InstanceRepository {
         });
     }
 
+    // ========== 列表查询 ==========
+    //
+    // 此前这四者全部落到 InstanceRepository 的 default 实现，一调用就抛
+    // UnsupportedOperationException —— 即「历史查询 / 复杂查询」只在内存版可用，
+    // 接上真实数据库即失效。补在这里，并靠下面的跨仓储一致性用例守住了。
+
+    @Override
+    public java.util.List<ProcessInstance> findByProcessKey(String processKey) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e WHERE e.processKey = :pk ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .setParameter("pk", processKey)
+                .getResultList().stream()
+                .map(e -> rebuild(e, em))
+                .collect(java.util.stream.Collectors.toList()));
+    }
+
+    @Override
+    public java.util.List<ProcessInstance> findByStatus(com.workflow.enums.InstanceStatus status) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e WHERE e.status = :st ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .setParameter("st", status)
+                .getResultList().stream()
+                .map(e -> rebuild(e, em))
+                .collect(java.util.stream.Collectors.toList()));
+    }
+
+    @Override
+    public java.util.List<ProcessInstance> findAll() {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .getResultList().stream()
+                .map(e -> rebuild(e, em))
+                .collect(java.util.stream.Collectors.toList()));
+    }
+
+    @Override
+    public java.util.List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e WHERE e.processKey = :pk"
+                                + " AND e.processVersion = :v ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .setParameter("pk", processKey)
+                .setParameter("v", version)
+                .getResultList().stream()
+                .map(e -> rebuild(e, em))
+                .collect(java.util.stream.Collectors.toList()));
+    }
+
     private ProcessInstance rebuild(WfInstanceEntity e, EntityManager em) {
         // 1) 加载 Token 和 Task
         List<WfTokenEntity> tokens = em.createQuery(
