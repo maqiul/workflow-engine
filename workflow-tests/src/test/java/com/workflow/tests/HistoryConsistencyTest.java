@@ -384,4 +384,110 @@ class HistoryConsistencyTest {
             engine.shutdown();
         }
     }
+
+    // ---------- 6. 历史分级：只写需要的那一半 ----------
+
+    private WorkflowEngine engineOf(Suite s,
+                                    java.util.EnumSet<com.workflow.enums.HistoryKind> kinds) {
+        return new WorkflowEngine(s.procRepo(), s.instRepo(), s.taskRepo(), NOOP_SCHEDULER,
+                null, null, null, null, s.histRepo(), kinds, new LocalInstanceLocks(), null, 0, 0L);
+    }
+
+    private void runOneFlow(WorkflowEngine engine, Suite s) {
+        String id = engine.start("hist-cons", Map.of());
+        engine.completeTask(pendingTask(s, id, "apply"), "u1", true);
+        engine.completeTask(pendingTask(s, id, "manager"), "u2", true);
+    }
+
+    @Test
+    @DisplayName("只要任务历史时不得产生活动行，反之亦然；空集则两者都不写")
+    void historyKindsSelectWhatGetsWritten() {
+        var ACT = com.workflow.enums.HistoryKind.ACTIVITY;
+        var TSK = com.workflow.enums.HistoryKind.TASK;
+
+        for (String which : ALL) {
+            // 只记任务
+            Suite onlyTask = suite(which);
+            registerTwoStep(onlyTask);
+            WorkflowEngine e1 = engineOf(onlyTask, java.util.EnumSet.of(TSK));
+            runOneFlow(e1, onlyTask);
+            assertThat(onlyTask.histRepo().findTasksByInstanceId(lastInstance(onlyTask)))
+                    .as("%s: 只要 TASK 就该有任务历史", which).isNotEmpty();
+            assertThat(onlyTask.histRepo().findByActivity("hist-cons", "apply"))
+                    .as("%s: 只要 TASK 就不该写活动行（高吞吐场景砍掉的那一半）", which).isEmpty();
+            e1.shutdown();
+
+            // 只记活动
+            Suite onlyAct = suite(which);
+            registerTwoStep(onlyAct);
+            WorkflowEngine e2 = engineOf(onlyAct, java.util.EnumSet.of(ACT));
+            runOneFlow(e2, onlyAct);
+            assertThat(onlyAct.histRepo().findByActivity("hist-cons", "apply"))
+                    .as("%s: 只要 ACTIVITY 就该有活动历史", which).isNotEmpty();
+            assertThat(onlyAct.histRepo().findTasksByInstanceId(lastInstance(onlyAct)))
+                    .as("%s: 只要 ACTIVITY 就不该写任务行", which).isEmpty();
+            e2.shutdown();
+
+            // 全关
+            Suite none = suite(which);
+            registerTwoStep(none);
+            WorkflowEngine e3 = engineOf(none, java.util.EnumSet.noneOf(com.workflow.enums.HistoryKind.class));
+            runOneFlow(e3, none);
+            assertThat(none.histRepo().findByActivity("hist-cons", "apply"))
+                    .as("%s: 空集等于关闭历史", which).isEmpty();
+            assertThat(none.histRepo().findTasksByInstanceId(lastInstance(none))).isEmpty();
+            e3.shutdown();
+        }
+    }
+
+    private String lastInstance(Suite s) {
+        List<ProcessInstance> all = s.instRepo().findAll();
+        assertThat(all).isNotEmpty();
+        return all.get(all.size() - 1).getId();
+    }
+
+    // ---------- 7. 保留策略：未闭合活动绝不能被清掉 ----------
+
+    @Test
+    @DisplayName("按时间清理时，进行中的活动必须保留，否则它永远闭合不了")
+    void retentionKeepsOpenActivities() {
+        for (String which : ALL) {
+            Suite s = suite(which);
+            registerTwoStep(s);
+            WorkflowEngine engine = engineOf(s);
+
+            String done = engine.start("hist-cons", Map.of());
+            engine.completeTask(pendingTask(s, done, "apply"), "u1", true);
+            engine.completeTask(pendingTask(s, done, "manager"), "u2", true);
+            String waiting = engine.start("hist-cons", Map.of());   // apply 仍 PENDING
+
+            assertThat(s.histRepo().findByInstanceId(waiting).stream()
+                    .filter(HistoricActivityInstance::isOpen).count())
+                    .as("%s: 等待中的实例应有一条未闭合活动", which).isEqualTo(1);
+
+            var result = com.workflow.history.HistoryRetention.purgeBefore(
+                    s.histRepo(), new com.workflow.tx.UndoLogTransactionRunner(),
+                    System.currentTimeMillis() + 60_000);
+
+            assertThat(result.activitiesRemoved())
+                    .as("%s: 已闭合活动应被清理", which).isGreaterThan(0);
+            assertThat(result.tasksRemoved())
+                    .as("%s: 已落定任务应被清理", which).isGreaterThan(0);
+
+            List<HistoricActivityInstance> left = s.histRepo().findByInstanceId(waiting);
+            assertThat(left).as("%s: 未闭合活动必须留下", which).isNotEmpty();
+            assertThat(left).allSatisfy(a ->
+                    assertThat(a.isOpen()).as("%s: 剩下的都得是未闭合", which).isTrue());
+
+            // 关键：留下那条还能正常闭合，说明清理没有把流程做成死档
+            engine.completeTask(pendingTask(s, waiting, "apply"), "u1", true);
+            HistoricActivityInstance closed = s.histRepo().findByInstanceId(waiting).stream()
+                    .filter(a -> "apply".equals(a.getActivityId()))
+                    .findFirst().orElseThrow();
+            assertThat(closed.isOpen())
+                    .as("%s: 清理后审批完成，留下的活动应能闭合", which).isFalse();
+            assertThat(closed.getDuration()).isNotNull();
+            engine.shutdown();
+        }
+    }
 }

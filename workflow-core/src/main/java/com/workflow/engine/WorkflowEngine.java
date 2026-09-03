@@ -70,6 +70,11 @@ public class WorkflowEngine implements IWorkflowEngine {
     private final CarbonCopyRepository carbonCopyRepo;  // 可为 null（不启用抄送）
     /** 历史活动仓储，可为 null（不记录历史）。埋点须在同一事务内写入，见 closeHistoryIfSettled。 */
     private final com.workflow.repository.HistoryRepository historyRepo;
+    /**
+     * 记录哪些类别的历史。空集或 null 仓储等价于关闭历史。
+     * 活动与任务之间没有递进关系，故用集合而非"级别"枚举。
+     */
+    private final java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds;
 
     /** 监听器列表 */
     private final List<ExecutionListener> executionListeners = new ArrayList<>();
@@ -207,6 +212,31 @@ public class WorkflowEngine implements IWorkflowEngine {
                           TransactionRunner tx,
                           int conflictRetries,
                           long retryBackoffMillis) {
+        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo,
+                notificationService, carbonCopyRepo, historyRepo,
+                java.util.EnumSet.allOf(com.workflow.enums.HistoryKind.class),
+                locks, tx, conflictRetries, retryBackoffMillis);
+    }
+
+    /**
+     * 最全构造器 —— 额外指定要记录哪几类历史。
+     *
+     * @param historyKinds null 或空集表示不写任何历史（即使给了 {@code historyRepo}）
+     */
+    public WorkflowEngine(ProcessRepository processRepo,
+                          InstanceRepository instanceRepo,
+                          TaskRepository taskRepo,
+                          TimeoutScheduler scheduler,
+                          AuditLogRepository auditLogRepo,
+                          DelegationRepository delegationRepo,
+                          NotificationService notificationService,
+                          CarbonCopyRepository carbonCopyRepo,
+                          com.workflow.repository.HistoryRepository historyRepo,
+                          java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds,
+                          InstanceLockProvider locks,
+                          TransactionRunner tx,
+                          int conflictRetries,
+                          long retryBackoffMillis) {
         this.processRepo = Objects.requireNonNull(processRepo);
         this.instanceRepo = Objects.requireNonNull(instanceRepo);
         this.taskRepo = Objects.requireNonNull(taskRepo);
@@ -216,6 +246,9 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.notificationService = notificationService;
         this.carbonCopyRepo = carbonCopyRepo;
         this.historyRepo = historyRepo;
+        this.historyKinds = (historyKinds == null || historyKinds.isEmpty())
+                ? java.util.EnumSet.noneOf(com.workflow.enums.HistoryKind.class)
+                : java.util.EnumSet.copyOf(historyKinds);
         this.locks = locks != null ? locks : new LocalInstanceLocks();
         this.tx = tx != null ? tx : new UndoLogTransactionRunner();
         this.conflictRetries = Math.max(0, conflictRetries);
@@ -230,6 +263,32 @@ public class WorkflowEngine implements IWorkflowEngine {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
                 auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, historyRepo,
                 passthroughLocks(), TransactionRunner.noop(), 0, 0L);
+    }
+
+    /**
+     * 返回一个只记录指定类别历史的新引擎（共享同一套仓储与锁）。
+     *
+     * <p>典型用法是高吞吐场景下砍掉活动历史、只留任务历史做绩效：
+     * {@code engine.withHistoryKinds(EnumSet.of(HistoryKind.TASK))}。
+     * 传空集等于彻底关闭历史写入。
+     */
+    public WorkflowEngine withHistoryKinds(
+            java.util.EnumSet<com.workflow.enums.HistoryKind> kinds) {
+        return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
+                auditLogRepo, delegationRepo, notificationService, carbonCopyRepo,
+                historyRepo, kinds, locks, tx, conflictRetries, retryBackoffMillis);
+    }
+
+    /** 是否该写活动历史。 */
+    private boolean recordsActivity() {
+        return historyRepo != null
+                && historyKinds.contains(com.workflow.enums.HistoryKind.ACTIVITY);
+    }
+
+    /** 是否该写任务历史。 */
+    private boolean recordsTask() {
+        return historyRepo != null
+                && historyKinds.contains(com.workflow.enums.HistoryKind.TASK);
     }
 
     private static InstanceLockProvider passthroughLocks() {
@@ -334,7 +393,7 @@ public class WorkflowEngine implements IWorkflowEngine {
      * 幂等由 taskId 作主键天然保证：同一任务重复同步只会覆盖同一行。
      */
     private void recordTaskHistoryIfFinal(ProcessInstance instance, TaskInstance task) {
-        if (historyRepo == null) {
+        if (!recordsTask()) {
             return;
         }
         TaskStatus st = task.getStatus();
@@ -1009,7 +1068,7 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     /** 开启（或沿用）一条历史活动。历史写入与业务写入同事务，故不吞异常。 */
     private void openHistory(ProcessInstance instance, NodeDefinition node, String tokenId) {
-        if (historyRepo == null) {
+        if (!recordsActivity()) {
             return;
         }
         // 同一 token 在同一节点上重复进入（UserTask 等待后二次推进）时沿用那条未闭合记录，
@@ -1063,7 +1122,7 @@ public class WorkflowEngine implements IWorkflowEngine {
      */
     private void attachHistoryTask(ProcessInstance instance, String nodeId,
                                    String tokenId, String taskId) {
-        if (historyRepo == null) {
+        if (!recordsActivity()) {
             return;
         }
         com.workflow.runtime.HistoricActivityInstance open =
