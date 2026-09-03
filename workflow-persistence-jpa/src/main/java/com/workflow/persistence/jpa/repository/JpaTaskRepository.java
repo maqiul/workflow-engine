@@ -113,6 +113,37 @@ public class JpaTaskRepository implements TaskRepository {
         });
     }
 
+    // ========== 全局查询 ==========
+    //
+    // findAll / findByNodeId / findByStatus 此前全部落到 TaskRepository 接口的
+    // default 实现（抛 UnsupportedOperationException），所以 TaskQuery 一旦不带
+    // processInstanceId 就无法在真实数据库上工作。补齐在这里。
+
+    @Override
+    public List<TaskInstance> findAll() {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT t FROM WfTaskEntity t ORDER BY t.createTime", WfTaskEntity.class)
+                .getResultList().stream().map(JpaTaskRepository::toDomain).toList());
+    }
+
+    @Override
+    public List<TaskInstance> findByNodeId(String nodeId) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT t FROM WfTaskEntity t WHERE t.nodeId = :nid ORDER BY t.createTime",
+                        WfTaskEntity.class)
+                .setParameter("nid", nodeId)
+                .getResultList().stream().map(JpaTaskRepository::toDomain).toList());
+    }
+
+    @Override
+    public List<TaskInstance> findByStatus(TaskStatus status) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT t FROM WfTaskEntity t WHERE t.status = :st ORDER BY t.createTime",
+                        WfTaskEntity.class)
+                .setParameter("st", status)
+                .getResultList().stream().map(JpaTaskRepository::toDomain).toList());
+    }
+
     private static TaskInstance toDomain(WfTaskEntity e) {
         Candidate candidate = JSON.parseObject(e.getCandidateJson(), Candidate.class);
         Set<String> completed = JSON.parseObject(e.getCompletedApproversJson(), STRING_SET_TYPE);
@@ -131,21 +162,11 @@ public class JpaTaskRepository implements TaskRepository {
     private static TaskInstance rebuildFromEntity(WfTaskEntity e,
                                                   Candidate candidate,
                                                   Set<String> completed) {
-        TaskInstance task = new TaskInstance(e.getInstanceId(), e.getTokenId(), e.getNodeId(), candidate);
-        try {
-            java.lang.reflect.Field idField = TaskInstance.class.getDeclaredField("id");
-            idField.setAccessible(true);
-            idField.set(task, e.getId());
-
-            java.lang.reflect.Field completedField = TaskInstance.class.getDeclaredField("completedApprovers");
-            completedField.setAccessible(true);
-            completedField.set(task, completed);
-        } catch (Exception ex) {
-            throw new RuntimeException("重建 TaskInstance 失败: " + ex.getClass().getSimpleName()
-                    + " - " + ex.getMessage() + " (candidate=" + candidate + ")", ex);
-        }
-        task.setStatus(e.getStatus());
-        return task;
+        // 统一走 TaskInstance.reconstruct 重建：不再用反射逐个写字段，
+        // 并且把 create_time 读回来 —— 此前这个字段被丢弃，导致
+        // TaskQuery.orderByCreateTime() 只能退化成按 id 排序。
+        return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
+                e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime());
     }
 
     private <R> R runInOrOpenTx(Function<EntityManager, R> action) {

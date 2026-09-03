@@ -127,4 +127,18 @@ public interface IWorkflowEngine {
      * 标记抄送为已读
      */
     void markCarbonCopyRead(String ccId);
+
+    // ========== 查询能力（供 TaskQuery 等构建器使用） ==========
+
+    /**
+     * 全部任务实例。
+     *
+     * <p>刻意声明为<b>抽象方法</b>，而非「{@code default} 抛
+     * {@code UnsupportedOperationException}」—— 后者让缺失实现在编译期完全隐身：
+     * 内存版测试全绿，真实仓储一调用就炸。强制实现才能把缺口暴露在编译阶段。
+     */
+    List<TaskInstance> allTasks();
+
+    /** 全部流程实例（历史与效能查询的基础）。 */
+    List<ProcessInstance> allInstances();
 }

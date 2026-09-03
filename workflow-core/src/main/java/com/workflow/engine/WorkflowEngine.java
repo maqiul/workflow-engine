@@ -912,6 +912,21 @@ public class WorkflowEngine implements IWorkflowEngine {
         return taskRepo.findById(taskId);
     }
 
+    /**
+     * 全量任务 —— 供 {@link com.workflow.query.TaskQuery} 做无实例约束的查询。
+     * 直接委托仓储，不在引擎内拼装。
+     */
+    @Override
+    public List<TaskInstance> allTasks() {
+        return taskRepo.findAll();
+    }
+
+    /** 全量实例 —— 任务与流程定义的关联（key / version / 变量）由此补齐。 */
+    @Override
+    public List<ProcessInstance> allInstances() {
+        return instanceRepo.findAll();
+    }
+
     // ========== Token 推进核心 ==========
 
     /**

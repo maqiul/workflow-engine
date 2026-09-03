@@ -120,23 +120,47 @@ public class MybatisTaskRepository implements TaskRepository {
         return rebuildFromEntity(e, candidate, completed);
     }
 
+    // ========== 全局查询 ==========
+    //
+    // 此前 findAll / findByNodeId / findByStatus 落到 TaskRepository 的 default 实现
+    // （抛 UnsupportedOperationException），TaskQuery 不带 processInstanceId 时在真实
+    // 数据库上完全无法工作。走 BaseMapper + QueryWrapper，自动全列映射，
+    // 避开「手写 SQL 漏了新列导致读回丢字段」的老坑。
+
+    @Override
+    public List<TaskInstance> findAll() {
+        return queryBy(new com.baomidou.mybatisplus.core.conditions.query
+                .QueryWrapper<WfTaskEntity>().orderByAsc("create_time"));
+    }
+
+    @Override
+    public List<TaskInstance> findByNodeId(String nodeId) {
+        return queryBy(new com.baomidou.mybatisplus.core.conditions.query
+                .QueryWrapper<WfTaskEntity>()
+                .eq("node_id", nodeId).orderByAsc("create_time"));
+    }
+
+    @Override
+    public List<TaskInstance> findByStatus(TaskStatus status) {
+        return queryBy(new com.baomidou.mybatisplus.core.conditions.query
+                .QueryWrapper<WfTaskEntity>()
+                .eq("status", status.name()).orderByAsc("create_time"));
+    }
+
+    private List<TaskInstance> queryBy(
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfTaskEntity> qw) {
+        return mb.inSession(session -> session.getMapper(WfTaskMapper.class)
+                .selectList(qw).stream()
+                .map(MybatisTaskRepository::toDomain)
+                .toList());
+    }
+
     private static TaskInstance rebuildFromEntity(WfTaskEntity e,
                                                   Candidate candidate,
                                                   Set<String> completed) {
-        TaskInstance task = new TaskInstance(e.getInstanceId(), e.getTokenId(), e.getNodeId(), candidate);
-        try {
-            java.lang.reflect.Field idField = TaskInstance.class.getDeclaredField("id");
-            idField.setAccessible(true);
-            idField.set(task, e.getId());
-
-            java.lang.reflect.Field completedField = TaskInstance.class.getDeclaredField("completedApprovers");
-            completedField.setAccessible(true);
-            completedField.set(task, completed);
-        } catch (Exception ex) {
-            throw new RuntimeException("重建 TaskInstance 失败: " + ex.getClass().getSimpleName()
-                    + " - " + ex.getMessage() + " (candidate=" + candidate + ")", ex);
-        }
-        task.setStatus(e.getStatus());
-        return task;
+        // 统一走 TaskInstance.reconstruct：不再反射逐字段写，
+        // 并把 create_time 读回来（此前丢弃导致按创建时间排序退化成按 id 排序）。
+        return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
+                e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime());
     }
 }

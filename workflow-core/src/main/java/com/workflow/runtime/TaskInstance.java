@@ -31,8 +31,21 @@ public final class TaskInstance {
     private volatile TaskStatus status;
     /** 乐观锁版本号；仓储写入时 CAS，冲突抛 WorkflowConflictException。0 表示未启用。 */
     private volatile long revision;
+    /**
+     * 创建时间戳。
+     *
+     * <p>此前 domain 缺这个字段而数据库 {@code wf_task.create_time} 一直存在，
+     * 读回时直接丢弃 —— 这才是 {@code TaskQuery.orderByCreateTime()} 退化成按 id
+     * 排序的真正原因，不是实现偷懒。
+     */
+    private final long createTime;
 
     public TaskInstance(String instanceId, String tokenId, String nodeId, Candidate candidate) {
+        this(instanceId, tokenId, nodeId, candidate, System.currentTimeMillis());
+    }
+
+    private TaskInstance(String instanceId, String tokenId, String nodeId, Candidate candidate,
+                         long createTime) {
         this.id = UUID.randomUUID().toString();
         this.instanceId = Objects.requireNonNull(instanceId);
         this.tokenId = Objects.requireNonNull(tokenId);
@@ -41,16 +54,17 @@ public final class TaskInstance {
         this.completedApprovers = new HashSet<>();
         this.status = TaskStatus.PENDING;
         this.revision = 0L;
+        this.createTime = createTime;
     }
 
     /**
-     * 持久化层 / 快照专用：按给定字段重建，<b>不</b>生成新 id。
+     * 持久化层专用 - 按已落库的字段重建（含创建时间与版本号）。
      */
     public static TaskInstance reconstruct(String id, String instanceId, String tokenId,
                                            String nodeId, Candidate candidate,
                                            Set<String> completedApprovers,
-                                           TaskStatus status, long revision) {
-        TaskInstance t = new TaskInstance(instanceId, tokenId, nodeId, candidate);
+                                           TaskStatus status, long revision, long createTime) {
+        TaskInstance t = new TaskInstance(instanceId, tokenId, nodeId, candidate, createTime);
         t.setIdViaReflection(id);
         t.completedApprovers.clear();
         if (completedApprovers != null) {
@@ -62,6 +76,20 @@ public final class TaskInstance {
     }
 
     /**
+     * 旧签名兼容 - 创建时间退化为当前时刻。
+     *
+     * <p>持久层<b>不要</b>用这个重载：会把历史任务的创建时间刷成"现在"，
+     * 排序与耗时统计随之失真。仅供尚未升级的调用方过渡。
+     */
+    public static TaskInstance reconstruct(String id, String instanceId, String tokenId,
+                                           String nodeId, Candidate candidate,
+                                           Set<String> completedApprovers,
+                                           TaskStatus status, long revision) {
+        return reconstruct(id, instanceId, tokenId, nodeId, candidate,
+                completedApprovers, status, revision, System.currentTimeMillis());
+    }
+
+    /**
      * 深拷贝当前状态 —— 供事务 before-image 使用。
      *
      * <p>必须连 {@code completedApprovers} 一起拷，否则恢复动作会把事务中途
@@ -69,7 +97,7 @@ public final class TaskInstance {
      */
     public TaskInstance copy() {
         return reconstruct(id, instanceId, tokenId, nodeId, candidate,
-                new HashSet<>(completedApprovers), status, revision);
+                new HashSet<>(completedApprovers), status, revision, createTime);
     }
 
     private void setIdViaReflection(String value) {
@@ -94,6 +122,7 @@ public final class TaskInstance {
     public void setStatus(TaskStatus status) { this.status = status; }
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
+    public long getCreateTime() { return createTime; }
 
     /**
      * 记录一个审批人的完成操作
