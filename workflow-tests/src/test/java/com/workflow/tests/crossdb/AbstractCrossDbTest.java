@@ -11,8 +11,10 @@ import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.DockerClientFactory;
 
 import java.util.Map;
 
@@ -26,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *  - 静态初始化持久化(JPA 或 MyBatis-Plus + 目标数据库容器)
  *  - 提供 procRepo / instRepo / taskRepo
  *  - clearTables() 清理表数据
+ *  - {@code @BeforeAll} 首行调用 {@link #requireDocker()}
  *
  * 覆盖功能域:串行 / 并行网关 / 会签 / 驳回 / 转办 / 终止 / 挂起 /
  * 条件网关 / 版本管理 / 子流程 / 非候选拦截
@@ -37,6 +40,20 @@ public abstract class AbstractCrossDbTest {
     protected static TaskRepository taskRepo;
 
     protected WorkflowEngine engine;
+
+    /**
+     * Docker 不可用时把整类标记为 <b>skipped</b> 而非 <b>failed</b>。
+     *
+     * <p>本机没装 / 没起 Docker 属于环境缺失，不代表引擎有回归。若不显式拦截，
+     * {@code MYSQL.start()} 抛出的 IllegalStateException 会被 JUnit 记作
+     * {@code initializationError} + FAILED，让 CI 在无法运行它的机器上假红。
+     *
+     * <p>必须在子类的 {@code @BeforeAll} <b>第一行</b>调用，早于任何容器启动。
+     */
+    protected static void requireDocker() {
+        Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(),
+                "本机无可用 Docker，跳过 Testcontainers 跨库用例");
+    }
 
     @BeforeEach
     void setUpEngine() {

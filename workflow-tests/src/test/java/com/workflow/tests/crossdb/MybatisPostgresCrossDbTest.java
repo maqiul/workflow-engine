@@ -21,6 +21,7 @@ class MybatisPostgresCrossDbTest extends AbstractCrossDbTest {
 
     @BeforeAll
     static void start() {
+        requireDocker();
         POSTGRES.start();
         mb = MybatisPersistence.getDefault();
         mb.init(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());

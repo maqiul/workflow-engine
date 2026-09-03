@@ -24,6 +24,7 @@ class JpaPostgresCrossDbTest extends AbstractCrossDbTest {
 
     @BeforeAll
     static void start() {
+        requireDocker();
         POSTGRES.start();
         jpa = JpaPersistence.getDefault();
         Map<String, String> props = new HashMap<>();

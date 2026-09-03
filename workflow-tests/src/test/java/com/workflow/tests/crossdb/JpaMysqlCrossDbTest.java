@@ -24,6 +24,7 @@ class JpaMysqlCrossDbTest extends AbstractCrossDbTest {
 
     @BeforeAll
     static void start() {
+        requireDocker();
         MYSQL.start();
         jpa = JpaPersistence.getDefault();
         Map<String, String> props = new HashMap<>();

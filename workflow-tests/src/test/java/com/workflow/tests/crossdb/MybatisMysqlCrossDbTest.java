@@ -21,6 +21,7 @@ class MybatisMysqlCrossDbTest extends AbstractCrossDbTest {
 
     @BeforeAll
     static void start() {
+        requireDocker();
         MYSQL.start();
         mb = MybatisPersistence.getDefault();
         mb.init(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword());
