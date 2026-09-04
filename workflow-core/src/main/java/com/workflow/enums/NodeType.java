@@ -17,5 +17,11 @@ public enum NodeType {
     /** 子流程节点 - 引用另一个流程定义,执行完子流程后继续主流程 */
     SUB_PROCESS,
     /** 动态多实例节点 - 运行时根据变量动态创建多个任务 */
-    DYNAMIC_PARALLEL
+    DYNAMIC_PARALLEL,
+    /** 消息事件 - 等待外部消息触发 */
+    MESSAGE_EVENT,
+    /** 信号事件 - 广播式信号，多个流程可以监听 */
+    SIGNAL_EVENT,
+    /** 定时器边界事件 - 附加在任务节点上，超时后触发 */
+    TIMER_BOUNDARY
 }

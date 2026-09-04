@@ -130,6 +130,51 @@ public class ProcessBuilder {
     }
 
     /**
+     * 注册消息事件节点 - 等待外部消息触发
+     *
+     * @param id        节点 ID
+     * @param displayName 节点显示名称
+     * @param messageName 消息名称（用于路由）
+     * @param correlationKeyExpression 关联键表达式（从流程变量中提取，用于匹配消息到实例）
+     */
+    public ProcessBuilder messageEvent(String id, String displayName, String messageName, String correlationKeyExpression) {
+        checkDuplicate(id);
+        nodes.put(id, NodeDefinition.messageEvent(id, displayName, 
+            new com.workflow.definition.MessageEvent(id, messageName, correlationKeyExpression)));
+        return this;
+    }
+
+    /**
+     * 注册信号事件节点 - 广播式信号，多个流程可以监听
+     *
+     * @param id        节点 ID
+     * @param displayName 节点显示名称
+     * @param signalName 信号名称（用于路由）
+     */
+    public ProcessBuilder signalEvent(String id, String displayName, String signalName) {
+        checkDuplicate(id);
+        nodes.put(id, NodeDefinition.signalEvent(id, displayName, 
+            new com.workflow.definition.SignalEvent(id, signalName)));
+        return this;
+    }
+
+    /**
+     * 注册定时器边界事件节点 - 附加在任务节点上，超时后触发
+     *
+     * @param id        节点 ID
+     * @param displayName 节点显示名称
+     * @param attachedToNodeId 附加到的任务节点 ID
+     * @param durationMillis 超时时间（毫秒）
+     * @param interrupting 是否中断任务（true=超时后取消任务，false=超时后触发分支但任务继续）
+     */
+    public ProcessBuilder timerBoundary(String id, String displayName, String attachedToNodeId, long durationMillis, boolean interrupting) {
+        checkDuplicate(id);
+        nodes.put(id, NodeDefinition.timerBoundary(id, displayName, 
+            new com.workflow.definition.TimerBoundaryEvent(id, attachedToNodeId, durationMillis, interrupting)));
+        return this;
+    }
+
+    /**
      * 为已注册的 UserTask 节点配置超时策略
      *
      * @param id        UserTask 节点 id

@@ -75,6 +75,8 @@ public class WorkflowEngine implements IWorkflowEngine {
      * 活动与任务之间没有递进关系，故用集合而非"级别"枚举。
      */
     private final java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds;
+    /** 事件仓储，可为 null（不启用事件网关）。 */
+    private final com.workflow.repository.EventRepository eventRepo;
 
     /** 监听器列表 */
     private final List<ExecutionListener> executionListeners = new ArrayList<>();
@@ -237,6 +239,31 @@ public class WorkflowEngine implements IWorkflowEngine {
                           TransactionRunner tx,
                           int conflictRetries,
                           long retryBackoffMillis) {
+        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo,
+                notificationService, carbonCopyRepo, historyRepo, historyKinds, null,
+                locks, tx, conflictRetries, retryBackoffMillis);
+    }
+
+    /**
+     * 最全构造器 —— 额外接受事件仓储。
+     *
+     * @param eventRepo 事件仓储；null 表示不启用事件网关（MESSAGE_EVENT/SIGNAL_EVENT/TIMER_BOUNDARY）
+     */
+    public WorkflowEngine(ProcessRepository processRepo,
+                          InstanceRepository instanceRepo,
+                          TaskRepository taskRepo,
+                          TimeoutScheduler scheduler,
+                          AuditLogRepository auditLogRepo,
+                          DelegationRepository delegationRepo,
+                          NotificationService notificationService,
+                          CarbonCopyRepository carbonCopyRepo,
+                          com.workflow.repository.HistoryRepository historyRepo,
+                          java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds,
+                          com.workflow.repository.EventRepository eventRepo,
+                          InstanceLockProvider locks,
+                          TransactionRunner tx,
+                          int conflictRetries,
+                          long retryBackoffMillis) {
         this.processRepo = Objects.requireNonNull(processRepo);
         this.instanceRepo = Objects.requireNonNull(instanceRepo);
         this.taskRepo = Objects.requireNonNull(taskRepo);
@@ -249,6 +276,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.historyKinds = (historyKinds == null || historyKinds.isEmpty())
                 ? java.util.EnumSet.noneOf(com.workflow.enums.HistoryKind.class)
                 : java.util.EnumSet.copyOf(historyKinds);
+        this.eventRepo = eventRepo;
         this.locks = locks != null ? locks : new LocalInstanceLocks();
         this.tx = tx != null ? tx : new UndoLogTransactionRunner();
         this.conflictRetries = Math.max(0, conflictRetries);
@@ -840,6 +868,12 @@ public class WorkflowEngine implements IWorkflowEngine {
             }
             instanceRepo.save(instance);
             afterCommitSchedule(() -> cancelledTaskIds.forEach(scheduler::cancel));
+            
+            // 取消该实例的所有事件（消息/信号/定时器）
+            if (eventRepo != null) {
+                eventRepo.cancelEvents(instanceId);
+            }
+            
             log.info("[引擎] 终止实例 {}", instanceId);
             audit(AuditEventType.PROCESS_TERMINATED, instanceId, null, "system", "流程终止");
             fireExecutionTerminated(instance);
@@ -1009,6 +1043,188 @@ public class WorkflowEngine implements IWorkflowEngine {
         carbonCopyRepo.markRead(ccId);
     }
 
+    // ========== 事件网关 ==========
+
+    /**
+     * 发送消息 - 触发等待中的消息事件
+     * 
+     * @param messageName 消息名称
+     * @param correlationKey 关联键（用于匹配到具体的流程实例）
+     */
+    public void sendMessage(String messageName, String correlationKey) {
+        if (eventRepo == null) {
+            throw new IllegalStateException("未启用事件网关，请注入 EventRepository");
+        }
+        
+        List<String> instanceIds = eventRepo.triggerMessageEvent(messageName, correlationKey);
+        if (instanceIds.isEmpty()) {
+            log.warn("[引擎] 消息事件未匹配到任何实例 messageName={} correlationKey={}", messageName, correlationKey);
+            return;
+        }
+        
+        for (String instanceId : instanceIds) {
+            exclusiveVoid(instanceId, "sendMessage", () -> {
+                ProcessInstance instance = instanceRepo.findById(instanceId);
+                ProcessDefinition def = defOf(instance);
+                
+                // 找到等待该消息的节点
+                for (var entry : instance.getActiveTokens().entrySet()) {
+                    Token token = entry.getValue();
+                    NodeDefinition node = def.getNode(token.getCurrentNodeId());
+                    if (node.isMessageEvent() && 
+                        node.getMessageEvent().messageName().equals(messageName)) {
+                        // 消耗当前 Token，推进到下一节点
+                        instance.consumeToken(token.getId());
+                        List<Transition> outs = def.getOutgoing(node.getId());
+                        if (!outs.isEmpty()) {
+                            Token nextToken = new Token(instance.getId(), outs.get(0).getTo());
+                            instance.addToken(nextToken);
+                            advanceToken(instance, def, nextToken.getId());
+                        }
+                        log.info("[引擎] 消息事件触发 instanceId={} nodeId={} messageName={}", 
+                                instanceId, node.getId(), messageName);
+                        break;
+                    }
+                }
+                instanceRepo.save(instance);
+            });
+        }
+    }
+
+    /**
+     * 发送信号 - 触发所有等待该信号的流程实例
+     * 
+     * @param signalName 信号名称
+     */
+    public void sendSignal(String signalName) {
+        if (eventRepo == null) {
+            throw new IllegalStateException("未启用事件网关，请注入 EventRepository");
+        }
+        
+        List<String> instanceIds = eventRepo.triggerSignalEvent(signalName);
+        if (instanceIds.isEmpty()) {
+            log.warn("[引擎] 信号事件未匹配到任何实例 signalName={}", signalName);
+            return;
+        }
+        
+        for (String instanceId : instanceIds) {
+            exclusiveVoid(instanceId, "sendSignal", () -> {
+                ProcessInstance instance = instanceRepo.findById(instanceId);
+                ProcessDefinition def = defOf(instance);
+                
+                // 找到等待该信号的节点
+                for (var entry : instance.getActiveTokens().entrySet()) {
+                    Token token = entry.getValue();
+                    NodeDefinition node = def.getNode(token.getCurrentNodeId());
+                    if (node.isSignalEvent() && 
+                        node.getSignalEvent().signalName().equals(signalName)) {
+                        // 消耗当前 Token，推进到下一节点
+                        instance.consumeToken(token.getId());
+                        List<Transition> outs = def.getOutgoing(node.getId());
+                        if (!outs.isEmpty()) {
+                            Token nextToken = new Token(instance.getId(), outs.get(0).getTo());
+                            instance.addToken(nextToken);
+                            advanceToken(instance, def, nextToken.getId());
+                        }
+                        log.info("[引擎] 信号事件触发 instanceId={} nodeId={} signalName={}", 
+                                instanceId, node.getId(), signalName);
+                        break;
+                    }
+                }
+                instanceRepo.save(instance);
+            });
+        }
+    }
+
+    /**
+     * 检查并触发到期的定时器事件
+     * 
+     * 应由外部调度器定期调用（如每分钟一次）
+     */
+    public void checkAndTriggerTimers() {
+        if (eventRepo == null) {
+            log.warn("[引擎] checkAndTriggerTimers 被调用但 eventRepo 为空");
+            return;
+        }
+        
+        List<com.workflow.repository.EventRepository.TimerEvent> expiredTimers = 
+                eventRepo.getExpiredTimers(java.time.Instant.now());
+        log.info("[引擎] checkAndTriggerTimers 发现 {} 个到期定时器", expiredTimers.size());
+        
+        for (var timer : expiredTimers) {
+            exclusiveVoid(timer.instanceId(), "checkAndTriggerTimers", () -> {
+                ProcessInstance instance = instanceRepo.findById(timer.instanceId());
+                
+                // 实例可能已经完成或终止，跳过
+                if (instance.getStatus() != com.workflow.enums.InstanceStatus.RUNNING) {
+                    return;
+                }
+                
+                ProcessDefinition def = defOf(instance);
+                
+                // 查找 timer 节点
+                NodeDefinition timerNode = def.getNode(timer.nodeId());
+                if (timerNode == null || !timerNode.isTimerBoundary()) {
+                    return;
+                }
+                
+                // 找到 timer 节点附加到的 USER_TASK 节点
+                String attachedToNodeId = timerNode.getTimerBoundaryEvent().attachedToNodeId();
+                
+                // 找到 waiting 在 attachedToNodeId 上的 Token
+                Token waitingToken = null;
+                for (Token t : instance.getActiveTokens().values()) {
+                    if (attachedToNodeId.equals(t.getCurrentNodeId())) {
+                        waitingToken = t;
+                        break;
+                    }
+                }
+                if (waitingToken == null) {
+                    return;
+                }
+                
+                if (timer.interrupting()) {
+                    // 中断模式：取消当前任务，推进到定时器出口
+                    log.info("[引擎] 定时器触发（中断模式）instanceId={} nodeId={}", 
+                            timer.instanceId(), timer.nodeId());
+                    
+                    // 找到关联的任务并取消
+                    for (TaskInstance task : taskRepo.findByInstanceId(timer.instanceId())) {
+                        if (task.getNodeId().equals(attachedToNodeId) &&
+                            task.getStatus() == TaskStatus.PENDING) {
+                            task.setStatus(TaskStatus.TERMINATED);
+                            taskRepo.save(task);
+                            syncTaskInInstance(instance, task);
+                        }
+                    }
+                    
+                    // 消耗当前 Token，推进到定时器出口
+                    instance.consumeToken(waitingToken.getId());
+                    List<Transition> outs = def.getOutgoing(timer.nodeId());
+                    if (!outs.isEmpty()) {
+                        Token nextToken = new Token(instance.getId(), outs.get(0).getTo());
+                        instance.addToken(nextToken);
+                        advanceToken(instance, def, nextToken.getId());
+                    }
+                } else {
+                    // 非中断模式：创建新 Token 走定时器分支，原任务继续
+                    log.info("[引擎] 定时器触发（非中断模式）instanceId={} nodeId={}", 
+                            timer.instanceId(), timer.nodeId());
+                    List<Transition> outs = def.getOutgoing(timer.nodeId());
+                    if (!outs.isEmpty()) {
+                        Token nextToken = new Token(instance.getId(), outs.get(0).getTo());
+                        instance.addToken(nextToken);
+                        advanceToken(instance, def, nextToken.getId());
+                    }
+                }
+                
+                // 触发后移除该定时器事件
+                eventRepo.cancelTimer(timer.instanceId(), timer.nodeId());
+                instanceRepo.save(instance);
+            });
+        }
+    }
+
     // ========== 查询 ==========
 
     @Override
@@ -1176,6 +1392,8 @@ public class WorkflowEngine implements IWorkflowEngine {
                         String target = current.getTimeoutTargetUserId();
                         afterCommitSchedule(() -> scheduler.schedule(newTaskId, instId, timeout, policy, target));
                     }
+                    // 注册附加在本节点上的定时器边界事件
+                    registerTimerBoundaryFor(def, instance, current, tokenId);
                 } else if (existing.getStatus() == TaskStatus.COMPLETED) {
                     // 任务已完成 -> 把 Token 推进到下一节点
                     log.info("[引擎] advanceToken USER_TASK node={} existing.status=COMPLETED -> 推进 Token", current.getId());
@@ -1393,6 +1611,60 @@ public class WorkflowEngine implements IWorkflowEngine {
                     }
                 }
             }
+            case MESSAGE_EVENT -> {
+                if (eventRepo == null) {
+                    throw new IllegalStateException("未启用事件网关，请注入 EventRepository");
+                }
+                var messageEvent = current.getMessageEvent();
+                if (messageEvent == null) {
+                    throw new IllegalStateException("MESSAGE_EVENT 节点 " + current.getId() + " 缺少消息事件定义");
+                }
+                
+                // 从流程变量中提取 correlationKey
+                String correlationKey = evaluateExpression(messageEvent.correlationKeyExpression(), instance.getVariables());
+                if (correlationKey == null || correlationKey.isBlank()) {
+                    throw new IllegalStateException("MESSAGE_EVENT 节点 " + current.getId() + 
+                            " 的 correlationKey 表达式 " + messageEvent.correlationKeyExpression() + " 计算结果为空");
+                }
+                
+                // 保存等待中的消息事件
+                eventRepo.saveMessageEvent(instance.getId(), current.getId(), messageEvent.messageName(), correlationKey);
+                log.info("[引擎] MESSAGE_EVENT 节点 {} 等待消息 name={} correlationKey={}", 
+                        current.getId(), messageEvent.messageName(), correlationKey);
+                // Token 停留在当前节点，等待外部消息触发
+            }
+            case SIGNAL_EVENT -> {
+                if (eventRepo == null) {
+                    throw new IllegalStateException("未启用事件网关，请注入 EventRepository");
+                }
+                var signalEvent = current.getSignalEvent();
+                if (signalEvent == null) {
+                    throw new IllegalStateException("SIGNAL_EVENT 节点 " + current.getId() + " 缺少信号事件定义");
+                }
+                
+                // 保存等待中的信号事件
+                eventRepo.saveSignalEvent(instance.getId(), current.getId(), signalEvent.signalName());
+                log.info("[引擎] SIGNAL_EVENT 节点 {} 等待信号 name={}", current.getId(), signalEvent.signalName());
+                // Token 停留在当前节点，等待外部信号触发
+            }
+            case TIMER_BOUNDARY -> {
+                if (eventRepo == null) {
+                    throw new IllegalStateException("未启用事件网关，请注入 EventRepository");
+                }
+                var timerEvent = current.getTimerBoundaryEvent();
+                if (timerEvent == null) {
+                    throw new IllegalStateException("TIMER_BOUNDARY 节点 " + current.getId() + " 缺少定时器事件定义");
+                }
+                
+                // 计算触发时间
+                java.time.Instant triggerTime = java.time.Instant.now().plusMillis(timerEvent.durationMillis());
+                
+                // 保存等待中的定时器事件
+                eventRepo.saveTimerEvent(instance.getId(), current.getId(), triggerTime, timerEvent.interrupting());
+                log.info("[引擎] TIMER_BOUNDARY 节点 {} 等待定时器 triggerTime={} interrupting={}", 
+                        current.getId(), triggerTime, timerEvent.interrupting());
+                // Token 停留在当前节点，等待定时器触发
+            }
         }
 
         checkAndFinalize(instance);
@@ -1418,6 +1690,52 @@ public class WorkflowEngine implements IWorkflowEngine {
             }
         }
         return true;
+    }
+
+    /**
+     * 为附加到指定 USER_TASK 节点的 TIMER_BOUNDARY 注册定时器事件
+     */
+    private void registerTimerBoundaryFor(ProcessDefinition def, ProcessInstance instance,
+                                           NodeDefinition userTaskNode, String tokenId) {
+        if (eventRepo == null) {
+            return;
+        }
+        // 查找所有 attachedToNodeId == userTaskNode.getId() 的 TIMER_BOUNDARY 节点
+        for (NodeDefinition n : def.getNodes().values()) {
+            if (n.isTimerBoundary() && n.getTimerBoundaryEvent().attachedToNodeId().equals(userTaskNode.getId())) {
+                var timerEvent = n.getTimerBoundaryEvent();
+                java.time.Instant triggerTime = java.time.Instant.now().plusMillis(timerEvent.durationMillis());
+                eventRepo.saveTimerEvent(instance.getId(), n.getId(), triggerTime, timerEvent.interrupting());
+                log.info("[引擎] TIMER_BOUNDARY 节点 {} 注册定时器 triggerTime={} interrupting={}",
+                        n.getId(), triggerTime, timerEvent.interrupting());
+            }
+        }
+    }
+
+    /**
+     * 简单的表达式求值 - 从流程变量中提取值
+     * 
+     * 支持格式：
+     * - "variableName" - 直接取变量值
+     * - "${variableName}" - 同上
+     * 
+     * @param expression 表达式
+     * @param variables 流程变量
+     * @return 变量值（转为字符串），null 表示变量不存在
+     */
+    private String evaluateExpression(String expression, Map<String, Object> variables) {
+        if (expression == null || expression.isBlank()) {
+            return null;
+        }
+        
+        // 去除 ${} 包装
+        String varName = expression.trim();
+        if (varName.startsWith("${") && varName.endsWith("}")) {
+            varName = varName.substring(2, varName.length() - 1).trim();
+        }
+        
+        Object value = variables.get(varName);
+        return value != null ? value.toString() : null;
     }
 
     /**

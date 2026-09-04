@@ -111,6 +111,9 @@ public final class BpmnExporter {
             case DYNAMIC_PARALLEL -> throw new UnsupportedOperationException(
                     "DYNAMIC_PARALLEL 节点暂无 BPMN 标准对应物，不支持导出: node=" + node.getId()
                             + "。需要交换格式请先改造为 USER_TASK + 会签，或自行写扩展。");
+            case MESSAGE_EVENT -> "intermediateCatchEvent";
+            case SIGNAL_EVENT -> "intermediateCatchEvent";
+            case TIMER_BOUNDARY -> "boundaryEvent";
         };
 
         var el = doc.createElementNS(BPMN_NS, tag);
