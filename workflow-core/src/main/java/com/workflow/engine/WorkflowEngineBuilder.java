@@ -55,6 +55,7 @@ public final class WorkflowEngineBuilder {
     private HistoryRepository historyRepository;
     private EnumSet<com.workflow.enums.HistoryKind> historyKinds = EnumSet.allOf(com.workflow.enums.HistoryKind.class);
     private EventRepository eventRepository;
+    private com.workflow.dmn.DecisionRepository decisionRepository;
     private InstanceLockProvider lockProvider;
     private TransactionRunner transactionRunner;
     private int conflictRetries = 3;
@@ -129,6 +130,12 @@ public final class WorkflowEngineBuilder {
         return this;
     }
 
+    /** 决策仓储；不设置时不启用决策网关 */
+    public WorkflowEngineBuilder decisionRepository(com.workflow.dmn.DecisionRepository decisionRepository) {
+        this.decisionRepository = decisionRepository;
+        return this;
+    }
+
     /** 流程树锁；不设置时使用 {@link LocalInstanceLocks} */
     public WorkflowEngineBuilder lockProvider(InstanceLockProvider lockProvider) {
         this.lockProvider = lockProvider;
@@ -165,6 +172,7 @@ public final class WorkflowEngineBuilder {
                 historyRepository,
                 historyKinds,
                 eventRepository,
+                decisionRepository,
                 lockProvider,
                 transactionRunner,
                 conflictRetries,

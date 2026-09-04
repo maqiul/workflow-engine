@@ -23,5 +23,7 @@ public enum NodeType {
     /** 信号事件 - 广播式信号，多个流程可以监听 */
     SIGNAL_EVENT,
     /** 定时器边界事件 - 附加在任务节点上，超时后触发 */
-    TIMER_BOUNDARY
+    TIMER_BOUNDARY,
+    /** 决策节点 - 基于 DMN 决策表进行业务规则决策 */
+    DECISION
 }

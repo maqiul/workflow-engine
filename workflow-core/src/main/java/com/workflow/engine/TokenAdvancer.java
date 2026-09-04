@@ -51,6 +51,8 @@ public class TokenAdvancer {
     private final EventRepository eventRepo;
     private final HistoryRepository historyRepo;
     private final TimeoutScheduler scheduler;
+    private final com.workflow.dmn.DecisionRepository decisionRepo;
+    private final com.workflow.dmn.DecisionTableExecutor decisionExecutor;
     
     private final Consumer<TaskInstance> onTaskCreated;
     private final SubProcessStarter subProcessStarter;
@@ -74,6 +76,24 @@ public class TokenAdvancer {
             Consumer<ProcessInstance> onSubProcessCompleted,
             Consumer<Runnable> afterCommitSchedule,
             Consumer<ProcessInstance> onProcessCompleted) {
+        this(taskRepo, instanceRepo, eventRepo, historyRepo, scheduler, onTaskCreated,
+             subProcessStarter, onSubProcessCompleted, afterCommitSchedule, onProcessCompleted,
+             null, null);
+    }
+    
+    public TokenAdvancer(
+            TaskRepository taskRepo,
+            InstanceRepository instanceRepo,
+            EventRepository eventRepo,
+            HistoryRepository historyRepo,
+            TimeoutScheduler scheduler,
+            Consumer<TaskInstance> onTaskCreated,
+            SubProcessStarter subProcessStarter,
+            Consumer<ProcessInstance> onSubProcessCompleted,
+            Consumer<Runnable> afterCommitSchedule,
+            Consumer<ProcessInstance> onProcessCompleted,
+            com.workflow.dmn.DecisionRepository decisionRepo,
+            com.workflow.dmn.DecisionTableExecutor decisionExecutor) {
         this.taskRepo = taskRepo;
         this.instanceRepo = instanceRepo;
         this.eventRepo = eventRepo;
@@ -84,6 +104,8 @@ public class TokenAdvancer {
         this.onSubProcessCompleted = onSubProcessCompleted;
         this.afterCommitSchedule = afterCommitSchedule;
         this.onProcessCompleted = onProcessCompleted;
+        this.decisionRepo = decisionRepo;
+        this.decisionExecutor = decisionExecutor;
     }
     
     public void advanceToken(ProcessInstance instance, ProcessDefinition def, String tokenId,
@@ -144,6 +166,9 @@ public class TokenAdvancer {
             }
             case TIMER_BOUNDARY -> {
                 handleTimerBoundary(instance, current);
+            }
+            case DECISION -> {
+                handleDecision(instance, def, tokenId, current, recordsActivity);
             }
         }
 
@@ -436,6 +461,67 @@ public class TokenAdvancer {
         eventRepo.saveTimerEvent(instance.getId(), current.getId(), triggerTime, timerEvent.interrupting());
         log.info("[TokenAdvancer] TIMER_BOUNDARY node {} waiting for timer triggerTime={} interrupting={}", 
                 current.getId(), triggerTime, timerEvent.interrupting());
+    }
+    
+    private void handleDecision(ProcessInstance instance, ProcessDefinition def,
+                               String tokenId, NodeDefinition current, boolean recordsActivity) {
+        if (decisionRepo == null) {
+            throw new IllegalStateException("Decision gateway not enabled, please inject DecisionRepository");
+        }
+        if (decisionExecutor == null) {
+            throw new IllegalStateException("Decision executor not enabled");
+        }
+        
+        String decisionTableId = current.getDecisionTableId();
+        if (decisionTableId == null) {
+            throw new IllegalStateException("DECISION node " + current.getId() + " missing decision table ID");
+        }
+        
+        // 查找决策表
+        com.workflow.dmn.DecisionTable decisionTable = decisionRepo.findById(decisionTableId);
+        if (decisionTable == null) {
+            throw new IllegalStateException("Decision table not found: " + decisionTableId);
+        }
+        
+        // 执行决策表
+        Map<String, Object> context = instance.getVariables();
+        com.workflow.dmn.DecisionTableExecutor.DecisionResult result = decisionExecutor.execute(decisionTable, context);
+        
+        if (!result.isMatched()) {
+            log.warn("[TokenAdvancer] DECISION node {} no matching rule in decision table {}", 
+                    current.getId(), decisionTableId);
+            // 没有匹配规则，消耗 Token
+            instance.consumeToken(tokenId);
+            instanceRepo.save(instance);
+            return;
+        }
+        
+        // 将决策结果写入流程变量
+        Map<String, Object> outputs = result.getSingleOutput();
+        if (outputs != null) {
+            for (Map.Entry<String, Object> entry : outputs.entrySet()) {
+                instance.setVariable(entry.getKey(), entry.getValue());
+            }
+            instanceRepo.save(instance);
+        }
+        
+        log.info("[TokenAdvancer] DECISION node {} executed decision table {}, outputs={}", 
+                current.getId(), decisionTableId, outputs);
+        
+        // 决策完成后，继续推进 Token
+        List<Transition> outs = def.getOutgoing(current.getId());
+        if (outs.isEmpty()) {
+            instance.consumeToken(tokenId);
+            instanceRepo.save(instance);
+        } else if (outs.size() == 1) {
+            Token token = instance.getActiveTokens().get(tokenId);
+            token.setCurrentNodeId(outs.get(0).getTo());
+            instanceRepo.save(instance);
+            advanceToken(instance, def, tokenId, recordsActivity);
+        } else {
+            // 多出口 - 使用排他网关逻辑，根据决策结果选择出口
+            handleExclusiveGateway(instance, def, tokenId, current, recordsActivity);
+        }
     }
     
     private boolean allJoinArrived(ProcessDefinition def, String joinNodeId, ProcessInstance instance) {

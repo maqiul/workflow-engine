@@ -175,6 +175,19 @@ public class ProcessBuilder {
     }
 
     /**
+     * 注册决策节点 - 基于 DMN 决策表进行业务规则决策
+     *
+     * @param id              节点 ID
+     * @param displayName     节点显示名称
+     * @param decisionTableId 决策表 ID
+     */
+    public ProcessBuilder decision(String id, String displayName, String decisionTableId) {
+        checkDuplicate(id);
+        nodes.put(id, NodeDefinition.decision(id, displayName, decisionTableId));
+        return this;
+    }
+
+    /**
      * 为已注册的 UserTask 节点配置超时策略
      *
      * @param id        UserTask 节点 id

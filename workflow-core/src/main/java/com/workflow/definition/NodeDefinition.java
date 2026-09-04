@@ -36,22 +36,24 @@ public final class NodeDefinition {
     private final SignalEvent signalEvent;
     /** 仅 TIMER_BOUNDARY 节点有值 - 定时器边界事件定义 */
     private final TimerBoundaryEvent timerBoundaryEvent;
+    /** 仅 DECISION 节点有值 - 决策表 ID */
+    private final String decisionTableId;
 
     /** 构造器 - 普通节点(无子流程引用、无超时、无动态多实例) */
     private NodeDefinition(String id, String name, NodeType type, Candidate candidate) {
-        this(id, name, type, candidate, null, 0, TimeoutPolicy.NONE, null, null, null, null, null, null);
+        this(id, name, type, candidate, null, 0, TimeoutPolicy.NONE, null, null, null, null, null, null, null);
     }
 
     /** 构造器 - 含子流程引用,无超时(兼容旧序列化数据) */
     private NodeDefinition(String id, String name, NodeType type, Candidate candidate, String subProcessKey) {
-        this(id, name, type, candidate, subProcessKey, 0, TimeoutPolicy.NONE, null, null, null, null, null, null);
+        this(id, name, type, candidate, subProcessKey, 0, TimeoutPolicy.NONE, null, null, null, null, null, null, null);
     }
 
     /** 构造器 - 含超时,无动态多实例(兼容旧序列化数据) */
     private NodeDefinition(String id, String name, NodeType type, Candidate candidate,
                            String subProcessKey, long timeoutMillis,
                            TimeoutPolicy timeoutPolicy, String timeoutTargetUserId) {
-        this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId, null, null, null, null, null);
+        this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId, null, null, null, null, null, null);
     }
 
     /**
@@ -62,7 +64,19 @@ public final class NodeDefinition {
                            TimeoutPolicy timeoutPolicy, String timeoutTargetUserId,
                            String dynamicParallelVariable, CandidateStrategy dynamicParallelStrategy) {
         this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId, 
-             dynamicParallelVariable, dynamicParallelStrategy, null, null, null);
+             dynamicParallelVariable, dynamicParallelStrategy, null, null, null, null);
+    }
+
+    /**
+     * 构造器 - 含事件(兼容旧序列化数据)
+     */
+    private NodeDefinition(String id, String name, NodeType type, Candidate candidate,
+                           String subProcessKey, long timeoutMillis,
+                           TimeoutPolicy timeoutPolicy, String timeoutTargetUserId,
+                           String dynamicParallelVariable, CandidateStrategy dynamicParallelStrategy,
+                           MessageEvent messageEvent, SignalEvent signalEvent, TimerBoundaryEvent timerBoundaryEvent) {
+        this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId,
+             dynamicParallelVariable, dynamicParallelStrategy, messageEvent, signalEvent, timerBoundaryEvent, null);
     }
 
     /**
@@ -75,7 +89,8 @@ public final class NodeDefinition {
                            String subProcessKey, long timeoutMillis,
                            TimeoutPolicy timeoutPolicy, String timeoutTargetUserId,
                            String dynamicParallelVariable, CandidateStrategy dynamicParallelStrategy,
-                           MessageEvent messageEvent, SignalEvent signalEvent, TimerBoundaryEvent timerBoundaryEvent) {
+                           MessageEvent messageEvent, SignalEvent signalEvent, TimerBoundaryEvent timerBoundaryEvent,
+                           String decisionTableId) {
         this.id = Objects.requireNonNull(id, "id 不能为空");
         this.name = name != null ? name : id;
         this.type = Objects.requireNonNull(type, "type 不能为空");
@@ -89,6 +104,7 @@ public final class NodeDefinition {
         this.messageEvent = messageEvent;
         this.signalEvent = signalEvent;
         this.timerBoundaryEvent = timerBoundaryEvent;
+        this.decisionTableId = decisionTableId;
     }
 
     public static NodeDefinition start(String id) {
@@ -127,7 +143,7 @@ public final class NodeDefinition {
     public static NodeDefinition dynamicParallel(String id, String name, String variable, CandidateStrategy strategy) {
         Objects.requireNonNull(variable, "动态多实例变量名不能为空");
         Objects.requireNonNull(strategy, "动态多实例策略不能为空");
-        return new NodeDefinition(id, name, NodeType.DYNAMIC_PARALLEL, null, null, 0, TimeoutPolicy.NONE, null, variable, strategy, null, null, null);
+        return new NodeDefinition(id, name, NodeType.DYNAMIC_PARALLEL, null, null, 0, TimeoutPolicy.NONE, null, variable, strategy, null, null, null, null);
     }
 
     /**
@@ -139,7 +155,7 @@ public final class NodeDefinition {
      */
     public static NodeDefinition messageEvent(String id, String name, MessageEvent messageEvent) {
         Objects.requireNonNull(messageEvent, "messageEvent 不能为空");
-        return new NodeDefinition(id, name, NodeType.MESSAGE_EVENT, null, null, 0, TimeoutPolicy.NONE, null, null, null, messageEvent, null, null);
+        return new NodeDefinition(id, name, NodeType.MESSAGE_EVENT, null, null, 0, TimeoutPolicy.NONE, null, null, null, messageEvent, null, null, null);
     }
 
     /**
@@ -151,7 +167,7 @@ public final class NodeDefinition {
      */
     public static NodeDefinition signalEvent(String id, String name, SignalEvent signalEvent) {
         Objects.requireNonNull(signalEvent, "signalEvent 不能为空");
-        return new NodeDefinition(id, name, NodeType.SIGNAL_EVENT, null, null, 0, TimeoutPolicy.NONE, null, null, null, null, signalEvent, null);
+        return new NodeDefinition(id, name, NodeType.SIGNAL_EVENT, null, null, 0, TimeoutPolicy.NONE, null, null, null, null, signalEvent, null, null);
     }
 
     /**
@@ -163,7 +179,19 @@ public final class NodeDefinition {
      */
     public static NodeDefinition timerBoundary(String id, String name, TimerBoundaryEvent timerBoundaryEvent) {
         Objects.requireNonNull(timerBoundaryEvent, "timerBoundaryEvent 不能为空");
-        return new NodeDefinition(id, name, NodeType.TIMER_BOUNDARY, null, null, 0, TimeoutPolicy.NONE, null, null, null, null, null, timerBoundaryEvent);
+        return new NodeDefinition(id, name, NodeType.TIMER_BOUNDARY, null, null, 0, TimeoutPolicy.NONE, null, null, null, null, null, timerBoundaryEvent, null);
+    }
+
+    /**
+     * 创建决策节点
+     *
+     * @param id              节点 ID
+     * @param name            节点名称
+     * @param decisionTableId 决策表 ID
+     */
+    public static NodeDefinition decision(String id, String name, String decisionTableId) {
+        Objects.requireNonNull(decisionTableId, "决策表 ID 不能为空");
+        return new NodeDefinition(id, name, NodeType.DECISION, null, null, 0, TimeoutPolicy.NONE, null, null, null, null, null, null, decisionTableId);
     }
 
     /**
@@ -181,9 +209,9 @@ public final class NodeDefinition {
             throw new IllegalArgumentException("超时毫秒数不能为负数: " + millis);
         }
         if (policy == null || policy == TimeoutPolicy.NONE) {
-            return new NodeDefinition(id, name, type, candidate, subProcessKey, 0, TimeoutPolicy.NONE, null, dynamicParallelVariable, dynamicParallelStrategy);
+            return new NodeDefinition(id, name, type, candidate, subProcessKey, 0, TimeoutPolicy.NONE, null, dynamicParallelVariable, dynamicParallelStrategy, messageEvent, signalEvent, timerBoundaryEvent, decisionTableId);
         }
-        return new NodeDefinition(id, name, type, candidate, subProcessKey, millis, policy, targetUserId, dynamicParallelVariable, dynamicParallelStrategy);
+        return new NodeDefinition(id, name, type, candidate, subProcessKey, millis, policy, targetUserId, dynamicParallelVariable, dynamicParallelStrategy, messageEvent, signalEvent, timerBoundaryEvent, decisionTableId);
     }
 
     public String getId() { return id; }
@@ -225,6 +253,9 @@ public final class NodeDefinition {
     /** 定时器边界事件定义 - 仅 TIMER_BOUNDARY 节点有值 */
     public TimerBoundaryEvent getTimerBoundaryEvent() { return timerBoundaryEvent; }
 
+    /** 决策表 ID - 仅 DECISION 节点有值 */
+    public String getDecisionTableId() { return decisionTableId; }
+
     /** 是否为消息事件节点 */
     @JSONField(serialize = false)
     public boolean isMessageEvent() {
@@ -243,6 +274,12 @@ public final class NodeDefinition {
         return type == NodeType.TIMER_BOUNDARY && timerBoundaryEvent != null;
     }
 
+    /** 是否为决策节点 */
+    @JSONField(serialize = false)
+    public boolean isDecision() {
+        return type == NodeType.DECISION && decisionTableId != null;
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -254,6 +291,7 @@ public final class NodeDefinition {
         if (isMessageEvent()) sb.append(" msg=").append(messageEvent.messageName());
         if (isSignalEvent()) sb.append(" sig=").append(signalEvent.signalName());
         if (isTimerBoundary()) sb.append(" timer=").append(timerBoundaryEvent.durationMillis()).append("ms");
+        if (isDecision()) sb.append(" decision=").append(decisionTableId);
         sb.append("]");
         return sb.toString();
     }

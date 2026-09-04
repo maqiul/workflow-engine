@@ -104,6 +104,7 @@ public final class BpmnImporter {
                 case "callActivity" -> parseCallActivity(el, builder);
                 case "intermediateCatchEvent" -> parseIntermediateCatchEvent(el, builder);
                 case "boundaryEvent" -> parseBoundaryEvent(el, builder);
+                case "businessRuleTask" -> parseBusinessRuleTask(el, builder);
                 case "sequenceFlow" -> parseSequenceFlow(el, builder);
                 // multiInstanceLoopCharacteristics 在 userTask 内部处理，这里忽略
             }
@@ -303,6 +304,35 @@ public final class BpmnImporter {
         boolean interrupting = interruptingStr.isBlank() || Boolean.parseBoolean(interruptingStr);
 
         builder.timerBoundary(id, name, attachedTo, durationMillis, interrupting);
+    }
+
+    /**
+     * 解析 businessRuleTask —— 决策节点。
+     * 从 extensionElements 中的 wf:decision 读取 tableId。
+     */
+    private static void parseBusinessRuleTask(Element el, ProcessBuilder builder) {
+        String id = el.getAttribute("id");
+        String name = el.getAttribute("name");
+        if (name.isBlank()) {
+            name = id;
+        }
+
+        NodeList decList = el.getElementsByTagNameNS(BpmnExporter.WF_NS, "decision");
+        if (decList.getLength() == 0) {
+            decList = el.getElementsByTagName("wf:decision");
+        }
+        if (decList.getLength() == 0) {
+            throw new BpmnException("businessRuleTask " + id + " 缺少 wf:decision 扩展定义");
+        }
+
+        Element dec = (Element) decList.item(0);
+        String tableId = dec.getAttribute("tableId");
+
+        if (tableId.isBlank()) {
+            throw new BpmnException("businessRuleTask " + id + " 的 wf:decision 缺少 tableId");
+        }
+
+        builder.decision(id, name, tableId);
     }
 
     private static void parseSequenceFlow(Element el, ProcessBuilder builder) {

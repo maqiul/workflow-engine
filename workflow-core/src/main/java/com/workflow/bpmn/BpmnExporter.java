@@ -114,6 +114,7 @@ public final class BpmnExporter {
             case MESSAGE_EVENT -> "intermediateCatchEvent";
             case SIGNAL_EVENT -> "intermediateCatchEvent";
             case TIMER_BOUNDARY -> "boundaryEvent";
+            case DECISION -> "businessRuleTask";
         };
 
         var el = doc.createElementNS(BPMN_NS, tag);
@@ -135,7 +136,8 @@ public final class BpmnExporter {
         boolean hasStd = node.getCandidate() != null;
         boolean hasWf = hasStd || node.hasTimeout()
                 || node.getTimeoutPolicy() != TimeoutPolicy.NONE
-                || node.isMessageEvent() || node.isSignalEvent() || node.isTimerBoundary();
+                || node.isMessageEvent() || node.isSignalEvent() || node.isTimerBoundary()
+                || node.isDecision();
         if (!hasStd && !hasWf) {
             return;
         }
@@ -175,6 +177,12 @@ public final class BpmnExporter {
             tmr.setAttribute("duration", String.valueOf(node.getTimerBoundaryEvent().durationMillis()));
             tmr.setAttribute("interrupting", String.valueOf(node.getTimerBoundaryEvent().interrupting()));
             ext.appendChild(tmr);
+        }
+        // 决策节点属性导出
+        if (node.isDecision()) {
+            var dec = doc.createElementNS(WF_NS, "wf:decision");
+            dec.setAttribute("tableId", node.getDecisionTableId());
+            ext.appendChild(dec);
         }
         el.appendChild(ext);
 
