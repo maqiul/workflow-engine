@@ -109,161 +109,36 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     private final TimeoutScheduler scheduler;
 
+    /**
+     * 最简构造器 - 仅注入三个必填仓储
+     *
+     * <p>推荐新代码使用 {@link WorkflowEngineBuilder} 以获得更好的可读性。
+     */
     public WorkflowEngine(ProcessRepository processRepo,
                           InstanceRepository instanceRepo,
                           TaskRepository taskRepo) {
-        this(processRepo, instanceRepo, taskRepo, null, null, null, null, null);
-    }
-
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler) {
-        this(processRepo, instanceRepo, taskRepo, scheduler, null, null, null, null);
-    }
-
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler,
-                          AuditLogRepository auditLogRepo) {
-        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, null, null, null);
-    }
-
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler,
-                          AuditLogRepository auditLogRepo,
-                          DelegationRepository delegationRepo) {
-        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo, null, null);
-    }
-
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler,
-                          AuditLogRepository auditLogRepo,
-                          DelegationRepository delegationRepo,
-                          NotificationService notificationService) {
-        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo, notificationService, null);
+        this(processRepo, instanceRepo, taskRepo, null, null, null, null, null,
+                null, null, null, null, null, 3, 20L);
     }
 
     /**
-     * 构造器 - 可注入自定义超时调度器、审计日志仓储、委托关系仓储、通知服务和抄送仓储
-     *
-     * @param scheduler           超时调度器,传 null 时使用默认 {@link ScheduledTimeoutScheduler}
-     * @param auditLogRepo        审计日志仓储,传 null 时不记录审计日志
-     * @param delegationRepo      委托关系仓储,传 null 时不启用委托功能
-     * @param notificationService 通知服务,传 null 时不启用通知功能
-     * @param carbonCopyRepo      抄送仓储,传 null 时不启用抄送功能
+     * 完整构造器 - 供 {@link WorkflowEngineBuilder} 使用
      */
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler,
-                          AuditLogRepository auditLogRepo,
-                          DelegationRepository delegationRepo,
-                          NotificationService notificationService,
-                          CarbonCopyRepository carbonCopyRepo) {
-        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo,
-                notificationService, carbonCopyRepo, new LocalInstanceLocks(),
-                new UndoLogTransactionRunner(), 3, 20L);
-    }
-
-    /**
-     * 完整构造器 —— 显式控制并发与事务策略。
-     *
-     * @param locks              流程树锁；null 时使用 {@link LocalInstanceLocks}
-     * @param tx                 事务边界；null 时使用 {@link UndoLogTransactionRunner}
-     * @param conflictRetries    乐观锁冲突重试次数（0 表示不重试，直接向上抛）
-     * @param retryBackoffMillis 重试前的等待毫秒，给对手机会释放锁
-     */
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler,
-                          AuditLogRepository auditLogRepo,
-                          DelegationRepository delegationRepo,
-                          NotificationService notificationService,
-                          CarbonCopyRepository carbonCopyRepo,
-                          InstanceLockProvider locks,
-                          TransactionRunner tx,
-                          int conflictRetries,
-                          long retryBackoffMillis) {
-        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo,
-                notificationService, carbonCopyRepo, null, locks, tx, conflictRetries,
-                retryBackoffMillis);
-    }
-
-    /**
-     * 完整构造器 —— 额外接受历史活动仓储。
-     *
-     * @param historyRepo 历史活动仓储；null 表示不记录历史（不产生任何额外写入）
-     */
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler,
-                          AuditLogRepository auditLogRepo,
-                          DelegationRepository delegationRepo,
-                          NotificationService notificationService,
-                          CarbonCopyRepository carbonCopyRepo,
-                          com.workflow.repository.HistoryRepository historyRepo,
-                          InstanceLockProvider locks,
-                          TransactionRunner tx,
-                          int conflictRetries,
-                          long retryBackoffMillis) {
-        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo,
-                notificationService, carbonCopyRepo, historyRepo,
-                java.util.EnumSet.allOf(com.workflow.enums.HistoryKind.class),
-                locks, tx, conflictRetries, retryBackoffMillis);
-    }
-
-    /**
-     * 最全构造器 —— 额外指定要记录哪几类历史。
-     *
-     * @param historyKinds null 或空集表示不写任何历史（即使给了 {@code historyRepo}）
-     */
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler,
-                          AuditLogRepository auditLogRepo,
-                          DelegationRepository delegationRepo,
-                          NotificationService notificationService,
-                          CarbonCopyRepository carbonCopyRepo,
-                          com.workflow.repository.HistoryRepository historyRepo,
-                          java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds,
-                          InstanceLockProvider locks,
-                          TransactionRunner tx,
-                          int conflictRetries,
-                          long retryBackoffMillis) {
-        this(processRepo, instanceRepo, taskRepo, scheduler, auditLogRepo, delegationRepo,
-                notificationService, carbonCopyRepo, historyRepo, historyKinds, null,
-                locks, tx, conflictRetries, retryBackoffMillis);
-    }
-
-    /**
-     * 最全构造器 —— 额外接受事件仓储。
-     *
-     * @param eventRepo 事件仓储；null 表示不启用事件网关（MESSAGE_EVENT/SIGNAL_EVENT/TIMER_BOUNDARY）
-     */
-    public WorkflowEngine(ProcessRepository processRepo,
-                          InstanceRepository instanceRepo,
-                          TaskRepository taskRepo,
-                          TimeoutScheduler scheduler,
-                          AuditLogRepository auditLogRepo,
-                          DelegationRepository delegationRepo,
-                          NotificationService notificationService,
-                          CarbonCopyRepository carbonCopyRepo,
-                          com.workflow.repository.HistoryRepository historyRepo,
-                          java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds,
-                          com.workflow.repository.EventRepository eventRepo,
-                          InstanceLockProvider locks,
-                          TransactionRunner tx,
-                          int conflictRetries,
-                          long retryBackoffMillis) {
+    WorkflowEngine(ProcessRepository processRepo,
+                   InstanceRepository instanceRepo,
+                   TaskRepository taskRepo,
+                   TimeoutScheduler scheduler,
+                   AuditLogRepository auditLogRepo,
+                   DelegationRepository delegationRepo,
+                   NotificationService notificationService,
+                   CarbonCopyRepository carbonCopyRepo,
+                   com.workflow.repository.HistoryRepository historyRepo,
+                   java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds,
+                   com.workflow.repository.EventRepository eventRepo,
+                   InstanceLockProvider locks,
+                   TransactionRunner tx,
+                   int conflictRetries,
+                   long retryBackoffMillis) {
         this.processRepo = Objects.requireNonNull(processRepo);
         this.instanceRepo = Objects.requireNonNull(instanceRepo);
         this.taskRepo = Objects.requireNonNull(taskRepo);
@@ -290,7 +165,7 @@ public class WorkflowEngine implements IWorkflowEngine {
     public WorkflowEngine withoutConcurrencyControl() {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
                 auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, historyRepo,
-                passthroughLocks(), TransactionRunner.noop(), 0, 0L);
+                historyKinds, eventRepo, passthroughLocks(), TransactionRunner.noop(), 0, 0L);
     }
 
     /**
@@ -304,7 +179,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             java.util.EnumSet<com.workflow.enums.HistoryKind> kinds) {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
                 auditLogRepo, delegationRepo, notificationService, carbonCopyRepo,
-                historyRepo, kinds, locks, tx, conflictRetries, retryBackoffMillis);
+                historyRepo, kinds, eventRepo, locks, tx, conflictRetries, retryBackoffMillis);
     }
 
     /** 是否该写活动历史。 */

@@ -196,6 +196,11 @@ public class JpaPersistence {
         return new com.workflow.persistence.jpa.repository.JpaHistoryRepository(this);
     }
 
+    /** 提供 EventRepository（事件网关：消息/信号/定时器）。 */
+    public com.workflow.repository.EventRepository eventRepo() {
+        return new com.workflow.persistence.jpa.repository.JpaEventRepository(this);
+    }
+
     /**
      * 共享 EntityManager - 用 EMF 自带的 session 模式。
      * 注:这里简化,每个仓储拿独立 EM。生产建议每次业务操作开新 EM + 事务。

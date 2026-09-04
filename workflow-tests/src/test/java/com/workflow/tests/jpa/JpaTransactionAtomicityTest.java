@@ -2,6 +2,7 @@ package com.workflow.tests.jpa;
 
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.enums.AuditEventType;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.TaskStatus;
@@ -74,8 +75,9 @@ class JpaTransactionAtomicityTest extends JpaEngineTestBase {
         String taskId = engine.getInstance(instanceId).getTasks().get(0).getId();
 
         // 换成审计会爆炸的引擎实例执行完成动作
-        WorkflowEngine explodingEngine = new WorkflowEngine(
-                procRepo, instRepo, taskRepo, null, explodingAudit());
+        WorkflowEngine explodingEngine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .auditLogRepository(explodingAudit())
+                .build();
 
         assertThatThrownBy(() -> explodingEngine.completeTask(taskId, "u1", true))
                 .as("故障应当向调用方抛出")
@@ -136,8 +138,9 @@ class JpaTransactionAtomicityTest extends JpaEngineTestBase {
             @Override
             public void clear() { }
         };
-        WorkflowEngine explodingEngine = new WorkflowEngine(
-                procRepo, instRepo, taskRepo, null, exploding);
+        WorkflowEngine explodingEngine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .auditLogRepository(exploding)
+                .build();
 
         assertThatThrownBy(() -> explodingEngine.rejectTask(reviewTask, "u1", "资料不全"))
                 .isInstanceOf(IllegalStateException.class);

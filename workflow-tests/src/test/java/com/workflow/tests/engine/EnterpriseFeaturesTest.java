@@ -4,6 +4,8 @@ import com.workflow.builder.ProcessBuilder;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.NotificationService;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.enums.CandidateStrategy;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.TaskStatus;
@@ -37,7 +39,10 @@ class EnterpriseFeaturesTest extends EngineTestBase {
         super.setUp();
         delegationRepo = new InMemoryDelegationRepository();
         notificationService = new TestNotificationService();
-        engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, delegationRepo, notificationService);
+        engine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .delegationRepository(delegationRepo)
+                .notificationService(notificationService)
+                .build();
     }
 
     // ========== 1. 流程撤回 ==========

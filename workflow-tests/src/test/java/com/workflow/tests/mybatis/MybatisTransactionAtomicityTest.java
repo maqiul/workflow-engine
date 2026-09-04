@@ -1,6 +1,7 @@
 package com.workflow.tests.mybatis;
 
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.TaskStatus;
 import com.workflow.runtime.ProcessInstance;
@@ -43,8 +44,9 @@ class MybatisTransactionAtomicityTest extends MybatisEngineTestBase {
         String instanceId = engine.start("mb-tx", Map.of());
         String taskId = engine.getInstance(instanceId).getTasks().get(0).getId();
 
-        WorkflowEngine explodingEngine = new WorkflowEngine(
-                procRepo, instRepo, taskRepo, null, new ExplodingAuditLogRepository());
+        WorkflowEngine explodingEngine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .auditLogRepository(new ExplodingAuditLogRepository())
+                .build();
 
         assertThatThrownBy(() -> explodingEngine.completeTask(taskId, "u1", true))
                 .as("故障应当向调用方抛出")
@@ -87,8 +89,9 @@ class MybatisTransactionAtomicityTest extends MybatisEngineTestBase {
                 .filter(t -> "review".equals(t.getNodeId()) && t.getStatus() == TaskStatus.PENDING)
                 .findFirst().orElseThrow().getId();
 
-        WorkflowEngine explodingEngine = new WorkflowEngine(
-                procRepo, instRepo, taskRepo, null, new ExplodingAuditLogRepository());
+        WorkflowEngine explodingEngine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .auditLogRepository(new ExplodingAuditLogRepository())
+                .build();
 
         assertThatThrownBy(() -> explodingEngine.rejectTask(reviewTask, "u1", "资料不全"))
                 .isInstanceOf(IllegalStateException.class);

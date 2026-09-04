@@ -137,6 +137,8 @@ public final class MybatisPersistence {
         // 历史活动：漏掉这行不会编译报错，只在 getMapper 时抛运行时异常
         configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistActivityMapper.class);
         configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistTaskMapper.class);
+        // 事件网关
+        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfEventMapper.class);
         // 驼峰映射默认开启
         configuration.setMapUnderscoreToCamelCase(true);
         sqlSessionFactory = new MybatisSqlSessionFactoryBuilder().build(configuration);
@@ -212,6 +214,7 @@ public final class MybatisPersistence {
         try (Connection conn = dataSource.getConnection(); Statement st = conn.createStatement()) {
             st.execute("DELETE FROM wf_hist_task");
             st.execute("DELETE FROM wf_hist_activity");
+            st.execute("DELETE FROM wf_event");
             st.execute("DELETE FROM wf_audit_log");
             st.execute("DELETE FROM wf_task");
             st.execute("DELETE FROM wf_token");
@@ -273,5 +276,10 @@ public final class MybatisPersistence {
     /** 提供 HistoryRepository（历史活动区间，见 README §18）。 */
     public com.workflow.repository.HistoryRepository historyRepo() {
         return new com.workflow.persistence.mybatis.repository.MybatisHistoryRepository(this);
+    }
+
+    /** 提供 EventRepository（事件网关：消息/信号/定时器）。 */
+    public com.workflow.repository.EventRepository eventRepo() {
+        return new com.workflow.persistence.mybatis.repository.MybatisEventRepository(this);
     }
 }

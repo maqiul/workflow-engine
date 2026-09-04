@@ -4,6 +4,7 @@ import com.workflow.builder.ProcessBuilder;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.TaskStatus;
 import com.workflow.repository.InMemoryEventRepository;
@@ -44,7 +45,11 @@ class EventGatewayTest {
         instRepo = new InMemoryInstanceRepository();
         taskRepo = new InMemoryTaskRepository();
         eventRepo = new InMemoryEventRepository();
-        engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, null, null, null, eventRepo, null, null, 0, 0L);
+        engine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .eventRepository(eventRepo)
+                .conflictRetries(0)
+                .retryBackoffMillis(0)
+                .build();
     }
 
     // ========== 消息事件测试 ==========

@@ -6,6 +6,7 @@ import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.TimeoutScheduler;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.NodeType;
 import com.workflow.enums.TaskStatus;
@@ -61,10 +62,15 @@ class HistoryActivityTest {
             @Override
             public void shutdown() { }
         };
-        return new WorkflowEngine(procRepo, instRepo, taskRepo, noop,
-                new InMemoryAuditLogRepository(), null, null, null,
-                withHistory ? histRepo : null,
-                new LocalInstanceLocks(), new UndoLogTransactionRunner(), 0, 0L);
+        return WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .timeoutScheduler(noop)
+                .auditLogRepository(new InMemoryAuditLogRepository())
+                .historyRepository(withHistory ? histRepo : null)
+                .lockProvider(new LocalInstanceLocks())
+                .transactionRunner(new UndoLogTransactionRunner())
+                .conflictRetries(0)
+                .retryBackoffMillis(0)
+                .build();
     }
 
     private void registerSerial(WorkflowEngine engine) {

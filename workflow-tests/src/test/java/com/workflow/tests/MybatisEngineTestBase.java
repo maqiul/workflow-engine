@@ -4,6 +4,7 @@ import com.workflow.builder.ProcessBuilder;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.persistence.mybatis.MybatisPersistence;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.InstanceRepository;
@@ -50,7 +51,9 @@ public abstract class MybatisEngineTestBase {
         instRepo = mb.instanceRepo();
         taskRepo = mb.taskRepo();
         auditLogRepo = mb.auditLogRepo();
-        engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, auditLogRepo);
+        engine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .auditLogRepository(auditLogRepo)
+                .build();
     }
 
     protected ProcessDefinition register(ProcessDefinition def) {

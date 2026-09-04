@@ -134,7 +134,8 @@ public final class BpmnExporter {
     private static void appendExtensions(Document doc, org.w3c.dom.Element el, NodeDefinition node) {
         boolean hasStd = node.getCandidate() != null;
         boolean hasWf = hasStd || node.hasTimeout()
-                || node.getTimeoutPolicy() != TimeoutPolicy.NONE;
+                || node.getTimeoutPolicy() != TimeoutPolicy.NONE
+                || node.isMessageEvent() || node.isSignalEvent() || node.isTimerBoundary();
         if (!hasStd && !hasWf) {
             return;
         }
@@ -155,6 +156,25 @@ public final class BpmnExporter {
                 to.setAttribute("targetUser", node.getTimeoutTargetUserId());
             }
             ext.appendChild(to);
+        }
+        // 事件属性导出
+        if (node.isMessageEvent()) {
+            var msg = doc.createElementNS(WF_NS, "wf:message");
+            msg.setAttribute("messageName", node.getMessageEvent().messageName());
+            msg.setAttribute("correlationKey", node.getMessageEvent().correlationKeyExpression());
+            ext.appendChild(msg);
+        }
+        if (node.isSignalEvent()) {
+            var sig = doc.createElementNS(WF_NS, "wf:signal");
+            sig.setAttribute("signalName", node.getSignalEvent().signalName());
+            ext.appendChild(sig);
+        }
+        if (node.isTimerBoundary()) {
+            var tmr = doc.createElementNS(WF_NS, "wf:timer");
+            tmr.setAttribute("attachedTo", node.getTimerBoundaryEvent().attachedToNodeId());
+            tmr.setAttribute("duration", String.valueOf(node.getTimerBoundaryEvent().durationMillis()));
+            tmr.setAttribute("interrupting", String.valueOf(node.getTimerBoundaryEvent().interrupting()));
+            ext.appendChild(tmr);
         }
         el.appendChild(ext);
 

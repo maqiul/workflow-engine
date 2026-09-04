@@ -6,6 +6,7 @@ import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.TimeoutScheduler;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.TaskStatus;
 import com.workflow.enums.TimeoutPolicy;
@@ -125,8 +126,13 @@ class HistoryConsistencyTest {
     }
 
     private WorkflowEngine engineOf(Suite s) {
-        return new WorkflowEngine(s.procRepo(), s.instRepo(), s.taskRepo(), NOOP_SCHEDULER,
-                null, null, null, null, s.histRepo(), new LocalInstanceLocks(), null, 0, 0L);
+        return WorkflowEngineBuilder.builder(s.procRepo(), s.instRepo(), s.taskRepo())
+                .timeoutScheduler(NOOP_SCHEDULER)
+                .historyRepository(s.histRepo())
+                .lockProvider(new LocalInstanceLocks())
+                .conflictRetries(0)
+                .retryBackoffMillis(0)
+                .build();
     }
 
     private static final List<String> ALL = List.of("InMemory", "JPA", "MyBatis");
@@ -234,9 +240,13 @@ class HistoryConsistencyTest {
 
             // 第 2 次 save 落在「apply 已闭合、manager 已开启」之后 —— 正是幽灵活动的成因点
             FlakyTaskRepository flaky = new FlakyTaskRepository(s.taskRepo(), 2);
-            WorkflowEngine broken = new WorkflowEngine(s.procRepo(), s.instRepo(), flaky,
-                    NOOP_SCHEDULER, null, null, null, null, s.histRepo(),
-                    new LocalInstanceLocks(), null, 0, 0L);
+            WorkflowEngine broken = WorkflowEngineBuilder.builder(s.procRepo(), s.instRepo(), flaky)
+                    .timeoutScheduler(NOOP_SCHEDULER)
+                    .historyRepository(s.histRepo())
+                    .lockProvider(new LocalInstanceLocks())
+                    .conflictRetries(0)
+                    .retryBackoffMillis(0)
+                    .build();
             String applyTask = pendingTask(s, id, "apply");
 
             assertThatThrownBy(() -> broken.completeTask(applyTask, "u1", true))
@@ -389,8 +399,14 @@ class HistoryConsistencyTest {
 
     private WorkflowEngine engineOf(Suite s,
                                     java.util.EnumSet<com.workflow.enums.HistoryKind> kinds) {
-        return new WorkflowEngine(s.procRepo(), s.instRepo(), s.taskRepo(), NOOP_SCHEDULER,
-                null, null, null, null, s.histRepo(), kinds, new LocalInstanceLocks(), null, 0, 0L);
+        return WorkflowEngineBuilder.builder(s.procRepo(), s.instRepo(), s.taskRepo())
+                .timeoutScheduler(NOOP_SCHEDULER)
+                .historyRepository(s.histRepo())
+                .historyKinds(kinds)
+                .lockProvider(new LocalInstanceLocks())
+                .conflictRetries(0)
+                .retryBackoffMillis(0)
+                .build();
     }
 
     private void runOneFlow(WorkflowEngine engine, Suite s) {

@@ -3,6 +3,8 @@ package com.workflow.tests.engine;
 import com.workflow.builder.ProcessBuilder;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.repository.InMemoryCarbonCopyRepository;
 import com.workflow.repository.InMemoryInstanceRepository;
@@ -31,7 +33,9 @@ class CarbonCopyTest extends EngineTestBase {
     void init() {
         super.setUp();
         ccRepo = new InMemoryCarbonCopyRepository();
-        engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, ccRepo);
+        engine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .carbonCopyRepository(ccRepo)
+                .build();
     }
 
     @Test

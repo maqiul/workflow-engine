@@ -4,6 +4,7 @@ import com.workflow.builder.ProcessBuilder;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.engine.WorkflowEngineBuilder;
 import com.workflow.persistence.jpa.JpaPersistence;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.InstanceRepository;
@@ -51,7 +52,9 @@ public abstract class JpaEngineTestBase {
         instRepo = jpa.instanceRepo();
         taskRepo = jpa.taskRepo();
         auditLogRepo = jpa.auditLogRepo();
-        engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, auditLogRepo);
+        engine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+                .auditLogRepository(auditLogRepo)
+                .build();
     }
 
     /** 清空 5 张表的全部数据(测试隔离) */
