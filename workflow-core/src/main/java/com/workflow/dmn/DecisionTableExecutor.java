@@ -28,6 +28,9 @@ public class DecisionTableExecutor {
     public DecisionResult execute(DecisionTable decisionTable, Map<String, Object> context) {
         log.debug("Executing decision table: {}", decisionTable.getName());
         
+        // 设置当前输入定义（供 matchesEntry 访问）
+        this.currentInputs = decisionTable.getInputs();
+        
         List<Map<String, Object>> matchedOutputs = new ArrayList<>();
         
         // 遍历所有规则
@@ -47,6 +50,9 @@ public class DecisionTableExecutor {
         // 根据命中策略返回结果
         return applyHitPolicy(decisionTable.getHitPolicy(), matchedOutputs);
     }
+
+    /** 当前正在执行的决策表的输入定义（供 matchesEntry 访问） */
+    private List<DecisionTable.InputClause> currentInputs;
     
     /**
      * 检查规则是否匹配
@@ -69,7 +75,10 @@ public class DecisionTableExecutor {
             Object inputValue = evaluateInputExpression(input.getExpression(), context);
             
             // 检查是否匹配
-            if (!matchesEntry(entry, inputValue, context)) {
+            boolean matches = matchesEntry(entry, inputValue, context);
+            log.debug("Rule {} input '{}' = {} matches entry '{}': {}", 
+                    rule.getId(), input.getExpression(), inputValue, entry, matches);
+            if (!matches) {
                 return false;
             }
         }
@@ -101,34 +110,109 @@ public class DecisionTableExecutor {
     
     /**
      * 检查输入值是否匹配条目
+     * 
+     * <p>支持三种匹配模式：
+     * <ol>
+     *   <li>简单值匹配：如 "vip"，直接比较字符串</li>
+     *   <li>范围比较：如 "100..500"，检查输入值是否在范围内</li>
+     *   <li>FEEL 表达式：如 "${amount > 1000}"，使用 ConditionEvaluator 评估</li>
+     * </ol>
      */
     private boolean matchesEntry(String entry, Object inputValue, Map<String, Object> context) {
         if (inputValue == null) {
             return "null".equals(entry) || "nil".equals(entry);
         }
         
-        // 尝试作为 FEEL 表达式评估
+        String trimmed = entry.trim();
+        
+        // 范围表达式：如 "100..500"、"..100"、"100.."
+        if (trimmed.contains("..")) {
+            return matchesRange(trimmed, inputValue);
+        }
+        
+        // 简单字符串比较
+        if (!trimmed.startsWith("${") && !trimmed.startsWith("(")) {
+            String strValue = String.valueOf(inputValue);
+            return trimmed.equals(strValue);
+        }
+        
+        // FEEL 表达式：将 _input 替换为字面值后评估
         try {
-            // 创建评估上下文，包含输入值
+            String expr = trimmed;
+            if (expr.startsWith("${") && expr.endsWith("}")) {
+                expr = expr.substring(2, expr.length() - 1).trim();
+            }
+            // 构造评估上下文，将 _input 设为实际输入值
             Map<String, Object> evalContext = new HashMap<>(context);
             evalContext.put("_input", inputValue);
-            
-            // 如果条目是简单的比较表达式
-            Object result = ConditionEvaluator.eval(entry, evalContext);
-            if (result instanceof Boolean) {
-                return (Boolean) result;
+            // 同时将输入变量也放入上下文（支持直接引用 amount 而非 _input）
+            for (DecisionTable.InputClause input : currentInputs) {
+                evalContext.put(input.getExpression(), evaluateInputExpression(input.getExpression(), context));
             }
-            
-            // 否则尝试直接比较
-            return String.valueOf(inputValue).equals(entry);
+            return ConditionEvaluator.eval(expr, evalContext);
         } catch (Exception e) {
             // 如果评估失败，尝试字符串比较
-            return String.valueOf(inputValue).equals(entry);
+            return String.valueOf(inputValue).equals(trimmed);
         }
+    }
+
+    /**
+     * 范围匹配：如 "100..500"、"..100"、"100.."
+     */
+    private boolean matchesRange(String range, Object inputValue) {
+        // 使用 limit=-1 保留末尾的空字符串，否则 "100.." 会被拆成 ["100"]
+        String[] parts = range.split("\\.\\.", -1);
+        double value = toDouble(inputValue);
+        if (parts.length != 2) {
+            return false;
+        }
+        try {
+            if (parts[0].isEmpty()) {
+                // ..上限
+                double upper = Double.parseDouble(parts[1]);
+                return value < upper;
+            } else if (parts[1].isEmpty()) {
+                // 下限..
+                double lower = Double.parseDouble(parts[0]);
+                return value >= lower;
+            } else {
+                // 下限..上限
+                double lower = Double.parseDouble(parts[0]);
+                double upper = Double.parseDouble(parts[1]);
+                return value >= lower && value < upper;
+            }
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * 将对象转为 double
+     */
+    private double toDouble(Object value) {
+        if (value instanceof Number n) {
+            return n.doubleValue();
+        }
+        if (value instanceof String s) {
+            try {
+                return Double.parseDouble(s);
+            } catch (NumberFormatException e) {
+                return Double.NaN;
+            }
+        }
+        return Double.NaN;
     }
     
     /**
      * 提取规则的输出
+     * 
+     * <p>输出条目支持：
+     * <ul>
+     *   <li>字面量字符串："manager" → "manager"</li>
+     *   <li>字面量数字：0.2 → 0.2</li>
+     *   <li>布尔字面量：true / false</li>
+     *   <li>变量引用：${varName}</li>
+     * </ul>
      */
     private Map<String, Object> extractOutput(DecisionTable.DecisionRule rule,
                                              List<DecisionTable.OutputClause> outputs) {
@@ -139,17 +223,54 @@ public class DecisionTableExecutor {
             DecisionTable.OutputClause output = outputs.get(i);
             String entry = outputEntries.get(i);
             
-            // 尝试评估表达式
-            try {
-                Object value = ConditionEvaluator.eval(entry, new HashMap<>());
-                result.put(output.getName(), value);
-            } catch (Exception e) {
-                // 如果评估失败，使用字符串值
-                result.put(output.getName(), entry);
-            }
+            result.put(output.getName(), parseOutputValue(entry));
         }
         
         return result;
+    }
+    
+    /**
+     * 解析输出值
+     * 
+     * <p>去除 ${} 包装后按字面量解析：引号字符串、数字、布尔
+     */
+    private Object parseOutputValue(String entry) {
+        if (entry == null) {
+            return null;
+        }
+        
+        String trimmed = entry.trim();
+        
+        // 去除 ${} 包装
+        if (trimmed.startsWith("${") && trimmed.endsWith("}")) {
+            trimmed = trimmed.substring(2, trimmed.length() - -1).trim();
+            if (trimmed.endsWith("}")) {
+                trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
+            }
+        }
+        
+        // 字符串字面量：双引号或单引号包裹
+        if ((trimmed.startsWith("\"") && trimmed.endsWith("\""))
+                || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+            return trimmed.substring(1, trimmed.length() - 1);
+        }
+        
+        // 布尔字面量
+        if (trimmed.equals("true")) return true;
+        if (trimmed.equals("false")) return false;
+        if (trimmed.equals("null")) return null;
+        
+        // 数字字面量
+        try {
+            if (trimmed.contains(".")) {
+                return Double.parseDouble(trimmed);
+            } else {
+                return Long.parseLong(trimmed);
+            }
+        } catch (NumberFormatException e) {
+            // 不是数字，作为字符串返回
+            return trimmed;
+        }
     }
     
     /**
