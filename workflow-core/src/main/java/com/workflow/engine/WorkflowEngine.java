@@ -109,6 +109,9 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     private final TimeoutScheduler scheduler;
 
+    /** Token 推进器 - 负责流程路由逻辑 */
+    private final TokenAdvancer tokenAdvancer;
+
     /**
      * 最简构造器 - 仅注入三个必填仓储
      *
@@ -156,6 +159,20 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.tx = tx != null ? tx : new UndoLogTransactionRunner();
         this.conflictRetries = Math.max(0, conflictRetries);
         this.retryBackoffMillis = Math.max(0, retryBackoffMillis);
+        
+        // 初始化 Token 推进器
+        this.tokenAdvancer = new TokenAdvancer(
+            taskRepo,
+            instanceRepo,
+            eventRepo,
+            historyRepo,
+            this.scheduler,  // 使用已初始化的 scheduler，而不是可能为 null 的参数
+            this::fireTaskCreated,
+            this::startSubProcessInternal,
+            this::onSubProcessCompletedInternal,
+            this::afterCommitScheduleInternal,
+            this::fireExecutionCompleted
+        );
     }
 
     /**
@@ -1130,487 +1147,28 @@ public class WorkflowEngine implements IWorkflowEngine {
     // ========== Token 推进核心 ==========
 
     /**
-     * 推进指定 Token 到下一个状态 —— 同时留下历史活动记录。
+     * 推进指定 Token 到下一个状态 —— 委托给 TokenAdvancer 处理。
      *
-     * <p>埋点放在这一层而非散进各 case：本方法的语义恰好是
-     * 「实例在某个节点上执行了一次」，包住首尾即覆盖全部分支
-     * （递归下钻、并行 fork 的每一支、网关判定、子流程），漏埋风险远低于逐分支插桩。
-     *
-     * <p><b>UserTask 与子流程的活动中止于"仍在等待"</b>：它们的区间必须<b>跨越两次推进</b>
-     * —— 第一次进入创建待办（开启且不闭合），审批完成后再进入时才闭合。
-     * 否则 duration 表示的是"处理这条记录花了 0 毫秒"，
-     * 而效能报表要的是<b>人类等待时长</b>。
+     * <p>TokenAdvancer 负责所有节点类型的路由逻辑，WorkflowEngine 只提供回调方法。
      */
     private void advanceToken(ProcessInstance instance, ProcessDefinition def, String tokenId) {
-        Token token = instance.getActiveTokens().get(tokenId);
-        if (token == null) {
-            log.debug("[引擎] Token 已不存在,跳过推进 id={}", tokenId);
-            checkAndFinalize(instance);
-            return;
-        }
-        NodeDefinition current = def.getNode(token.getCurrentNodeId());
-        openHistory(instance, current, tokenId);
-        try {
-            advanceTokenInternal(instance, def, tokenId);
-        } finally {
-            closeHistoryIfSettled(instance, current, tokenId);
-        }
+        tokenAdvancer.advanceToken(instance, def, tokenId, recordsActivity());
     }
 
-    /** 开启（或沿用）一条历史活动。历史写入与业务写入同事务，故不吞异常。 */
-    private void openHistory(ProcessInstance instance, NodeDefinition node, String tokenId) {
-        if (!recordsActivity()) {
-            return;
-        }
-        // 同一 token 在同一节点上重复进入（UserTask 等待后二次推进）时沿用那条未闭合记录，
-        // 否则一次人类等待会被拆成多段、平均耗时被稀释
-        if (historyRepo.findOpen(instance.getId(), tokenId, node.getId()) != null) {
-            return;
-        }
-        historyRepo.save(new com.workflow.runtime.HistoricActivityInstance(
-                instance.getId(), instance.getProcessKey(), instance.getProcessVersion(),
-                node.getId(), node.getType(), tokenId, null, System.currentTimeMillis()));
+    /** 回调：启动子流程 */
+    private void startSubProcessInternal(ProcessInstance parent, ProcessDefinition parentDef,
+                                        Token parentToken, NodeDefinition subNode) {
+        startSubProcess(parent, parentDef, parentToken, subNode);
     }
 
-    /** 节点已"落地"（不再等待）时才闭合活动。 */
-    private void closeHistoryIfSettled(ProcessInstance instance, NodeDefinition node, String tokenId) {
-        if (historyRepo == null || isStillWaiting(instance, node, tokenId)) {
-            return;
-        }
-        com.workflow.runtime.HistoricActivityInstance open =
-                historyRepo.findOpen(instance.getId(), tokenId, node.getId());
-        if (open == null) {
-            return;
-        }
-        open.close(System.currentTimeMillis(), null);
-        historyRepo.save(open);
+    /** 回调：子流程完成后推进父流程 */
+    private void onSubProcessCompletedInternal(ProcessInstance child) {
+        onSubProcessCompleted(child);
     }
 
-    /**
-     * 该节点此刻是否仍在等待外部动作。
-     *
-     * <p>并行网关的 join 也算等待型：分支未到齐时 token 已被消耗但活动不该闭合吗？
-     * 不 —— join 的语义是"到齐即走"，其本身耗时是判定开销，故按瞬时活动处理。
-     */
-    private boolean isStillWaiting(ProcessInstance instance, NodeDefinition node, String tokenId) {
-        if (node.getType() == com.workflow.enums.NodeType.USER_TASK
-                || node.getType() == com.workflow.enums.NodeType.DYNAMIC_PARALLEL) {
-            TaskInstance t = currentTaskOf(instance, tokenId, node.getId());
-            return t != null && t.getStatus() == TaskStatus.PENDING;
-        }
-        if (node.getType() == com.workflow.enums.NodeType.SUB_PROCESS) {
-            Token now = instance.getActiveTokens().get(tokenId);
-            return now != null && node.getId().equals(now.getCurrentNodeId());
-        }
-        return false;
-    }
-
-    /**
-     * 把任务 id 补挂到当前未闭合的活动上。
-     *
-     * <p>活动是在<b>进入节点</b>时开启的，而任务要到节点处理过程中才创建，
-     * 所以只能事后补挂 —— 这样历史行与待办行才能直接对上，无需靠 node+token 反查。
-     */
-    private void attachHistoryTask(ProcessInstance instance, String nodeId,
-                                   String tokenId, String taskId) {
-        if (!recordsActivity()) {
-            return;
-        }
-        com.workflow.runtime.HistoricActivityInstance open =
-                historyRepo.findOpen(instance.getId(), tokenId, nodeId);
-        if (open != null) {
-            open.attachTask(taskId);
-            historyRepo.save(open);
-        }
-    }
-
-    private void advanceTokenInternal(ProcessInstance instance, ProcessDefinition def, String tokenId) {
-        Token token = instance.getActiveTokens().get(tokenId);
-        if (token == null) {
-            log.debug("[引擎] Token 已不存在,跳过推进 id={}", tokenId);
-            checkAndFinalize(instance);
-            return;
-        }
-        NodeDefinition current = def.getNode(token.getCurrentNodeId());
-
-        switch (current.getType()) {
-            case END -> {
-                instance.consumeToken(tokenId);
-                log.info("[引擎] Token {} 到达 END", tokenId);
-            }
-            case USER_TASK -> {
-                // 1) 该 token+node 上的当前任务：以 taskRepo 为唯一真相
-                TaskInstance existing = currentTaskOf(instance, tokenId, current.getId());
-                log.debug("[引擎] advanceToken USER_TASK node={} existing={}",
-                        current.getId(),
-                        existing == null ? "null" : ("taskId=" + existing.getId() + " status=" + existing.getStatus()));
-
-                if (existing == null) {
-                    TaskInstance task = new TaskInstance(instance.getId(), tokenId,
-                            current.getId(), current.getCandidate());
-                    taskRepo.save(task);
-                    // 对齐实例视图，避免 instance.tasks 停留在「没有这条任务」的旧相
-                    syncTaskInInstance(instance, task);
-                    // 把待办 id 补挂到本次进入时开启的活动上，让历史行与待办行可直接对应
-                    attachHistoryTask(instance, current.getId(), tokenId, task.getId());
-                    log.info("[引擎] 创建任务 node={} candidate={} taskId={}", current.getId(), current.getCandidate(), task.getId());
-                    fireTaskCreated(task);
-                    // JPA 关键:同时 save instance 让 wf_token 同步(applyToken 已推进到 review 节点)
-                    instanceRepo.save(instance);
-                    log.info("[引擎] 创建任务并保存 instance 完成");
-                    // 注册超时调度(若节点配置了超时)—— 提交后才生效，回滚不该留下幽灵调度
-                    if (current.hasTimeout()) {
-                        String newTaskId = task.getId();
-                        String instId = instance.getId();
-                        long timeout = current.getTimeoutMillis();
-                        com.workflow.enums.TimeoutPolicy policy = current.getTimeoutPolicy();
-                        String target = current.getTimeoutTargetUserId();
-                        afterCommitSchedule(() -> scheduler.schedule(newTaskId, instId, timeout, policy, target));
-                    }
-                    // 注册附加在本节点上的定时器边界事件
-                    registerTimerBoundaryFor(def, instance, current, tokenId);
-                } else if (existing.getStatus() == TaskStatus.COMPLETED) {
-                    // 任务已完成 -> 把 Token 推进到下一节点
-                    log.info("[引擎] advanceToken USER_TASK node={} existing.status=COMPLETED -> 推进 Token", current.getId());
-                    List<Transition> outs = def.getOutgoing(current.getId());
-                    if (outs.isEmpty()) {
-                        instance.consumeToken(tokenId);
-                        instanceRepo.save(instance);
-                    } else if (outs.size() == 1) {
-                        token.setCurrentNodeId(outs.get(0).getTo());
-                        instanceRepo.save(instance);
-                        advanceToken(instance, def, tokenId);
-                    } else {
-                        // 多出口 - 不支持(应该用排他网关)
-                        throw new IllegalStateException("USER_TASK 节点 " + current.getId() + " 有多条出口");
-                    }
-                } else {
-                    // PENDING 状态被再次推进(异常路径),直接忽略
-                    log.debug("[引擎] Token {} 节点 {} 上任务仍 PENDING,跳过", tokenId, current.getId());
-                }
-            }
-            case EXCLUSIVE_GATEWAY -> {
-                List<Transition> outs = def.getOutgoing(current.getId());
-                // 简化:取第一个出口(实际应按 condition 评估)
-                if (outs.isEmpty()) {
-                    throw new IllegalStateException("排他网关 " + current.getId() + " 无出口");
-                }
-                Transition chosen = null;
-                Map<String, Object> vars = instance.getVariables();
-                for (Transition t : outs) {
-                    if (ConditionEvaluator.eval(t.getCondition(), vars)) {
-                        chosen = t;
-                        break;
-                    }
-                }
-                if (chosen == null) {
-                    // 所有条件都不满足且无默认出口 -> 终止(避免卡死)
-                    log.warn("[引擎] 排他网关 {} 无匹配出口,Token 终止", current.getId());
-                    instance.consumeToken(tokenId);
-                    instanceRepo.save(instance);
-                    break;
-                }
-                log.info("[引擎] 排他网关 {} 选择出口 {}", current.getId(), chosen.getTo());
-                token.setCurrentNodeId(chosen.getTo());
-                instanceRepo.save(instance);
-                advanceToken(instance, def, tokenId);
-            }
-            case PARALLEL_GATEWAY -> {
-                List<Transition> outs = def.getOutgoing(current.getId());
-                if (outs.isEmpty()) {
-                    instance.consumeToken(tokenId);
-                    break;
-                }
-                if (GatewayKind.isJoin(def, current.getId())) {
-                    // 汇聚:消耗本 Token,但要等其他兄弟
-                    instance.consumeToken(tokenId);
-                    log.info("[引擎] Token {} 到达并行汇聚 {}", tokenId, current.getId());
-                    // 检查是否所有到达此网关的 Token 都已消耗
-                    if (allJoinArrived(def, current.getId(), instance)) {
-                        // 创建后续 Token(从 join 节点的唯一出口)
-                        Transition out = outs.get(0);
-                        Token next = new Token(instance.getId(), out.getTo());
-                        instance.addToken(next);
-                        instanceRepo.save(instance);
-                        advanceToken(instance, def, next.getId());
-                    } else {
-                        instanceRepo.save(instance);
-                    }
-                } else {
-                    // fork: 分裂
-                    instance.consumeToken(tokenId);
-                    List<Token> forked = new ArrayList<>();
-                    for (Transition out : outs) {
-                        Token t = new Token(instance.getId(), out.getTo());
-                        instance.addToken(t);
-                        forked.add(t);
-                    }
-                    instanceRepo.save(instance);
-                    log.info("[引擎] 并行分裂出 {} 条 Token", forked.size());
-                    for (Token t : forked) {
-                        advanceToken(instance, def, t.getId());
-                    }
-                }
-            }
-            case START -> {
-                // 起始节点:取其唯一出口
-                List<Transition> outs = def.getOutgoing(current.getId());
-                if (outs.isEmpty()) {
-                    throw new IllegalStateException("START 节点 " + current.getId() + " 无出口");
-                }
-                token.setCurrentNodeId(outs.get(0).getTo());
-                instanceRepo.save(instance);
-                advanceToken(instance, def, tokenId);
-            }
-            case SUB_PROCESS -> {
-                // 子流程节点:Token 停留等待子流程完成
-                String markKey = SUB_MARK_PREFIX + tokenId;
-                Object childId = instance.getVariable(markKey);
-                if (childId == null) {
-                    // 尚未发起 -> 创建子流程实例
-                    startSubProcess(instance, def, token, current);
-                } else {
-                    // 已发起 -> 检查子流程是否完成
-                    ProcessInstance child = instanceRepo.findById(childId.toString());
-                    if (child.getStatus() == InstanceStatus.COMPLETED) {
-                        // 子流程已完成 -> 把 Token 推进到出口
-                        log.info("[引擎] 子流程 {} 已完成,推进父 Token 到出口 node={}",
-                                child.getId(), current.getId());
-                        List<Transition> outs = def.getOutgoing(current.getId());
-                        if (outs.isEmpty()) {
-                            instance.consumeToken(tokenId);
-                            instanceRepo.save(instance);
-                        } else if (outs.size() == 1) {
-                            token.setCurrentNodeId(outs.get(0).getTo());
-                            instanceRepo.save(instance);
-                            advanceToken(instance, def, tokenId);
-                        } else {
-                            throw new IllegalStateException(
-                                    "SUB_PROCESS 节点 " + current.getId() + " 有多条出口");
-                        }
-                    } else {
-                        // 子流程仍在执行,继续等待
-                        log.info("[引擎] 子流程 {} 仍执行中,父 Token 等待 node={}",
-                                child.getId(), current.getId());
-                    }
-                }
-            }
-            case DYNAMIC_PARALLEL -> {
-                // 动态多实例节点:从变量获取候选人列表,动态创建多个任务
-                String variable = current.getDynamicParallelVariable();
-                CandidateStrategy strategy = current.getDynamicParallelStrategy();
-                
-                // 检查是否已经创建过任务
-                String markKey = "__dynamic_" + tokenId;
-                Object created = instance.getVariable(markKey);
-                
-                if (created == null) {
-                    // 首次进入:从变量获取候选人列表
-                    Object varValue = instance.getVariable(variable);
-                    if (varValue == null) {
-                        throw new IllegalStateException(
-                                "DYNAMIC_PARALLEL 节点 " + current.getId() + 
-                                " 需要的变量 " + variable + " 不存在");
-                    }
-                    
-                    List<String> candidates;
-                    if (varValue instanceof List<?> list) {
-                        candidates = new ArrayList<>();
-                        for (Object item : list) {
-                            if (item instanceof String s) {
-                                candidates.add(s);
-                            } else {
-                                candidates.add(item.toString());
-                            }
-                        }
-                    } else {
-                        throw new IllegalStateException(
-                                "DYNAMIC_PARALLEL 节点 " + current.getId() + 
-                                " 的变量 " + variable + " 必须是 List 类型");
-                    }
-                    
-                    if (candidates.isEmpty()) {
-                        // 候选人列表为空:直接推进到出口
-                        log.info("[引擎] DYNAMIC_PARALLEL 节点 {} 候选人列表为空,直接推进", current.getId());
-                        instance.setVariable(markKey, "done");
-                        List<Transition> outs = def.getOutgoing(current.getId());
-                        if (outs.isEmpty()) {
-                            instance.consumeToken(tokenId);
-                            instanceRepo.save(instance);
-                        } else if (outs.size() == 1) {
-                            token.setCurrentNodeId(outs.get(0).getTo());
-                            instanceRepo.save(instance);
-                            advanceToken(instance, def, tokenId);
-                        } else {
-                            throw new IllegalStateException(
-                                    "DYNAMIC_PARALLEL 节点 " + current.getId() + " 有多条出口");
-                        }
-                    } else {
-                        // 为每个候选人创建任务
-                        Candidate candidate = strategy == CandidateStrategy.ANY 
-                                ? Candidate.ofAny(candidates.toArray(new String[0]))
-                                : Candidate.ofAll(candidates.toArray(new String[0]));
-                        
-                        TaskInstance task = new TaskInstance(instance.getId(), tokenId,
-                                current.getId(), candidate);
-                        instance.addTask(task);
-                        instance.setVariable(markKey, "created");
-                        log.info("[引擎] DYNAMIC_PARALLEL 节点 {} 创建动态任务,候选人={},策略={},taskId={}", 
-                                current.getId(), candidates, strategy, task.getId());
-                        taskRepo.save(task);
-                        instanceRepo.save(instance);
-                    }
-                } else if ("created".equals(created)) {
-                    // 任务已创建,检查是否完成 —— 同样以 taskRepo 为唯一真相
-                    TaskInstance existing = currentTaskOf(instance, tokenId, current.getId());
-                    
-                    if (existing != null && existing.getStatus() == TaskStatus.COMPLETED) {
-                        // 任务完成:推进到出口
-                        log.info("[引擎] DYNAMIC_PARALLEL 节点 {} 动态任务完成,推进 Token", current.getId());
-                        instance.setVariable(markKey, "done");
-                        List<Transition> outs = def.getOutgoing(current.getId());
-                        if (outs.isEmpty()) {
-                            instance.consumeToken(tokenId);
-                            instanceRepo.save(instance);
-                        } else if (outs.size() == 1) {
-                            token.setCurrentNodeId(outs.get(0).getTo());
-                            instanceRepo.save(instance);
-                            advanceToken(instance, def, tokenId);
-                        } else {
-                            throw new IllegalStateException(
-                                    "DYNAMIC_PARALLEL 节点 " + current.getId() + " 有多条出口");
-                        }
-                    } else {
-                        // 任务仍在执行,继续等待
-                        log.debug("[引擎] DYNAMIC_PARALLEL 节点 {} 动态任务仍执行中,继续等待", current.getId());
-                    }
-                }
-            }
-            case MESSAGE_EVENT -> {
-                if (eventRepo == null) {
-                    throw new IllegalStateException("未启用事件网关，请注入 EventRepository");
-                }
-                var messageEvent = current.getMessageEvent();
-                if (messageEvent == null) {
-                    throw new IllegalStateException("MESSAGE_EVENT 节点 " + current.getId() + " 缺少消息事件定义");
-                }
-                
-                // 从流程变量中提取 correlationKey
-                String correlationKey = evaluateExpression(messageEvent.correlationKeyExpression(), instance.getVariables());
-                if (correlationKey == null || correlationKey.isBlank()) {
-                    throw new IllegalStateException("MESSAGE_EVENT 节点 " + current.getId() + 
-                            " 的 correlationKey 表达式 " + messageEvent.correlationKeyExpression() + " 计算结果为空");
-                }
-                
-                // 保存等待中的消息事件
-                eventRepo.saveMessageEvent(instance.getId(), current.getId(), messageEvent.messageName(), correlationKey);
-                log.info("[引擎] MESSAGE_EVENT 节点 {} 等待消息 name={} correlationKey={}", 
-                        current.getId(), messageEvent.messageName(), correlationKey);
-                // Token 停留在当前节点，等待外部消息触发
-            }
-            case SIGNAL_EVENT -> {
-                if (eventRepo == null) {
-                    throw new IllegalStateException("未启用事件网关，请注入 EventRepository");
-                }
-                var signalEvent = current.getSignalEvent();
-                if (signalEvent == null) {
-                    throw new IllegalStateException("SIGNAL_EVENT 节点 " + current.getId() + " 缺少信号事件定义");
-                }
-                
-                // 保存等待中的信号事件
-                eventRepo.saveSignalEvent(instance.getId(), current.getId(), signalEvent.signalName());
-                log.info("[引擎] SIGNAL_EVENT 节点 {} 等待信号 name={}", current.getId(), signalEvent.signalName());
-                // Token 停留在当前节点，等待外部信号触发
-            }
-            case TIMER_BOUNDARY -> {
-                if (eventRepo == null) {
-                    throw new IllegalStateException("未启用事件网关，请注入 EventRepository");
-                }
-                var timerEvent = current.getTimerBoundaryEvent();
-                if (timerEvent == null) {
-                    throw new IllegalStateException("TIMER_BOUNDARY 节点 " + current.getId() + " 缺少定时器事件定义");
-                }
-                
-                // 计算触发时间
-                java.time.Instant triggerTime = java.time.Instant.now().plusMillis(timerEvent.durationMillis());
-                
-                // 保存等待中的定时器事件
-                eventRepo.saveTimerEvent(instance.getId(), current.getId(), triggerTime, timerEvent.interrupting());
-                log.info("[引擎] TIMER_BOUNDARY 节点 {} 等待定时器 triggerTime={} interrupting={}", 
-                        current.getId(), triggerTime, timerEvent.interrupting());
-                // Token 停留在当前节点，等待定时器触发
-            }
-        }
-
-        checkAndFinalize(instance);
-    }
-
-    /**
-     * 检查并行汇聚是否所有分支都已到齐
-     */
-    private boolean allJoinArrived(ProcessDefinition def, String joinNodeId, ProcessInstance instance) {        // 统计到达 joinNodeId 的所有 Transition,来自哪些 Token
-        // 简化:由于我们 consumeToken 时立即移除,本方法被调用时已经 consume 了当前 Token
-        // 所以剩下要判断的是:还有没有其他 Token 还停在 joinNodeId 的前驱上
-        Set<String> expectedSources = new HashSet<>();
-        for (NodeDefinition n : def.getNodes().values()) {
-            for (Transition t : def.getOutgoing(n.getId())) {
-                if (t.getTo().equals(joinNodeId)) {
-                    expectedSources.add(n.getId());
-                }
-            }
-        }
-        for (Token t : instance.getActiveTokens().values()) {
-            if (expectedSources.contains(t.getCurrentNodeId())) {
-                return false;  // 还有分支没到达
-            }
-        }
-        return true;
-    }
-
-    /**
-     * 为附加到指定 USER_TASK 节点的 TIMER_BOUNDARY 注册定时器事件
-     */
-    private void registerTimerBoundaryFor(ProcessDefinition def, ProcessInstance instance,
-                                           NodeDefinition userTaskNode, String tokenId) {
-        if (eventRepo == null) {
-            return;
-        }
-        // 查找所有 attachedToNodeId == userTaskNode.getId() 的 TIMER_BOUNDARY 节点
-        for (NodeDefinition n : def.getNodes().values()) {
-            if (n.isTimerBoundary() && n.getTimerBoundaryEvent().attachedToNodeId().equals(userTaskNode.getId())) {
-                var timerEvent = n.getTimerBoundaryEvent();
-                java.time.Instant triggerTime = java.time.Instant.now().plusMillis(timerEvent.durationMillis());
-                eventRepo.saveTimerEvent(instance.getId(), n.getId(), triggerTime, timerEvent.interrupting());
-                log.info("[引擎] TIMER_BOUNDARY 节点 {} 注册定时器 triggerTime={} interrupting={}",
-                        n.getId(), triggerTime, timerEvent.interrupting());
-            }
-        }
-    }
-
-    /**
-     * 简单的表达式求值 - 从流程变量中提取值
-     * 
-     * 支持格式：
-     * - "variableName" - 直接取变量值
-     * - "${variableName}" - 同上
-     * 
-     * @param expression 表达式
-     * @param variables 流程变量
-     * @return 变量值（转为字符串），null 表示变量不存在
-     */
-    private String evaluateExpression(String expression, Map<String, Object> variables) {
-        if (expression == null || expression.isBlank()) {
-            return null;
-        }
-        
-        // 去除 ${} 包装
-        String varName = expression.trim();
-        if (varName.startsWith("${") && varName.endsWith("}")) {
-            varName = varName.substring(2, varName.length() - 1).trim();
-        }
-        
-        Object value = variables.get(varName);
-        return value != null ? value.toString() : null;
+    /** 回调：事务提交后调度 */
+    private void afterCommitScheduleInternal(Runnable action) {
+        afterCommitSchedule(action);
     }
 
     /**
