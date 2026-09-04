@@ -78,10 +78,6 @@ public class WorkflowEngine implements IWorkflowEngine {
     /** 事件仓储，可为 null（不启用事件网关）。 */
     private final com.workflow.repository.EventRepository eventRepo;
 
-    /** 监听器列表 */
-    private final List<ExecutionListener> executionListeners = new ArrayList<>();
-    private final List<TaskListener> taskListeners = new ArrayList<>();
-
     /**
      * 并发控制：同一棵流程树的引擎动作串行化。
      * 默认启用（单 JVM 内的正确性底线），多 JVM 部署另需仓储层乐观锁。
@@ -114,6 +110,9 @@ public class WorkflowEngine implements IWorkflowEngine {
     
     /** 子流程处理器 - 负责子流程的启动与完成回调 */
     private final SubProcessHandler subProcessHandler;
+    
+    /** 监听器支持 - 负责管理和触发执行监听器与任务监听器 */
+    private final ListenerSupport listenerSupport;
 
     /**
      * 最简构造器 - 仅注入三个必填仓储
@@ -163,6 +162,9 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.conflictRetries = Math.max(0, conflictRetries);
         this.retryBackoffMillis = Math.max(0, retryBackoffMillis);
         
+        // 初始化监听器支持
+        this.listenerSupport = new ListenerSupport();
+        
         // 初始化 Token 推进器
         this.tokenAdvancer = new TokenAdvancer(
             taskRepo,
@@ -170,11 +172,11 @@ public class WorkflowEngine implements IWorkflowEngine {
             eventRepo,
             historyRepo,
             this.scheduler,  // 使用已初始化的 scheduler，而不是可能为 null 的参数
-            this::fireTaskCreated,
+            listenerSupport::fireTaskCreated,
             this::startSubProcessInternal,
             this::onSubProcessCompletedInternal,
             this::afterCommitScheduleInternal,
-            this::fireExecutionCompleted
+            listenerSupport::fireExecutionCompleted
         );
         
         // 初始化子流程处理器
@@ -391,102 +393,34 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     // ========== 监听器管理 ==========
 
+    // ========== 监听器管理 ==========
+
     /**
-     * 注册执行监听器
+     * 添加执行监听器 - 委托给 ListenerSupport
      */
     public void addExecutionListener(ExecutionListener listener) {
-        executionListeners.add(listener);
+        listenerSupport.addExecutionListener(listener);
     }
 
     /**
-     * 注册任务监听器
+     * 添加任务监听器 - 委托给 ListenerSupport
      */
     public void addTaskListener(TaskListener listener) {
-        taskListeners.add(listener);
+        listenerSupport.addTaskListener(listener);
     }
 
     /**
-     * 移除执行监听器
+     * 移除执行监听器 - 委托给 ListenerSupport
      */
     public void removeExecutionListener(ExecutionListener listener) {
-        executionListeners.remove(listener);
+        listenerSupport.getExecutionListeners().remove(listener);
     }
 
     /**
-     * 移除任务监听器
+     * 移除任务监听器 - 委托给 ListenerSupport
      */
     public void removeTaskListener(TaskListener listener) {
-        taskListeners.remove(listener);
-    }
-
-    /** 触发流程启动事件 */
-    private void fireExecutionStarted(ProcessInstance instance) {
-        for (ExecutionListener l : executionListeners) {
-            try { l.onStarted(instance); } catch (Exception e) { log.warn("[监听器] onStarted 异常", e); }
-        }
-    }
-
-    /** 触发流程完成事件 */
-    private void fireExecutionCompleted(ProcessInstance instance) {
-        for (ExecutionListener l : executionListeners) {
-            try { l.onCompleted(instance); } catch (Exception e) { log.warn("[监听器] onCompleted 异常", e); }
-        }
-    }
-
-    /** 触发流程终止事件 */
-    private void fireExecutionTerminated(ProcessInstance instance) {
-        for (ExecutionListener l : executionListeners) {
-            try { l.onTerminated(instance); } catch (Exception e) { log.warn("[监听器] onTerminated 异常", e); }
-        }
-    }
-
-    /** 触发流程挂起事件 */
-    private void fireExecutionSuspended(ProcessInstance instance) {
-        for (ExecutionListener l : executionListeners) {
-            try { l.onSuspended(instance); } catch (Exception e) { log.warn("[监听器] onSuspended 异常", e); }
-        }
-    }
-
-    /** 触发流程恢复事件 */
-    private void fireExecutionResumed(ProcessInstance instance) {
-        for (ExecutionListener l : executionListeners) {
-            try { l.onResumed(instance); } catch (Exception e) { log.warn("[监听器] onResumed 异常", e); }
-        }
-    }
-
-    /** 触发任务创建事件 */
-    private void fireTaskCreated(TaskInstance task) {
-        for (TaskListener l : taskListeners) {
-            try { l.onCreated(task); } catch (Exception e) { log.warn("[监听器] onCreated 异常", e); }
-        }
-    }
-
-    /** 触发任务完成事件 */
-    private void fireTaskCompleted(TaskInstance task, String userId) {
-        for (TaskListener l : taskListeners) {
-            try { l.onCompleted(task, userId); } catch (Exception e) { log.warn("[监听器] onCompleted 异常", e); }
-        }
-    }
-
-    /** 触发任务驳回事件 */
-    private void fireTaskRejected(TaskInstance task, String userId, String reason) {
-        for (TaskListener l : taskListeners) {
-            try { l.onRejected(task, userId, reason); } catch (Exception e) { log.warn("[监听器] onRejected 异常", e); }
-        }
-    }
-
-    /** 触发任务转办事件 */
-    private void fireTaskTransferred(TaskInstance task, String fromUser, String toUser) {
-        for (TaskListener l : taskListeners) {
-            try { l.onTransferred(task, fromUser, toUser); } catch (Exception e) { log.warn("[监听器] onTransferred 异常", e); }
-        }
-    }
-
-    /** 触发任务撤回事件 */
-    private void fireTaskWithdrawn(TaskInstance task) {
-        for (TaskListener l : taskListeners) {
-            try { l.onWithdrawn(task); } catch (Exception e) { log.warn("[监听器] onWithdrawn 异常", e); }
-        }
+        listenerSupport.getTaskListeners().remove(listener);
     }
 
     // ========== 流程发起 ==========
@@ -536,7 +470,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             log.info("[引擎] 发起流程 instance={} key={} v{} initiator={}", instance.getId(), def.getKey(), def.getVersion(), initiator);
             audit(AuditEventType.PROCESS_STARTED, instance.getId(), null, initiator != null ? initiator : "system",
                     "发起流程 key=" + def.getKey() + " v" + def.getVersion());
-            fireExecutionStarted(instance);
+            listenerSupport.fireExecutionStarted(instance);
             // 推进第一个 Token
             advanceToken(instance, def, token.getId());
             return instance.getId();
@@ -611,7 +545,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
         log.info("[引擎] 用户 {} 完成审批 task={} (任务整体完成={})", actualApprover, taskId, taskCompleted);
         audit(AuditEventType.TASK_COMPLETED, instance.getId(), taskId, actualApprover, auditDetail);
-        fireTaskCompleted(task, actualApprover);
+        listenerSupport.fireTaskCompleted(task, actualApprover);
 
         if (taskCompleted) {
             // 任务整体完成 -> 取消超时调度(会签场景:部分完成不取消,继续等待剩余人)
@@ -666,7 +600,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         log.info("[引擎] 用户 {} 驳回到 {} reason={}", userId, prevUserTask, reason);
         audit(AuditEventType.TASK_REJECTED, instance.getId(), taskId, userId,
                 "驳回到 node=" + prevUserTask + " reason=" + reason);
-        fireTaskRejected(task, userId, reason);
+        listenerSupport.fireTaskRejected(task, userId, reason);
         // 在上一节点重新创建任务(新待办)
         advanceToken(instance, def, newToken.getId());
     }
@@ -720,7 +654,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         log.info("[引擎] 转办 task={} from={} to={}", taskId, fromUserId, toUserId);
         audit(AuditEventType.TASK_TRANSFERRED, instance.getId(), taskId, fromUserId,
                 "转办给 toUser=" + toUserId + " newTaskId=" + newTask.getId());
-        fireTaskTransferred(task, fromUserId, toUserId);
+        listenerSupport.fireTaskTransferred(task, fromUserId, toUserId);
     }
 
     /** 把调度器等不受事务保护的副作用推迟到事务提交后执行。 */
@@ -738,7 +672,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             instanceRepo.save(instance);
             log.info("[引擎] 暂停实例 {}", instanceId);
             audit(AuditEventType.PROCESS_SUSPENDED, instanceId, null, "system", "流程挂起");
-            fireExecutionSuspended(instance);
+            listenerSupport.fireExecutionSuspended(instance);
         });
     }
 
@@ -750,7 +684,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             instanceRepo.save(instance);
             log.info("[引擎] 恢复实例 {}", instanceId);
             audit(AuditEventType.PROCESS_RESUMED, instanceId, null, "system", "流程恢复");
-            fireExecutionResumed(instance);
+            listenerSupport.fireExecutionResumed(instance);
         });
     }
 
@@ -779,7 +713,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             
             log.info("[引擎] 终止实例 {}", instanceId);
             audit(AuditEventType.PROCESS_TERMINATED, instanceId, null, "system", "流程终止");
-            fireExecutionTerminated(instance);
+            listenerSupport.fireExecutionTerminated(instance);
         });
     }
 
@@ -826,11 +760,11 @@ public class WorkflowEngine implements IWorkflowEngine {
 
         log.info("[引擎] 发起人 {} 撤回流程 {}", initiator, instanceId);
         audit(AuditEventType.PROCESS_WITHDRAWN, instanceId, null, initiator, "发起人撤回流程");
-        fireExecutionTerminated(instance);
+        listenerSupport.fireExecutionTerminated(instance);
         // 触发任务撤回事件
         for (TaskInstance t : tasks) {
             if (t.getStatus() == TaskStatus.WITHDRAWN) {
-                fireTaskWithdrawn(t);
+                listenerSupport.fireTaskWithdrawn(t);
             }
         }
         });
