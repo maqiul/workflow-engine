@@ -30,6 +30,8 @@ import java.util.Set;
  *   <li>exclusiveGateway → EXCLUSIVE_GATEWAY</li>
  *   <li>parallelGateway → PARALLEL_GATEWAY</li>
  *   <li>callActivity → SUB_PROCESS（读 calledElement 属性）</li>
+ *   <li>intermediateCatchEvent → MESSAGE_EVENT / SIGNAL_EVENT（从 extensionElements 读 wf:message / wf:signal）</li>
+ *   <li>boundaryEvent → TIMER_BOUNDARY（从 extensionElements 读 wf:timer）</li>
  *   <li>sequenceFlow → Transition（读 conditionExpression）</li>
  * </ul>
  *
@@ -100,6 +102,8 @@ public final class BpmnImporter {
                 case "exclusiveGateway" -> builder.exclusiveGateway(el.getAttribute("id"));
                 case "parallelGateway" -> builder.parallelGateway(el.getAttribute("id"));
                 case "callActivity" -> parseCallActivity(el, builder);
+                case "intermediateCatchEvent" -> parseIntermediateCatchEvent(el, builder);
+                case "boundaryEvent" -> parseBoundaryEvent(el, builder);
                 case "sequenceFlow" -> parseSequenceFlow(el, builder);
                 // multiInstanceLoopCharacteristics 在 userTask 内部处理，这里忽略
             }
@@ -217,6 +221,88 @@ public final class BpmnImporter {
             throw new BpmnException("callActivity 节点 " + id + " 缺少 calledElement 属性");
         }
         builder.subProcess(id, name, calledElement);
+    }
+
+    /**
+     * 解析 intermediateCatchEvent —— 可能是 MESSAGE_EVENT 或 SIGNAL_EVENT。
+     * 通过 extensionElements 中的 wf:message / wf:signal 区分。
+     */
+    private static void parseIntermediateCatchEvent(Element el, ProcessBuilder builder) {
+        String id = el.getAttribute("id");
+        String name = el.getAttribute("name");
+        if (name.isBlank()) {
+            name = id;
+        }
+
+        // 尝试读取 wf:message
+        NodeList msgList = el.getElementsByTagNameNS(BpmnExporter.WF_NS, "message");
+        if (msgList.getLength() == 0) {
+            msgList = el.getElementsByTagName("wf:message");
+        }
+        if (msgList.getLength() > 0) {
+            Element msg = (Element) msgList.item(0);
+            String messageName = msg.getAttribute("messageName");
+            String correlationKey = msg.getAttribute("correlationKey");
+            if (messageName.isBlank() || correlationKey.isBlank()) {
+                throw new BpmnException("intermediateCatchEvent " + id + " 的 wf:message 缺少 messageName 或 correlationKey");
+            }
+            builder.messageEvent(id, name, messageName, correlationKey);
+            return;
+        }
+
+        // 尝试读取 wf:signal
+        NodeList sigList = el.getElementsByTagNameNS(BpmnExporter.WF_NS, "signal");
+        if (sigList.getLength() == 0) {
+            sigList = el.getElementsByTagName("wf:signal");
+        }
+        if (sigList.getLength() > 0) {
+            Element sig = (Element) sigList.item(0);
+            String signalName = sig.getAttribute("signalName");
+            if (signalName.isBlank()) {
+                throw new BpmnException("intermediateCatchEvent " + id + " 的 wf:signal 缺少 signalName");
+            }
+            builder.signalEvent(id, name, signalName);
+            return;
+        }
+
+        throw new BpmnException("intermediateCatchEvent " + id + " 缺少 wf:message 或 wf:signal 扩展定义");
+    }
+
+    /**
+     * 解析 boundaryEvent —— 必须是 TIMER_BOUNDARY。
+     * 从 extensionElements 中的 wf:timer 读取 attachedTo / duration / interrupting。
+     */
+    private static void parseBoundaryEvent(Element el, ProcessBuilder builder) {
+        String id = el.getAttribute("id");
+        String name = el.getAttribute("name");
+        if (name.isBlank()) {
+            name = id;
+        }
+
+        NodeList tmrList = el.getElementsByTagNameNS(BpmnExporter.WF_NS, "timer");
+        if (tmrList.getLength() == 0) {
+            tmrList = el.getElementsByTagName("wf:timer");
+        }
+        if (tmrList.getLength() == 0) {
+            throw new BpmnException("boundaryEvent " + id + " 缺少 wf:timer 扩展定义");
+        }
+
+        Element tmr = (Element) tmrList.item(0);
+        String attachedTo = tmr.getAttribute("attachedTo");
+        String durationStr = tmr.getAttribute("duration");
+        String interruptingStr = tmr.getAttribute("interrupting");
+
+        if (attachedTo.isBlank()) {
+            throw new BpmnException("boundaryEvent " + id + " 的 wf:timer 缺少 attachedTo");
+        }
+        if (durationStr.isBlank()) {
+            throw new BpmnException("boundaryEvent " + id + " 的 wf:timer 缺少 duration");
+        }
+
+        long durationMillis = Long.parseLong(durationStr);
+        boolean interrupting = interruptingStr.isBlank() || Boolean.parseBoolean(interruptingStr);
+
+        builder.timerBoundary(id, name, attachedTo, durationMillis, interrupting);
     }
 
     private static void parseSequenceFlow(Element el, ProcessBuilder builder) {

@@ -315,4 +315,111 @@ class BpmnRoundTripTest {
         assertThat(xml).contains("<process id=\"flow1\"");
         assertThat(xml).contains("<process id=\"flow2\"");
     }
+
+    // ========== 事件网关往返测试 ==========
+
+    @Test
+    @DisplayName("消息事件：导出再导入应保留 messageName 和 correlationKey")
+    void messageEventRoundTrip() {
+        ProcessDefinition original = ProcessBuilder.create("msg-flow")
+                .start("start")
+                .messageEvent("waitForApproval", "等待审批", "approvalMessage", "${orderId}")
+                .end("end")
+                .connect("start", "waitForApproval")
+                .connect("waitForApproval", "end")
+                .build();
+
+        String xml = BpmnExporter.export(original);
+        ProcessDefinition imported = BpmnImporter.importFrom(xml);
+
+        assertThat(imported.getNode("waitForApproval").getType().name()).isEqualTo("MESSAGE_EVENT");
+        assertThat(imported.getNode("waitForApproval").getMessageEvent()).isNotNull();
+        assertThat(imported.getNode("waitForApproval").getMessageEvent().messageName()).isEqualTo("approvalMessage");
+        assertThat(imported.getNode("waitForApproval").getMessageEvent().correlationKeyExpression()).isEqualTo("${orderId}");
+    }
+
+    @Test
+    @DisplayName("信号事件：导出再导入应保留 signalName")
+    void signalEventRoundTrip() {
+        ProcessDefinition original = ProcessBuilder.create("sig-flow")
+                .start("start")
+                .signalEvent("waitForSignal", "等待信号", "systemShutdown")
+                .end("end")
+                .connect("start", "waitForSignal")
+                .connect("waitForSignal", "end")
+                .build();
+
+        String xml = BpmnExporter.export(original);
+        ProcessDefinition imported = BpmnImporter.importFrom(xml);
+
+        assertThat(imported.getNode("waitForSignal").getType().name()).isEqualTo("SIGNAL_EVENT");
+        assertThat(imported.getNode("waitForSignal").getSignalEvent()).isNotNull();
+        assertThat(imported.getNode("waitForSignal").getSignalEvent().signalName()).isEqualTo("systemShutdown");
+    }
+
+    @Test
+    @DisplayName("定时器边界事件：导出再导入应保留 attachedTo / duration / interrupting")
+    void timerBoundaryRoundTrip() {
+        ProcessDefinition original = ProcessBuilder.create("timer-flow")
+                .start("start")
+                .userTask("review", "审核", Candidate.ofAny("alice"))
+                .timerBoundary("timeout", "超时", "review", 60000, true)
+                .end("end")
+                .connect("start", "review")
+                .connect("review", "timeout")
+                .connect("timeout", "end")
+                .build();
+
+        String xml = BpmnExporter.export(original);
+        ProcessDefinition imported = BpmnImporter.importFrom(xml);
+
+        assertThat(imported.getNode("timeout").getType().name()).isEqualTo("TIMER_BOUNDARY");
+        assertThat(imported.getNode("timeout").getTimerBoundaryEvent()).isNotNull();
+        assertThat(imported.getNode("timeout").getTimerBoundaryEvent().attachedToNodeId()).isEqualTo("review");
+        assertThat(imported.getNode("timeout").getTimerBoundaryEvent().durationMillis()).isEqualTo(60000);
+        assertThat(imported.getNode("timeout").getTimerBoundaryEvent().interrupting()).isTrue();
+    }
+
+    @Test
+    @DisplayName("定时器边界事件（非中断模式）：interrupting=false 应保留")
+    void timerBoundaryNonInterruptingRoundTrip() {
+        ProcessDefinition original = ProcessBuilder.create("timer-flow-2")
+                .start("start")
+                .userTask("review", "审核", Candidate.ofAny("alice"))
+                .timerBoundary("timeout", "超时", "review", 30000, false)
+                .end("end")
+                .connect("start", "review")
+                .connect("review", "timeout")
+                .connect("timeout", "end")
+                .build();
+
+        String xml = BpmnExporter.export(original);
+        ProcessDefinition imported = BpmnImporter.importFrom(xml);
+
+        assertThat(imported.getNode("timeout").getTimerBoundaryEvent().interrupting()).isFalse();
+    }
+
+    @Test
+    @DisplayName("组合流程：用户任务 + 消息事件 + 信号事件混合")
+    void combinedFlowWithEvents() {
+        ProcessDefinition original = ProcessBuilder.create("combined-flow")
+                .start("start")
+                .userTask("submit", "提交申请", Candidate.ofAny("alice"))
+                .messageEvent("waitForApproval", "等待审批", "approvalMessage", "${orderId}")
+                .signalEvent("notifyAll", "通知全员", "processCompleted")
+                .end("end")
+                .connect("start", "submit")
+                .connect("submit", "waitForApproval")
+                .connect("waitForApproval", "notifyAll")
+                .connect("notifyAll", "end")
+                .build();
+
+        String xml = BpmnExporter.export(original);
+        ProcessDefinition imported = BpmnImporter.importFrom(xml);
+
+        assertThat(imported.getNodes()).hasSize(5);
+        assertThat(imported.getNode("submit").getType().name()).isEqualTo("USER_TASK");
+        assertThat(imported.getNode("waitForApproval").getType().name()).isEqualTo("MESSAGE_EVENT");
+        assertThat(imported.getNode("notifyAll").getType().name()).isEqualTo("SIGNAL_EVENT");
+    }
 }
