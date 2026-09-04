@@ -111,6 +111,9 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     /** Token 推进器 - 负责流程路由逻辑 */
     private final TokenAdvancer tokenAdvancer;
+    
+    /** 子流程处理器 - 负责子流程的启动与完成回调 */
+    private final SubProcessHandler subProcessHandler;
 
     /**
      * 最简构造器 - 仅注入三个必填仓储
@@ -172,6 +175,14 @@ public class WorkflowEngine implements IWorkflowEngine {
             this::onSubProcessCompletedInternal,
             this::afterCommitScheduleInternal,
             this::fireExecutionCompleted
+        );
+        
+        // 初始化子流程处理器
+        this.subProcessHandler = new SubProcessHandler(
+            processRepo,
+            instanceRepo,
+            this::advanceToken,
+            this::defOf
         );
     }
 
@@ -1155,109 +1166,20 @@ public class WorkflowEngine implements IWorkflowEngine {
         tokenAdvancer.advanceToken(instance, def, tokenId, recordsActivity());
     }
 
-    /** 回调：启动子流程 */
+    /** 回调：启动子流程 - 委托给 SubProcessHandler */
     private void startSubProcessInternal(ProcessInstance parent, ProcessDefinition parentDef,
                                         Token parentToken, NodeDefinition subNode) {
-        startSubProcess(parent, parentDef, parentToken, subNode);
+        subProcessHandler.startSubProcess(parent, parentDef, parentToken, subNode);
     }
 
-    /** 回调：子流程完成后推进父流程 */
+    /** 回调：子流程完成后推进父流程 - 委托给 SubProcessHandler */
     private void onSubProcessCompletedInternal(ProcessInstance child) {
-        onSubProcessCompleted(child);
+        subProcessHandler.onSubProcessCompleted(child);
     }
 
     /** 回调：事务提交后调度 */
     private void afterCommitScheduleInternal(Runnable action) {
         afterCommitSchedule(action);
-    }
-
-    /**
-     * 检查实例是否可以结束(无活跃 Token 且无 PENDING 任务)
-     */
-    private void checkAndFinalize(ProcessInstance instance) {
-        if (instance.isAllTokensConsumed() && instance.getStatus() == InstanceStatus.RUNNING) {
-            // 若还有 PENDING 任务,说明是 UserTask 完成的瞬态,不算结束
-            // 以 taskRepo 为唯一真相：instance.getTasks() 是副本视图，不可用于判定
-            boolean hasPending = taskRepo.findByInstanceId(instance.getId()).stream()
-                    .anyMatch(t -> t.getStatus() == TaskStatus.PENDING);
-            if (!hasPending) {
-                instance.markCompleted();
-                instanceRepo.save(instance);
-                log.info("[引擎] 实例 {} 流程完成", instance.getId());
-                fireExecutionCompleted(instance);
-                // 子流程完成 -> 回调父流程推进
-                if (instance.isSubProcess()) {
-                    onSubProcessCompleted(instance);
-                }
-            }
-        }
-    }
-
-    // ========== 子流程 ==========
-
-    /**
-     * 在父流程的 SUB_PROCESS 节点发起子流程实例
-     * Token 停留在 SUB_PROCESS 节点,子流程完成后由 onSubProcessCompleted 推进
-     */
-    private void startSubProcess(ProcessInstance parent, ProcessDefinition parentDef,
-                                 Token token, NodeDefinition nodeDef) {
-        String subKey = nodeDef.getSubProcessKey();
-        ProcessDefinition subDef = processRepo.findByKey(subKey);
-
-        // 深度检查 - 沿 __sub_depth 变量,防循环引用
-        int depth = 1;
-        Object d = parent.getVariable(SUB_DEPTH_VAR);
-        if (d instanceof Number n) {
-            depth = n.intValue() + 1;
-        }
-        if (depth > MAX_SUB_PROCESS_DEPTH) {
-            throw new IllegalStateException(
-                    "子流程嵌套超过最大深度 " + MAX_SUB_PROCESS_DEPTH + ",疑似循环引用: " + subKey);
-        }
-
-        // 创建子实例(携带父上下文)
-        ProcessInstance child = new ProcessInstance(subDef.getKey(), subDef.getVersion(),
-                parent.getId(), token.getId(), nodeDef.getId());
-        // 子实例继承父树的根 —— 引擎按「流程树根」加锁，父子共享同一把锁，
-        // 从而杜绝 startSubProcess(父→子) 与 onSubProcessCompleted(子→父) 构成 ABBA 死锁
-        child.assignRootInstanceId(parent.getRootInstanceId());
-        // 继承父流程变量(浅拷贝)
-        parent.getVariables().forEach(child::setVariable);
-        child.setVariable(SUB_DEPTH_VAR, depth);
-
-        Token childToken = new Token(child.getId(), subDef.getStartNodeId());
-        child.addToken(childToken);
-        instanceRepo.save(child);
-
-        // 父实例打标记:该 token 的子流程已发起,避免重复发起
-        parent.setVariable(SUB_MARK_PREFIX + token.getId(), child.getId());
-        instanceRepo.save(parent);
-
-        log.info("[引擎] 发起子流程 parent={} node={} subKey={} child={} depth={}",
-                parent.getId(), nodeDef.getId(), subKey, child.getId(), depth);
-        advanceToken(child, subDef, childToken.getId());
-    }
-
-    /**
-     * 子流程实例完成 -> 回调父流程,推进停在 SUB_PROCESS 节点上的 Token
-     */
-    private void onSubProcessCompleted(ProcessInstance child) {
-        String parentId = child.getParentInstanceId();
-        String parentTokenId = child.getParentTokenId();
-        if (parentId == null || parentTokenId == null) {
-            return;
-        }
-        ProcessInstance parent = instanceRepo.findById(parentId);
-        ProcessDefinition parentDef = defOf(parent);
-        Token token = parent.getActiveTokens().get(parentTokenId);
-        if (token == null) {
-            // 父 Token 已不存在(父流程可能被终止)
-            log.warn("[引擎] 子流程完成但父 Token 已不存在 parent={} token={}", parentId, parentTokenId);
-            return;
-        }
-        log.info("[引擎] 子流程 {} 完成,推进父流程 token={} node={}",
-                child.getId(), parentTokenId, token.getCurrentNodeId());
-        advanceToken(parent, parentDef, parentTokenId);
     }
 
     private void ensureRunning(TaskInstance task) {
