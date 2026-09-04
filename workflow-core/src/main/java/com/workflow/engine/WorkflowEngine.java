@@ -113,6 +113,9 @@ public class WorkflowEngine implements IWorkflowEngine {
     
     /** 监听器支持 - 负责管理和触发执行监听器与任务监听器 */
     private final ListenerSupport listenerSupport;
+    
+    /** 超时处理器 - 负责处理任务超时回调 */
+    private final TimeoutHandler timeoutHandler;
 
     /**
      * 最简构造器 - 仅注入三个必填仓储
@@ -147,7 +150,6 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.processRepo = Objects.requireNonNull(processRepo);
         this.instanceRepo = Objects.requireNonNull(instanceRepo);
         this.taskRepo = Objects.requireNonNull(taskRepo);
-        this.scheduler = scheduler != null ? scheduler : createDefaultScheduler();
         this.auditLogRepo = auditLogRepo;
         this.delegationRepo = delegationRepo;
         this.notificationService = notificationService;
@@ -165,13 +167,32 @@ public class WorkflowEngine implements IWorkflowEngine {
         // 初始化监听器支持
         this.listenerSupport = new ListenerSupport();
         
+        // 初始化超时处理器（scheduler 稍后初始化）
+        this.timeoutHandler = new TimeoutHandler(
+            taskRepo,
+            instanceRepo,
+            auditLogRepo,
+            notificationService,
+            null,  // scheduler 稍后设置
+            this::advanceToken,
+            this::defOf,
+            this::syncTaskInInstance,
+            this::afterCommitScheduleInternal,
+            this::exclusiveVoid
+        );
+        
+        // 初始化 scheduler（使用 timeoutHandler 的回调）
+        this.scheduler = scheduler != null ? scheduler : createDefaultScheduler();
+        // 设置 scheduler 到 timeoutHandler
+        this.timeoutHandler.setScheduler(this.scheduler);
+        
         // 初始化 Token 推进器
         this.tokenAdvancer = new TokenAdvancer(
             taskRepo,
             instanceRepo,
             eventRepo,
             historyRepo,
-            this.scheduler,  // 使用已初始化的 scheduler，而不是可能为 null 的参数
+            this.scheduler,
             listenerSupport::fireTaskCreated,
             this::startSubProcessInternal,
             this::onSubProcessCompletedInternal,
@@ -234,7 +255,7 @@ public class WorkflowEngine implements IWorkflowEngine {
     }
 
     private TimeoutScheduler createDefaultScheduler() {
-        return new ScheduledTimeoutScheduler(this::onTaskTimeout);
+        return new ScheduledTimeoutScheduler(timeoutHandler::onTaskTimeout);
     }
 
     // ========== 并发与事务模板 ==========
@@ -1119,128 +1140,6 @@ public class WorkflowEngine implements IWorkflowEngine {
     private void ensureRunning(TaskInstance task) {
         if (task.getStatus() != TaskStatus.PENDING) {
             throw new IllegalStateException("任务非 PENDING 状态: " + task.getStatus());
-        }
-    }
-
-    // ========== 超时回调 ==========
-
-    /**
-     * 超时回调入口 —— 由调度线程触发，属于<b>独立的并发入口</b>，
-     * 必须与用户手动操作走同一把流程树锁，否则会出现
-     * 「超时自动通过与人工审批同时生效」的双写。
-     */
-    private void onTaskTimeout(String taskId, String instanceId,
-                               TimeoutPolicy policy, String targetUserId) {
-        exclusiveVoid(instanceId, "onTaskTimeout",
-                () -> doTaskTimeout(taskId, instanceId, policy, targetUserId));
-    }
-
-    /**
-     * 超时回调 - 由 ScheduledTimeoutScheduler 触发
-     * 按节点配置的 TimeoutPolicy 执行自动动作
-     *
-     * 幂等保证:回调前重查任务状态,非 PENDING 则忽略(避免与用户手动操作竞态)
-     */
-    private void doTaskTimeout(String taskId, String instanceId,
-                               TimeoutPolicy policy, String targetUserId) {
-        TaskInstance task = taskRepo.findById(taskId);
-        if (task == null || task.getStatus() != TaskStatus.PENDING) {
-            log.debug("[超时] 任务 {} 已非 PENDING 状态,忽略超时回调", taskId);
-            return;
-        }
-
-        ProcessInstance instance = instanceRepo.findById(instanceId);
-        if (instance.getStatus() != InstanceStatus.RUNNING) {
-            log.debug("[超时] 实例 {} 已非 RUNNING 状态,忽略超时回调", instanceId);
-            return;
-        }
-
-        log.info("[超时] 任务 {} 超时触发策略 policy={} target={}", taskId, policy, targetUserId);
-
-        // 超时通知（如果启用了通知服务）
-        if (notificationService != null) {
-            for (String userId : task.getCandidate().getUserIds()) {
-                notificationService.timeoutReminder(task, userId, 0);
-            }
-        }
-
-        switch (policy) {
-            case AUTO_APPROVE -> {
-                // 自动通过:记录 SYSTEM_USER 并直接完成 —— 候选人校验在 domain 内部豁免
-                task.recordSystemApproval(SYSTEM_USER);
-                taskRepo.save(task);
-                syncTaskInInstance(instance, task);
-                ProcessDefinition def = defOf(instance);
-                advanceToken(instance, def, task.getTokenId());
-                audit(AuditEventType.TIMEOUT_AUTO_APPROVED, instanceId, taskId, SYSTEM_USER,
-                        "超时自动通过");
-            }
-            case AUTO_REJECT -> {
-                // 自动驳回:退回上一 UserTask
-                task.setStatus(TaskStatus.REJECTED);
-                taskRepo.save(task);
-                syncTaskInInstance(instance, task);
-                ProcessDefinition def = defOf(instance);
-                String prevUserTask = PathNavigator.findPreviousUserTask(def, task.getNodeId());
-                if (prevUserTask == null) {
-                    log.warn("[超时] 驳回时找不到上一节点,实例终止");
-                    instance.markTerminated();
-                    instanceRepo.save(instance);
-                    audit(AuditEventType.TIMEOUT_AUTO_REJECTED, instanceId, taskId, SYSTEM_USER,
-                            "超时自动驳回找不到上一节点,实例终止");
-                    return;
-                }
-                instance.consumeToken(task.getTokenId());
-                NodeDefinition prevDef = def.getNode(prevUserTask);
-                Token newToken = new Token(instance.getId(), prevDef.getId());
-                instance.addToken(newToken);
-                instanceRepo.save(instance);
-                advanceToken(instance, def, newToken.getId());
-                audit(AuditEventType.TIMEOUT_AUTO_REJECTED, instanceId, taskId, SYSTEM_USER,
-                        "超时自动驳回到 node=" + prevUserTask);
-            }
-            case AUTO_TERMINATE -> {
-                // 自动终止:关闭实例和所有 PENDING 任务
-                instance.markTerminated();
-                List<String> terminatedIds = new ArrayList<>();
-                for (TaskInstance t : taskRepo.findByInstanceId(instanceId)) {
-                    if (t.getStatus() == TaskStatus.PENDING) {
-                        t.setStatus(TaskStatus.TERMINATED);
-                        taskRepo.save(t);
-                        syncTaskInInstance(instance, t);
-                        terminatedIds.add(t.getId());
-                    }
-                }
-                instanceRepo.save(instance);
-                afterCommitSchedule(() -> terminatedIds.forEach(scheduler::cancel));
-                audit(AuditEventType.TIMEOUT_AUTO_TERMINATED, instanceId, taskId, SYSTEM_USER,
-                        "超时自动终止");
-            }
-            case AUTO_TRANSFER -> {
-                // 自动转办:原任务置为 TRANSFERRED,新建目标用户任务
-                task.setStatus(TaskStatus.TRANSFERRED);
-                taskRepo.save(task);
-                syncTaskInInstance(instance, task);
-                ProcessDefinition def = defOf(instance);
-                NodeDefinition nodeDef = def.getNode(task.getNodeId());
-                Candidate newCand = Candidate.ofAny(targetUserId);
-                TaskInstance newTask = new TaskInstance(instance.getId(), task.getTokenId(),
-                        nodeDef.getId(), newCand);
-                taskRepo.save(newTask);
-                syncTaskInInstance(instance, newTask);
-                // 新任务继承原节点超时配置 —— 提交后才登记
-                if (nodeDef.hasTimeout()) {
-                    String newTaskId = newTask.getId();
-                    String instId = instance.getId();
-                    long timeout = nodeDef.getTimeoutMillis();
-                    TimeoutPolicy autoPolicy = nodeDef.getTimeoutPolicy();
-                    String autoTarget = nodeDef.getTimeoutTargetUserId();
-                    afterCommitSchedule(() -> scheduler.schedule(newTaskId, instId, timeout, autoPolicy, autoTarget));
-                }
-                audit(AuditEventType.TIMEOUT_AUTO_TRANSFERRED, instanceId, taskId, SYSTEM_USER,
-                        "超时自动转办给 toUser=" + targetUserId + " newTaskId=" + newTask.getId());
-            }
-            default -> log.warn("[超时] 未知策略 policy={}", policy);
         }
     }
 
