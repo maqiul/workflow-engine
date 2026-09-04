@@ -79,6 +79,8 @@ public class WorkflowEngine implements IWorkflowEngine {
     private final com.workflow.repository.EventRepository eventRepo;
     /** 决策仓储，可为 null（不启用决策网关）。 */
     private final com.workflow.dmn.DecisionRepository decisionRepo;
+    /** 决策历史仓储，可为 null（不记录决策历史）。 */
+    private final com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo;
 
     /**
      * 并发控制：同一棵流程树的引擎动作串行化。
@@ -128,7 +130,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                           InstanceRepository instanceRepo,
                           TaskRepository taskRepo) {
         this(processRepo, instanceRepo, taskRepo, null, null, null, null, null,
-                null, null, null, null, null, null, 3, 20L);
+                null, null, null, null, null, null, null, 3, 20L);
     }
 
     /**
@@ -146,6 +148,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                    java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds,
                    com.workflow.repository.EventRepository eventRepo,
                    com.workflow.dmn.DecisionRepository decisionRepo,
+                   com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo,
                    InstanceLockProvider locks,
                    TransactionRunner tx,
                    int conflictRetries,
@@ -163,6 +166,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                 : java.util.EnumSet.copyOf(historyKinds);
         this.eventRepo = eventRepo;
         this.decisionRepo = decisionRepo;
+        this.decisionHistoryRepo = decisionHistoryRepo;
         this.locks = locks != null ? locks : new LocalInstanceLocks();
         this.tx = tx != null ? tx : new UndoLogTransactionRunner();
         this.conflictRetries = Math.max(0, conflictRetries);
@@ -203,7 +207,8 @@ public class WorkflowEngine implements IWorkflowEngine {
             this::afterCommitScheduleInternal,
             listenerSupport::fireExecutionCompleted,
             decisionRepo,
-            decisionRepo != null ? new com.workflow.dmn.DecisionTableExecutor() : null
+            decisionRepo != null ? new com.workflow.dmn.DecisionTableExecutor() : null,
+            decisionHistoryRepo
         );
         
         // 初始化子流程处理器
@@ -222,7 +227,7 @@ public class WorkflowEngine implements IWorkflowEngine {
     public WorkflowEngine withoutConcurrencyControl() {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
                 auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, historyRepo,
-                historyKinds, eventRepo, decisionRepo, passthroughLocks(), TransactionRunner.noop(), 0, 0L);
+                historyKinds, eventRepo, decisionRepo, decisionHistoryRepo, passthroughLocks(), TransactionRunner.noop(), 0, 0L);
     }
 
     /**
@@ -236,7 +241,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             java.util.EnumSet<com.workflow.enums.HistoryKind> kinds) {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
                 auditLogRepo, delegationRepo, notificationService, carbonCopyRepo,
-                historyRepo, kinds, eventRepo, decisionRepo, locks, tx, conflictRetries, retryBackoffMillis);
+                historyRepo, kinds, eventRepo, decisionRepo, decisionHistoryRepo, locks, tx, conflictRetries, retryBackoffMillis);
     }
 
     /** 是否该写活动历史。 */

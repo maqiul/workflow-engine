@@ -32,12 +32,15 @@ public class DecisionTableExecutor {
         this.currentInputs = decisionTable.getInputs();
         
         List<Map<String, Object>> matchedOutputs = new ArrayList<>();
+        DecisionTable.DecisionRule matchedRule = null;
         
-        // 遍历所有规则
         for (DecisionTable.DecisionRule rule : decisionTable.getRules()) {
             if (matchesRule(rule, decisionTable.getInputs(), context)) {
                 Map<String, Object> output = extractOutput(rule, decisionTable.getOutputs());
                 matchedOutputs.add(output);
+                if (matchedRule == null) {
+                    matchedRule = rule;
+                }
                 
                 // 根据命中策略决定是否继续
                 if (decisionTable.getHitPolicy() == DecisionTable.HitPolicy.FIRST) {
@@ -48,7 +51,14 @@ public class DecisionTableExecutor {
         }
         
         // 根据命中策略返回结果
-        return applyHitPolicy(decisionTable.getHitPolicy(), matchedOutputs);
+        DecisionResult result = applyHitPolicy(decisionTable.getHitPolicy(), matchedOutputs);
+        
+        // 记录匹配的规则 ID（供决策历史使用）
+        if (matchedRule != null) {
+            result.matchedRuleId = matchedRule.getId();
+        }
+        
+        return result;
     }
 
     /** 当前正在执行的决策表的输入定义（供 matchesEntry 访问） */
@@ -309,6 +319,8 @@ public class DecisionTableExecutor {
     public static class DecisionResult {
         private final boolean matched;
         private final List<Map<String, Object>> outputs;
+        /** 命中的规则 ID（由 execute 方法填充） */
+        String matchedRuleId;
         
         private DecisionResult(boolean matched, List<Map<String, Object>> outputs) {
             this.matched = matched;
@@ -342,6 +354,11 @@ public class DecisionTableExecutor {
                 return null;
             }
             return outputs.get(0);
+        }
+        
+        /** 命中的规则 ID，可能为 null（无匹配时） */
+        public String getMatchedRuleId() {
+            return matchedRuleId;
         }
     }
 }

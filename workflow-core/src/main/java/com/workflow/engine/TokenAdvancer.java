@@ -53,6 +53,7 @@ public class TokenAdvancer {
     private final TimeoutScheduler scheduler;
     private final com.workflow.dmn.DecisionRepository decisionRepo;
     private final com.workflow.dmn.DecisionTableExecutor decisionExecutor;
+    private final com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo;
     
     private final Consumer<TaskInstance> onTaskCreated;
     private final SubProcessStarter subProcessStarter;
@@ -78,7 +79,7 @@ public class TokenAdvancer {
             Consumer<ProcessInstance> onProcessCompleted) {
         this(taskRepo, instanceRepo, eventRepo, historyRepo, scheduler, onTaskCreated,
              subProcessStarter, onSubProcessCompleted, afterCommitSchedule, onProcessCompleted,
-             null, null);
+             null, null, null);
     }
     
     public TokenAdvancer(
@@ -93,7 +94,8 @@ public class TokenAdvancer {
             Consumer<Runnable> afterCommitSchedule,
             Consumer<ProcessInstance> onProcessCompleted,
             com.workflow.dmn.DecisionRepository decisionRepo,
-            com.workflow.dmn.DecisionTableExecutor decisionExecutor) {
+            com.workflow.dmn.DecisionTableExecutor decisionExecutor,
+            com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo) {
         this.taskRepo = taskRepo;
         this.instanceRepo = instanceRepo;
         this.eventRepo = eventRepo;
@@ -106,6 +108,7 @@ public class TokenAdvancer {
         this.onProcessCompleted = onProcessCompleted;
         this.decisionRepo = decisionRepo;
         this.decisionExecutor = decisionExecutor;
+        this.decisionHistoryRepo = decisionHistoryRepo;
     }
     
     public void advanceToken(ProcessInstance instance, ProcessDefinition def, String tokenId,
@@ -486,6 +489,23 @@ public class TokenAdvancer {
         // 执行决策表
         Map<String, Object> context = instance.getVariables();
         com.workflow.dmn.DecisionTableExecutor.DecisionResult result = decisionExecutor.execute(decisionTable, context);
+        
+        // 记录决策历史
+        if (decisionHistoryRepo != null) {
+            Map<String, Object> outputs = result.isMatched() ? result.getSingleOutput() : null;
+            com.workflow.dmn.DecisionHistory history = new com.workflow.dmn.DecisionHistory(
+                    java.util.UUID.randomUUID().toString(),
+                    instance.getId(),
+                    tokenId,
+                    current.getId(),
+                    decisionTableId,
+                    new java.util.HashMap<>(context),
+                    outputs,
+                    result.getMatchedRuleId(),
+                    System.currentTimeMillis()
+            );
+            decisionHistoryRepo.save(history);
+        }
         
         if (!result.isMatched()) {
             log.warn("[TokenAdvancer] DECISION node {} no matching rule in decision table {}", 

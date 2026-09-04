@@ -1,8 +1,11 @@
 package com.workflow.tests.dmn;
 
 import com.workflow.builder.ProcessBuilder;
+import com.workflow.dmn.DecisionHistory;
+import com.workflow.dmn.DecisionHistoryRepository;
 import com.workflow.dmn.DecisionTable;
 import com.workflow.dmn.DecisionTableExecutor;
+import com.workflow.dmn.InMemoryDecisionHistoryRepository;
 import com.workflow.dmn.InMemoryDecisionRepository;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
@@ -41,6 +44,7 @@ class DecisionTableTest {
     private InMemoryInstanceRepository instRepo;
     private InMemoryTaskRepository taskRepo;
     private InMemoryDecisionRepository decisionRepo;
+    private InMemoryDecisionHistoryRepository decisionHistoryRepo;
     private DecisionTableExecutor decisionExecutor;
     private WorkflowEngine engine;
 
@@ -50,10 +54,12 @@ class DecisionTableTest {
         instRepo = new InMemoryInstanceRepository();
         taskRepo = new InMemoryTaskRepository();
         decisionRepo = new InMemoryDecisionRepository();
+        decisionHistoryRepo = new InMemoryDecisionHistoryRepository();
         decisionExecutor = new DecisionTableExecutor();
 
         engine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
                 .decisionRepository(decisionRepo)
+                .decisionHistoryRepository(decisionHistoryRepo)
                 .build();
     }
 
@@ -268,5 +274,15 @@ class DecisionTableTest {
         
         // 验证：决策结果已写入变量
         assertThat(instance.getVariable("approvalLevel")).isEqualTo("manager");
+        
+        // 验证：决策历史已保存
+        List<DecisionHistory> histories = decisionHistoryRepo.findByInstanceId(instanceId);
+        assertThat(histories).hasSize(1);
+        DecisionHistory history = histories.get(0);
+        assertThat(history.getDecisionTableId()).isEqualTo("approval-table");
+        assertThat(history.getNodeId()).isEqualTo("decision");
+        assertThat(history.getMatchedRuleId()).isEqualTo("rule1");
+        assertThat(history.getOutputs()).containsEntry("approvalLevel", "manager");
+        assertThat(history.getInputs()).containsEntry("amount", 500);
     }
 }
