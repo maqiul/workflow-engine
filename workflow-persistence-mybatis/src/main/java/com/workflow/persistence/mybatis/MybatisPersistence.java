@@ -139,6 +139,9 @@ public final class MybatisPersistence {
         configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistTaskMapper.class);
         // 事件网关
         configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfEventMapper.class);
+        // DMN 决策表和历史
+        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfDecisionTableMapper.class);
+        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfDecisionHistoryMapper.class);
         // 驼峰映射默认开启
         configuration.setMapUnderscoreToCamelCase(true);
         sqlSessionFactory = new MybatisSqlSessionFactoryBuilder().build(configuration);
@@ -281,5 +284,15 @@ public final class MybatisPersistence {
     /** 提供 EventRepository（事件网关：消息/信号/定时器）。 */
     public com.workflow.repository.EventRepository eventRepo() {
         return new com.workflow.persistence.mybatis.repository.MybatisEventRepository(this);
+    }
+
+    /** 提供 DecisionRepository（DMN 决策表）。 */
+    public com.workflow.dmn.DecisionRepository decisionRepo() {
+        return new com.workflow.persistence.mybatis.repository.MybatisDecisionRepository(this);
+    }
+
+    /** 提供 DecisionHistoryRepository（DMN 决策历史）。 */
+    public com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo() {
+        return new com.workflow.persistence.mybatis.repository.MybatisDecisionHistoryRepository(this);
     }
 }

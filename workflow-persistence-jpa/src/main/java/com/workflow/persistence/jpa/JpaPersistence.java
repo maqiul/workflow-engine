@@ -201,6 +201,16 @@ public class JpaPersistence {
         return new com.workflow.persistence.jpa.repository.JpaEventRepository(this);
     }
 
+    /** 提供 DecisionRepository（DMN 决策表）。 */
+    public com.workflow.dmn.DecisionRepository decisionRepo() {
+        return new com.workflow.persistence.jpa.repository.JpaDecisionRepository(this);
+    }
+
+    /** 提供 DecisionHistoryRepository（DMN 决策历史）。 */
+    public com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo() {
+        return new com.workflow.persistence.jpa.repository.JpaDecisionHistoryRepository(this);
+    }
+
     /**
      * 共享 EntityManager - 用 EMF 自带的 session 模式。
      * 注:这里简化,每个仓储拿独立 EM。生产建议每次业务操作开新 EM + 事务。
