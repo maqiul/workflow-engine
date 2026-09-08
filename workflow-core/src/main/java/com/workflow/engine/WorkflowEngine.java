@@ -81,6 +81,14 @@ public class WorkflowEngine implements IWorkflowEngine {
     private final com.workflow.dmn.DecisionRepository decisionRepo;
     /** 决策历史仓储，可为 null（不记录决策历史）。 */
     private final com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo;
+    /** 表单仓储，可为 null（不启用表单集成）。 */
+    private com.workflow.form.FormRepository formRepo;
+    /** 表单绑定仓储，可为 null（不启用表单集成）。 */
+    private com.workflow.form.FormBindingRepository formBindingRepo;
+    /** 附件仓储，可为 null（不启用附件管理）。 */
+    private com.workflow.attachment.AttachmentRepository attachmentRepo;
+    /** 附件存储服务，可为 null（不启用附件管理）。 */
+    private com.workflow.attachment.AttachmentStorage attachmentStorage;
 
     /**
      * 并发控制：同一棵流程树的引擎动作串行化。
@@ -1289,5 +1297,199 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
 
         return BatchResult.allSuccess(instanceIds.size());
+    }
+
+    // ========== 表单集成 ==========
+
+    /**
+     * 设置表单仓储
+     */
+    public void setFormRepository(com.workflow.form.FormRepository formRepo) {
+        this.formRepo = formRepo;
+    }
+
+    /**
+     * 设置表单绑定仓储
+     */
+    public void setFormBindingRepository(com.workflow.form.FormBindingRepository formBindingRepo) {
+        this.formBindingRepo = formBindingRepo;
+    }
+
+    @Override
+    public com.workflow.form.FormDefinition getFormForTask(String taskId) {
+        if (formRepo == null || formBindingRepo == null) {
+            return null;
+        }
+
+        TaskInstance task = taskRepo.findById(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在: " + taskId);
+        }
+
+        ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
+        ProcessDefinition def = defOf(instance);
+
+        // 查找表单绑定
+        com.workflow.form.FormBinding binding = formBindingRepo.findByProcessAndNode(
+                def.getKey(), task.getNodeId());
+        
+        if (binding == null) {
+            return null;
+        }
+
+        return formRepo.findById(binding.getFormId());
+    }
+
+    @Override
+    public FormSubmitResult submitForm(String taskId, Map<String, Object> formData, 
+                                      String userId, boolean approved) {
+        if (formRepo == null || formBindingRepo == null) {
+            return FormSubmitResult.error("表单功能未启用");
+        }
+
+        TaskInstance task = taskRepo.findById(taskId);
+        if (task == null) {
+            return FormSubmitResult.error("任务不存在: " + taskId);
+        }
+
+        ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
+        ProcessDefinition def = defOf(instance);
+
+        // 查找表单绑定
+        com.workflow.form.FormBinding binding = formBindingRepo.findByProcessAndNode(
+                def.getKey(), task.getNodeId());
+        
+        if (binding == null) {
+            return FormSubmitResult.error("该任务未绑定表单");
+        }
+
+        // 获取表单定义
+        com.workflow.form.FormDefinition form = formRepo.findById(binding.getFormId());
+        if (form == null) {
+            return FormSubmitResult.error("表单定义不存在: " + binding.getFormId());
+        }
+
+        // 验证表单数据
+        com.workflow.form.FormValidator validator = new com.workflow.form.FormValidator();
+        com.workflow.form.FormValidator.ValidationResult validationResult = 
+                validator.validate(form, formData);
+        
+        if (!validationResult.isValid()) {
+            return FormSubmitResult.validationFailed(validationResult.getErrors());
+        }
+
+        // 映射字段到流程变量
+        Map<String, Object> mappedVariables = new java.util.HashMap<>();
+        Map<String, String> fieldToVarMapping = binding.getFieldToVariableMapping();
+        
+        for (com.workflow.form.FormField field : form.getFields()) {
+            Object value = formData.get(field.getId());
+            String varName = fieldToVarMapping != null ? 
+                    fieldToVarMapping.get(field.getId()) : field.getVariableName();
+            
+            if (varName != null && value != null) {
+                mappedVariables.put(varName, value);
+            }
+        }
+
+        // 将映射的变量设置到流程实例
+        for (Map.Entry<String, Object> entry : mappedVariables.entrySet()) {
+            instance.setVariable(entry.getKey(), entry.getValue());
+        }
+        instanceRepo.save(instance);
+
+        // 完成任务
+        completeTask(taskId, userId, approved);
+
+        return FormSubmitResult.success(mappedVariables);
+    }
+
+    // ========== 附件管理 ==========
+
+    /**
+     * 设置附件仓储
+     */
+    public void setAttachmentRepository(com.workflow.attachment.AttachmentRepository attachmentRepo) {
+        this.attachmentRepo = attachmentRepo;
+    }
+
+    /**
+     * 设置附件存储服务
+     */
+    public void setAttachmentStorage(com.workflow.attachment.AttachmentStorage attachmentStorage) {
+        this.attachmentStorage = attachmentStorage;
+    }
+
+    @Override
+    public String uploadAttachment(String taskId, String fileName, String fileType, long fileSize,
+                                  java.io.InputStream inputStream, String uploadedBy, String remark) {
+        if (attachmentRepo == null || attachmentStorage == null) {
+            throw new IllegalStateException("附件功能未启用");
+        }
+
+        TaskInstance task = taskRepo.findById(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在: " + taskId);
+        }
+
+        // 存储文件
+        String storagePath = attachmentStorage.store(fileName, inputStream);
+
+        // 创建附件元数据
+        String attachmentId = java.util.UUID.randomUUID().toString();
+        com.workflow.attachment.Attachment attachment = new com.workflow.attachment.Attachment(
+                attachmentId,
+                fileName,
+                fileType,
+                fileSize,
+                storagePath,
+                com.workflow.attachment.Attachment.BusinessType.TASK,
+                taskId,
+                uploadedBy,
+                java.time.LocalDateTime.now(),
+                remark
+        );
+
+        attachmentRepo.save(attachment);
+        return attachmentId;
+    }
+
+    @Override
+    public List<com.workflow.attachment.Attachment> getTaskAttachments(String taskId) {
+        if (attachmentRepo == null) {
+            return new java.util.ArrayList<>();
+        }
+        return attachmentRepo.findByTaskId(taskId);
+    }
+
+    @Override
+    public java.io.InputStream getAttachmentContent(String attachmentId) {
+        if (attachmentRepo == null || attachmentStorage == null) {
+            throw new IllegalStateException("附件功能未启用");
+        }
+
+        com.workflow.attachment.Attachment attachment = attachmentRepo.findById(attachmentId);
+        if (attachment == null) {
+            throw new IllegalArgumentException("附件不存在: " + attachmentId);
+        }
+
+        return attachmentStorage.read(attachment.getStoragePath());
+    }
+
+    @Override
+    public void deleteAttachment(String attachmentId) {
+        if (attachmentRepo == null || attachmentStorage == null) {
+            throw new IllegalStateException("附件功能未启用");
+        }
+
+        com.workflow.attachment.Attachment attachment = attachmentRepo.findById(attachmentId);
+        if (attachment == null) {
+            throw new IllegalArgumentException("附件不存在: " + attachmentId);
+        }
+
+        // 删除文件
+        attachmentStorage.delete(attachment.getStoragePath());
+        // 删除元数据
+        attachmentRepo.delete(attachmentId);
     }
 }
