@@ -27,5 +27,7 @@ public enum AuditEventType {
     /** 超时自动转办 */
     TIMEOUT_AUTO_TRANSFERRED,
     /** 流程撤回 - 发起人撤回未审批的申请 */
-    PROCESS_WITHDRAWN
+    PROCESS_WITHDRAWN,
+    /** 流程跳转 - 跳转到任意节点 */
+    PROCESS_JUMPED
 }

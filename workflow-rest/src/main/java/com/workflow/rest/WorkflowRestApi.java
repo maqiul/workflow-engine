@@ -135,6 +135,13 @@ public class WorkflowRestApi {
                     engine.withdraw(id, requireString(body, "initiator"));
                     return RestResponse.noContent();
                 }
+                case "jump" -> {
+                    requirePost(m);
+                    JSONObject body = parse(req.body());
+                    engine.jumpToNode(id, requireString(body, "targetNodeId"),
+                            requireString(body, "operator"), body.getString("reason"));
+                    return RestResponse.noContent();
+                }
                 case "history" -> {
                     return getHistory(id);
                 }

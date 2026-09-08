@@ -66,6 +66,20 @@ public interface IWorkflowEngine {
     void withdraw(String instanceId, String initiator);
 
     /**
+     * 跳转到任意节点 - 将流程实例回退/跳转到指定历史节点
+     *
+     * <p>会消耗当前所有活跃 Token，终止所有 PENDING 任务，
+     * 在目标节点创建新 Token 并推进（如果是 UserTask 则创建新任务）。
+     *
+     * @param instanceId   流程实例 ID
+     * @param targetNodeId 目标节点 ID（必须存在于流程定义中）
+     * @param operator     操作人
+     * @param reason       跳转原因（可为 null）
+     * @throws IllegalArgumentException 如果实例不存在、节点不存在、或实例非 RUNNING 状态
+     */
+    void jumpToNode(String instanceId, String targetNodeId, String operator, String reason);
+
+    /**
      * 设置委托 - A 委托 B 代为审批（全局委托）
      *
      * @param delegator 委托人

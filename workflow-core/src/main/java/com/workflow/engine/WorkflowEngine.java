@@ -802,6 +802,58 @@ public class WorkflowEngine implements IWorkflowEngine {
         });
     }
 
+    @Override
+    public void jumpToNode(String instanceId, String targetNodeId, String operator, String reason) {
+        exclusiveVoid(instanceId, "jumpToNode", () -> {
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            
+            // 1. 检查实例状态
+            if (instance.getStatus() != InstanceStatus.RUNNING) {
+                throw new IllegalStateException("仅 RUNNING 状态的流程可跳转,当前: " + instance.getStatus());
+            }
+            
+            // 2. 获取流程定义，检查目标节点是否存在
+            ProcessDefinition def = defOf(instance);
+            if (def.getNode(targetNodeId) == null) {
+                throw new IllegalArgumentException("目标节点 " + targetNodeId + " 不存在于流程定义中");
+            }
+            
+            // 3. 消耗所有活跃 Token
+            List<String> consumedTokenIds = new ArrayList<>(instance.getActiveTokens().keySet());
+            for (String tokenId : consumedTokenIds) {
+                instance.consumeToken(tokenId);
+            }
+            
+            // 4. 终止所有 PENDING 任务
+            List<TaskInstance> tasks = taskRepo.findByInstanceId(instanceId);
+            List<String> terminatedTaskIds = new ArrayList<>();
+            for (TaskInstance t : tasks) {
+                if (t.getStatus() == TaskStatus.PENDING) {
+                    t.setStatus(TaskStatus.TERMINATED);
+                    taskRepo.save(t);
+                    syncTaskInInstance(instance, t);
+                    terminatedTaskIds.add(t.getId());
+                }
+            }
+            
+            // 5. 在目标节点创建新 Token
+            Token newToken = new Token(instance.getId(), targetNodeId);
+            instance.addToken(newToken);
+            instanceRepo.save(instance);
+            
+            // 6. 推进 Token（如果是 UserTask 会创建新任务）
+            tokenAdvancer.advanceToken(instance, def, newToken.getId(), recordsActivity());
+            
+            // 7. 取消旧任务的超时调度
+            afterCommitSchedule(() -> terminatedTaskIds.forEach(scheduler::cancel));
+            
+            log.info("[引擎] 操作人 {} 跳转流程 {} 到节点 {} 原因: {}", 
+                    operator, instanceId, targetNodeId, reason);
+            audit(AuditEventType.PROCESS_JUMPED, instanceId, null, operator, 
+                    "跳转到节点 " + targetNodeId + (reason != null ? " 原因: " + reason : ""));
+        });
+    }
+
     // ========== 委托管理 ==========
 
     @Override
