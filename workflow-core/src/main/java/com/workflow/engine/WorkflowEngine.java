@@ -724,6 +724,12 @@ public class WorkflowEngine implements IWorkflowEngine {
     public void terminate(String instanceId) {
         exclusiveVoid(instanceId, "terminate", () -> {
             ProcessInstance instance = instanceRepo.findById(instanceId);
+            
+            // 检查实例状态
+            if (instance.getStatus() != InstanceStatus.RUNNING) {
+                throw new IllegalStateException("仅 RUNNING 状态的流程可终止,当前: " + instance.getStatus());
+            }
+            
             instance.markTerminated();
             // 关闭所有 PENDING 任务并取消超时调度
             List<String> cancelledTaskIds = new ArrayList<>();
@@ -1214,5 +1220,74 @@ public class WorkflowEngine implements IWorkflowEngine {
         if (auditLogRepo != null) {
             auditLogRepo.save(new AuditLog(instanceId, taskId, eventType, operator, detail));
         }
+    }
+
+    // ========== 批处理 API ==========
+
+    @Override
+    public BatchResult batchCompleteTasks(List<String> taskIds, String userId, boolean approved) {
+        if (taskIds == null || taskIds.isEmpty()) {
+            return BatchResult.allSuccess(0);
+        }
+
+        List<BatchResult.FailureDetail> failures = new ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        // 使用事务保证原子性
+        tx.execute(() -> {
+            for (String taskId : taskIds) {
+                try {
+                    completeTask(taskId, userId, approved);
+                    successCount.incrementAndGet();
+                } catch (Exception e) {
+                    log.warn("[批处理] 完成任务 {} 失败: {}", taskId, e.getMessage());
+                    failures.add(new BatchResult.FailureDetail(taskId, e));
+                }
+            }
+        });
+
+        // 如果有失败，抛出异常让事务回滚
+        if (!failures.isEmpty()) {
+            throw new BatchPartialFailureException(
+                    String.format("批处理部分失败：成功 %d，失败 %d", successCount.get(), failures.size()),
+                    new BatchResult(taskIds.size(), successCount.get(), failures));
+        }
+
+        return BatchResult.allSuccess(taskIds.size());
+    }
+
+    @Override
+    public BatchResult batchTerminateInstances(List<String> instanceIds, String operator, String reason) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            return BatchResult.allSuccess(0);
+        }
+
+        List<BatchResult.FailureDetail> failures = new ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        // 使用事务保证原子性
+        tx.execute(() -> {
+            for (String instanceId : instanceIds) {
+                try {
+                    terminate(instanceId);
+                    successCount.incrementAndGet();
+                    // 记录审计日志
+                    audit(AuditEventType.PROCESS_TERMINATED, instanceId, null, operator,
+                            reason != null ? "批量终止: " + reason : "批量终止");
+                } catch (Exception e) {
+                    log.warn("[批处理] 终止实例 {} 失败: {}", instanceId, e.getMessage());
+                    failures.add(new BatchResult.FailureDetail(instanceId, e));
+                }
+            }
+        });
+
+        // 如果有失败，抛出异常让事务回滚
+        if (!failures.isEmpty()) {
+            throw new BatchPartialFailureException(
+                    String.format("批处理部分失败：成功 %d，失败 %d", successCount.get(), failures.size()),
+                    new BatchResult(instanceIds.size(), successCount.get(), failures));
+        }
+
+        return BatchResult.allSuccess(instanceIds.size());
     }
 }

@@ -155,4 +155,31 @@ public interface IWorkflowEngine {
 
     /** 全部流程实例（历史与效能查询的基础）。 */
     List<ProcessInstance> allInstances();
+
+    // ========== 批处理 API ==========
+
+    /**
+     * 批量完成任务
+     * 
+     * <p>原子性操作：要么全部成功，要么全部失败。
+     * 如果某个任务失败，整个批次回滚。
+     *
+     * @param taskIds  任务 ID 列表
+     * @param userId   操作人
+     * @param approved 是否批准
+     * @return 批处理结果
+     */
+    BatchResult batchCompleteTasks(List<String> taskIds, String userId, boolean approved);
+
+    /**
+     * 批量终止流程实例
+     * 
+     * <p>原子性操作：要么全部成功，要么全部失败。
+     *
+     * @param instanceIds 流程实例 ID 列表
+     * @param operator    操作人
+     * @param reason      终止原因（可为 null）
+     * @return 批处理结果
+     */
+    BatchResult batchTerminateInstances(List<String> instanceIds, String operator, String reason);
 }
