@@ -57,10 +57,6 @@ public final class WorkflowEngineBuilder {
     private EventRepository eventRepository;
     private com.workflow.dmn.DecisionRepository decisionRepository;
     private com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepository;
-    private com.workflow.form.FormRepository formRepository;
-    private com.workflow.form.FormBindingRepository formBindingRepository;
-    private com.workflow.attachment.AttachmentRepository attachmentRepository;
-    private com.workflow.attachment.AttachmentStorage attachmentStorage;
     private InstanceLockProvider lockProvider;
     private TransactionRunner transactionRunner;
     private int conflictRetries = 3;
@@ -147,30 +143,6 @@ public final class WorkflowEngineBuilder {
         return this;
     }
 
-    /** 表单仓储；不设置时不启用表单集成 */
-    public WorkflowEngineBuilder formRepository(com.workflow.form.FormRepository formRepository) {
-        this.formRepository = formRepository;
-        return this;
-    }
-
-    /** 表单绑定仓储；不设置时不启用表单集成 */
-    public WorkflowEngineBuilder formBindingRepository(com.workflow.form.FormBindingRepository formBindingRepository) {
-        this.formBindingRepository = formBindingRepository;
-        return this;
-    }
-
-    /** 附件仓储；不设置时不启用附件管理 */
-    public WorkflowEngineBuilder attachmentRepository(com.workflow.attachment.AttachmentRepository attachmentRepository) {
-        this.attachmentRepository = attachmentRepository;
-        return this;
-    }
-
-    /** 附件存储服务；不设置时不启用附件管理 */
-    public WorkflowEngineBuilder attachmentStorage(com.workflow.attachment.AttachmentStorage attachmentStorage) {
-        this.attachmentStorage = attachmentStorage;
-        return this;
-    }
-
     /** 流程树锁；不设置时使用 {@link LocalInstanceLocks} */
     public WorkflowEngineBuilder lockProvider(InstanceLockProvider lockProvider) {
         this.lockProvider = lockProvider;
@@ -197,7 +169,7 @@ public final class WorkflowEngineBuilder {
 
     /** 构建 WorkflowEngine */
     public WorkflowEngine build() {
-        WorkflowEngine engine = new WorkflowEngine(
+        return new WorkflowEngine(
                 processRepo, instanceRepo, taskRepo,
                 timeoutScheduler,
                 auditLogRepository,
@@ -214,23 +186,5 @@ public final class WorkflowEngineBuilder {
                 conflictRetries,
                 retryBackoffMillis
         );
-        
-        // 设置表单仓储
-        if (formRepository != null) {
-            engine.setFormRepository(formRepository);
-        }
-        if (formBindingRepository != null) {
-            engine.setFormBindingRepository(formBindingRepository);
-        }
-        
-        // 设置附件仓储
-        if (attachmentRepository != null) {
-            engine.setAttachmentRepository(attachmentRepository);
-        }
-        if (attachmentStorage != null) {
-            engine.setAttachmentStorage(attachmentStorage);
-        }
-        
-        return engine;
     }
 }

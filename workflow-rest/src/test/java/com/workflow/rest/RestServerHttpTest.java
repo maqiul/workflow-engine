@@ -50,7 +50,8 @@ class RestServerHttpTest {
         taskRepo = new InMemoryTaskRepository();
         histRepo = new InMemoryHistoryRepository();
         engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, null,
-                histRepo, null, null, null, new com.workflow.concurrency.LocalInstanceLocks(),
+                histRepo, java.util.EnumSet.allOf(com.workflow.enums.HistoryKind.class),
+                null, null, null, new com.workflow.concurrency.LocalInstanceLocks(),
                 new com.workflow.tx.UndoLogTransactionRunner(), 0, 0L);
         procRepo.save(ProcessBuilder.create("http-leave")
                 .version(1)
