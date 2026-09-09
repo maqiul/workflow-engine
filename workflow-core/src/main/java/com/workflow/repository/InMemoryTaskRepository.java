@@ -123,4 +123,11 @@ public class InMemoryTaskRepository implements TaskRepository {
                 .map(TaskInstance::copy)
                 .collect(Collectors.toList());
     }
+
+    @Override
+    public long countPending() {
+        return byId.values().stream()
+                .filter(t -> t.getStatus() == TaskStatus.PENDING)
+                .count();
+    }
 }

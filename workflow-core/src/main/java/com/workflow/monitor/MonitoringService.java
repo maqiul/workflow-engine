@@ -55,21 +55,20 @@ public class MonitoringService {
      * @param bottleneckTopN 瓶颈节点取前 N 个(按平均耗时降序)
      */
     public DashboardMetrics snapshot(int bottleneckTopN) {
-        List<ProcessInstance> instances = instanceRepo.findAll();
-
-        // 实例:总览 + 分状态 + 分流程
+        // 实例分布:走 GROUP BY 聚合，避免 findAll 逐实例重建 Token/Task/变量(JPA 下 N 次子查询+反射)
+        List<com.workflow.repository.ProcessStatusCount> groups =
+                instanceRepo.countGroupByProcessAndStatus();
+        long totalInstances = 0;
         Map<String, Long> byStatus = new LinkedHashMap<>();
         Map<String, Map<String, Long>> byProcessStatus = new LinkedHashMap<>();
         Map<String, Long> byProcessTotal = new LinkedHashMap<>();
-        // instanceId -> processKey,供待办/瓶颈回填流程标识
-        Map<String, String> instKey = new HashMap<>();
-        for (ProcessInstance ins : instances) {
-            String status = ins.getStatus() == null ? "UNKNOWN" : ins.getStatus().name();
-            String key = ins.getProcessKey();
-            byStatus.merge(status, 1L, Long::sum);
-            byProcessStatus.computeIfAbsent(key, k -> new LinkedHashMap<>()).merge(status, 1L, Long::sum);
-            byProcessTotal.merge(key, 1L, Long::sum);
-            instKey.put(ins.getId(), key);
+        for (com.workflow.repository.ProcessStatusCount g : groups) {
+            totalInstances += g.count();
+            String status = g.status() == null ? "UNKNOWN" : g.status().name();
+            byStatus.merge(status, g.count(), Long::sum);
+            byProcessStatus.computeIfAbsent(g.processKey(), k -> new LinkedHashMap<>())
+                    .merge(status, g.count(), Long::sum);
+            byProcessTotal.merge(g.processKey(), g.count(), Long::sum);
         }
         List<DashboardMetrics.ProcessInstanceSummary> processSummaries = new ArrayList<>();
         for (Map.Entry<String, Long> e : byProcessTotal.entrySet()) {
@@ -78,11 +77,19 @@ public class MonitoringService {
         }
         processSummaries.sort(Comparator.comparingLong(DashboardMetrics.ProcessInstanceSummary::total).reversed());
 
-        // 待办:总数 + 按 (流程,节点) 分布
+        // 待办:总数走 COUNT；按 (流程,节点) 分布只对涉及的实例回查 processKey(缓存,量=待办实例数)
+        long pendingTasks = taskRepo.countPending();
         List<TaskInstance> pending = taskRepo.findByStatus(TaskStatus.PENDING);
+        Map<String, String> instKey = new HashMap<>();
         Map<String, long[]> backlog = new LinkedHashMap<>(); // processKey|nodeId -> count
         for (TaskInstance t : pending) {
-            String key = instKey.getOrDefault(t.getInstanceId(), "?");
+            String key = instKey.computeIfAbsent(t.getInstanceId(), id -> {
+                try {
+                    return instanceRepo.findById(id).getProcessKey();
+                } catch (RuntimeException ex) {
+                    return "?";
+                }
+            });
             String groupKey = key + "\u0000" + t.getNodeId();
             backlog.computeIfAbsent(groupKey, k -> new long[1])[0]++;
         }
@@ -119,10 +126,10 @@ public class MonitoringService {
         }
 
         return new DashboardMetrics(
-                instances.size(),
+                totalInstances,
                 byStatus,
                 processSummaries,
-                pending.size(),
+                pendingTasks,
                 pendingByNode,
                 slowest,
                 timeoutEvents,

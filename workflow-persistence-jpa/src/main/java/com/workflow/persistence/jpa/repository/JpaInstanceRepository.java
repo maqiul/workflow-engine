@@ -157,6 +157,25 @@ public class JpaInstanceRepository implements InstanceRepository {
                 .collect(java.util.stream.Collectors.toList()));
     }
 
+    @Override
+    public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus() {
+        return runInOrOpenTx(em -> {
+            @SuppressWarnings("unchecked")
+            java.util.List<Object[]> rows = em.createQuery(
+                    "SELECT e.processKey, e.status, COUNT(e) FROM WfInstanceEntity e"
+                            + " GROUP BY e.processKey, e.status")
+                    .getResultList();
+            java.util.List<com.workflow.repository.ProcessStatusCount> out = new java.util.ArrayList<>();
+            for (Object[] a : rows) {
+                out.add(new com.workflow.repository.ProcessStatusCount(
+                        (String) a[0],
+                        (com.workflow.enums.InstanceStatus) a[1],
+                        ((Number) a[2]).longValue()));
+            }
+            return out;
+        });
+    }
+
     private ProcessInstance rebuild(WfInstanceEntity e, EntityManager em) {
         // 1) 加载 Token 和 Task
         List<WfTokenEntity> tokens = em.createQuery(

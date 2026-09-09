@@ -169,6 +169,14 @@ public class JpaTaskRepository implements TaskRepository {
                 e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime());
     }
 
+    @Override
+    public long countPending() {
+        return runInOrOpenTx(em -> ((Number) em.createQuery(
+                "SELECT COUNT(e) FROM WfTaskEntity e WHERE e.status = :st")
+                .setParameter("st", TaskStatus.PENDING)
+                .getSingleResult()).longValue());
+    }
+
     private <R> R runInOrOpenTx(Function<EntityManager, R> action) {
         EntityManager bound = jpa.currentEmOrNull();
         if (bound != null) {

@@ -76,4 +76,9 @@ public class FlakyTaskRepository implements TaskRepository {
     public List<TaskInstance> findByStatus(TaskStatus status) {
         return delegate.findByStatus(status);
     }
+
+    @Override
+    public long countPending() {
+        return delegate.countPending();
+    }
 }

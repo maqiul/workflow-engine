@@ -38,4 +38,14 @@ public interface InstanceRepository {
     default List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
         throw new UnsupportedOperationException("findByProcessKeyAndVersion not implemented");
     }
+
+    /**
+     * 按「流程 key + 状态」分组计数。
+     *
+     * <p>刻意声明为<b>抽象方法</b>强制三套仓储各自实现（历史教训：用 default 抛
+     * {@code UnsupportedOperationException} 会让真实库实现缺席、内存测试全绿）。
+     * 监控仪表盘用它替代 {@code findAll()} —— 后者会为每个实例重建 Token/Task/变量，
+     * 分布统计只需 {@code GROUP BY process_key, status} 的轻量结果。
+     */
+    java.util.List<ProcessStatusCount> countGroupByProcessAndStatus();
 }

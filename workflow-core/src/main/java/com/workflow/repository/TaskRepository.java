@@ -35,4 +35,12 @@ public interface TaskRepository {
     default List<TaskInstance> findByStatus(com.workflow.enums.TaskStatus status) {
         throw new UnsupportedOperationException("findByStatus not implemented");
     }
+
+    /**
+     * 待办(PENDING)任务总数。
+     *
+     * <p>抽象方法，强制三套仓储实现：监控只要计数时不必像
+     * {@code findByStatus(PENDING)} 那样把每个待办实体全量重建。
+     */
+    long countPending();
 }

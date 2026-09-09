@@ -111,4 +111,16 @@ public class InMemoryInstanceRepository implements InstanceRepository {
                 .map(ProcessInstance::snapshot)
                 .collect(Collectors.toList());
     }
+
+    @Override
+    public java.util.List<ProcessStatusCount> countGroupByProcessAndStatus() {
+        java.util.Map<String, java.util.Map<InstanceStatus, Long>> g = new java.util.LinkedHashMap<>();
+        for (ProcessInstance i : store.values()) {
+            g.computeIfAbsent(i.getProcessKey(), k -> new java.util.EnumMap<>(InstanceStatus.class))
+             .merge(i.getStatus(), 1L, Long::sum);
+        }
+        java.util.List<ProcessStatusCount> out = new java.util.ArrayList<>();
+        g.forEach((k, m) -> m.forEach((s, c) -> out.add(new ProcessStatusCount(k, s, c))));
+        return out;
+    }
 }

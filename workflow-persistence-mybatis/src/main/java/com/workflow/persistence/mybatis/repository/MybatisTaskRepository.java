@@ -147,6 +147,17 @@ public class MybatisTaskRepository implements TaskRepository {
                 .eq("status", status.name()).orderByAsc("create_time"));
     }
 
+    @Override
+    public long countPending() {
+        return mb.inSession(session -> {
+            Long c = session.getMapper(WfTaskMapper.class).selectCount(
+                    new com.baomidou.mybatisplus.core.conditions.query
+                            .QueryWrapper<WfTaskEntity>()
+                            .eq("status", TaskStatus.PENDING.name()));
+            return c == null ? 0L : c;
+        });
+    }
+
     private List<TaskInstance> queryBy(
             com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfTaskEntity> qw) {
         return mb.inSession(session -> session.getMapper(WfTaskMapper.class)

@@ -134,6 +134,39 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 .orderByAsc("create_time"));
     }
 
+    @Override
+    public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus() {
+        return mb.inSession(session -> {
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfInstanceEntity> qw =
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+            qw.select("process_key", "status", "COUNT(1) AS cnt")
+              .groupBy("process_key", "status");
+            java.util.List<java.util.Map<String, Object>> maps =
+                    session.getMapper(WfInstanceMapper.class).selectMaps(qw);
+            java.util.List<com.workflow.repository.ProcessStatusCount> out = new java.util.ArrayList<>();
+            for (java.util.Map<String, Object> m : maps) {
+                // H2 会把结果集列标签大写，取键时两种大小写都兜住
+                Object pk = pick(m, "process_key", "PROCESS_KEY");
+                Object st = pick(m, "status", "STATUS");
+                Object cn = pick(m, "cnt", "CNT");
+                out.add(new com.workflow.repository.ProcessStatusCount(
+                        (String) pk,
+                        com.workflow.enums.InstanceStatus.valueOf(String.valueOf(st)),
+                        ((Number) cn).longValue()));
+            }
+            return out;
+        });
+    }
+
+    private static Object pick(java.util.Map<String, Object> m, String... keys) {
+        for (String k : keys) {
+            if (m.containsKey(k)) {
+                return m.get(k);
+            }
+        }
+        return null;
+    }
+
     private java.util.List<ProcessInstance> queryInstances(
             com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfInstanceEntity> qw) {
         return mb.inSession(session -> {
