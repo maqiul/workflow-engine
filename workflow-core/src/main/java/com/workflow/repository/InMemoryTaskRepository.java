@@ -126,8 +126,15 @@ public class InMemoryTaskRepository implements TaskRepository {
 
     @Override
     public long countPending() {
+        return countPending(null);
+    }
+
+    @Override
+    public long countPending(String tenantId) {
         return byId.values().stream()
                 .filter(t -> t.getStatus() == TaskStatus.PENDING)
+                // 租户过滤：tenantId 为 null 时不过滤
+                .filter(t -> tenantId == null || tenantId.equals(t.getTenantId()))
                 .count();
     }
 }

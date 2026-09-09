@@ -188,6 +188,7 @@ public class TokenAdvancer {
         if (existing == null) {
             TaskInstance task = new TaskInstance(instance.getId(), tokenId,
                     current.getId(), current.getCandidate());
+            task.setTenantId(instance.getTenantId());  // 任务继承实例租户
             taskRepo.save(task);
             syncTaskInInstance(instance, task);
             attachHistoryTask(instance, current.getId(), tokenId, task.getId(), recordsActivity);
@@ -388,6 +389,7 @@ public class TokenAdvancer {
                 
                 TaskInstance task = new TaskInstance(instance.getId(), tokenId,
                         current.getId(), candidate);
+                task.setTenantId(instance.getTenantId());  // 任务继承实例租户
                 instance.addTask(task);
                 instance.setVariable(markKey, "created");
                 log.info("[TokenAdvancer] DYNAMIC_PARALLEL node {} created dynamic task, candidates={}, strategy={}, taskId={}", 

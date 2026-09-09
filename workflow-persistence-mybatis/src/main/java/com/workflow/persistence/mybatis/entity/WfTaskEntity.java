@@ -47,6 +47,9 @@ public class WfTaskEntity {
     @TableField("create_time")
     private long createTime;
 
+    @TableField("tenant_id")
+    private String tenantId;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getInstanceId() { return instanceId; }
@@ -65,4 +68,6 @@ public class WfTaskEntity {
     public void setStatus(TaskStatus status) { this.status = status; }
     public long getCreateTime() { return createTime; }
     public void setCreateTime(long createTime) { this.createTime = createTime; }
+    public String getTenantId() { return tenantId; }
+    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 }

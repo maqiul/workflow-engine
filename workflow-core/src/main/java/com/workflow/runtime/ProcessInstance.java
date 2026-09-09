@@ -42,6 +42,8 @@ public final class ProcessInstance {
      * null 表示尚未设置，读取时回退为自身 id（普通实例即根）。
      */
     private String rootInstanceId;
+    /** 租户 ID（多租户隔离，可为 null 表示全局） */
+    private String tenantId;
     /** 乐观锁版本号；仓储 CAS 写入用。0 表示未启用（如 InMemory 无版本场景）。 */
     private long revision;
 
@@ -67,6 +69,7 @@ public final class ProcessInstance {
         this.parentInstanceId = parentInstanceId;
         this.parentTokenId = parentTokenId;
         this.parentNodeId = parentNodeId;
+        this.tenantId = null;  // 默认无租户
     }
 
     /**
@@ -107,6 +110,29 @@ public final class ProcessInstance {
                                               String parentNodeId,
                                               String rootInstanceId,
                                               long revision) {
+        return reconstruct(id, processKey, processVersion, createTime, endTime, status,
+                activeTokens, tasks, variables, parentInstanceId, parentTokenId, parentNodeId,
+                rootInstanceId, revision, null);
+    }
+
+    /**
+     * 持久化层 / 快照专用 - 完整版（含流程树根、乐观锁版本、租户 ID）。
+     */
+    public static ProcessInstance reconstruct(String id,
+                                              String processKey,
+                                              int processVersion,
+                                              long createTime,
+                                              Long endTime,
+                                              InstanceStatus status,
+                                              Map<String, Token> activeTokens,
+                                              List<TaskInstance> tasks,
+                                              Map<String, Object> variables,
+                                              String parentInstanceId,
+                                              String parentTokenId,
+                                              String parentNodeId,
+                                              String rootInstanceId,
+                                              long revision,
+                                              String tenantId) {
         ProcessInstance instance = new ProcessInstance(processKey, processVersion,
                 parentInstanceId, parentTokenId, parentNodeId);
         // 通过反射写 final 字段 - 这里 ProcessInstance 自己掌握,避免外部依赖反射 hack
@@ -120,6 +146,7 @@ public final class ProcessInstance {
         instance.status = status;
         instance.rootInstanceId = rootInstanceId;
         instance.revision = revision;
+        instance.tenantId = tenantId;
         if (endTime != null) {
             instance.endTime = endTime;
         }
@@ -176,6 +203,10 @@ public final class ProcessInstance {
         this.rootInstanceId = rootInstanceId;
     }
 
+    /** 租户 ID（多租户隔离） */
+    public String getTenantId() { return tenantId; }
+    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
+
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
 
@@ -197,7 +228,7 @@ public final class ProcessInstance {
         return reconstruct(id, processKey, processVersion, createTime,
                 endTime == 0L ? null : endTime, status,
                 tokenCopies, taskCopies, new LinkedHashMap<>(variables),
-                parentInstanceId, parentTokenId, parentNodeId, rootInstanceId, revision);
+                parentInstanceId, parentTokenId, parentNodeId, rootInstanceId, revision, tenantId);
     }
     public Map<String, Token> getActiveTokens() {
         return Collections.unmodifiableMap(activeTokens);

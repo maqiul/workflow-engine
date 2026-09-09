@@ -50,4 +50,14 @@ public interface TaskRepository {
      * {@code findByStatus(PENDING)} 那样把每个待办实体全量重建。
      */
     long countPending();
+
+    /**
+     * 待办(PENDING)任务总数（多租户隔离）。
+     *
+     * <p>tenantId 为 null 时不过滤租户（兼容老数据）。
+     */
+    default long countPending(String tenantId) {
+        // 默认实现：忽略租户，退化为无租户版本（向后兼容）
+        return countPending();
+    }
 }

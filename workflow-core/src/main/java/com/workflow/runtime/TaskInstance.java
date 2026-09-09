@@ -39,6 +39,8 @@ public final class TaskInstance {
      * 排序的真正原因，不是实现偷懒。
      */
     private final long createTime;
+    /** 租户 ID（多租户隔离，可为 null 表示全局） */
+    private String tenantId;
 
     public TaskInstance(String instanceId, String tokenId, String nodeId, Candidate candidate) {
         this(instanceId, tokenId, nodeId, candidate, System.currentTimeMillis());
@@ -55,6 +57,7 @@ public final class TaskInstance {
         this.status = TaskStatus.PENDING;
         this.revision = 0L;
         this.createTime = createTime;
+        this.tenantId = null;  // 默认无租户
     }
 
     /**
@@ -64,6 +67,18 @@ public final class TaskInstance {
                                            String nodeId, Candidate candidate,
                                            Set<String> completedApprovers,
                                            TaskStatus status, long revision, long createTime) {
+        return reconstruct(id, instanceId, tokenId, nodeId, candidate,
+                completedApprovers, status, revision, createTime, null);
+    }
+
+    /**
+     * 持久化层专用 - 完整版（含租户 ID）。
+     */
+    public static TaskInstance reconstruct(String id, String instanceId, String tokenId,
+                                           String nodeId, Candidate candidate,
+                                           Set<String> completedApprovers,
+                                           TaskStatus status, long revision, long createTime,
+                                           String tenantId) {
         TaskInstance t = new TaskInstance(instanceId, tokenId, nodeId, candidate, createTime);
         t.setIdViaReflection(id);
         t.completedApprovers.clear();
@@ -72,6 +87,7 @@ public final class TaskInstance {
         }
         t.status = Objects.requireNonNull(status);
         t.revision = revision;
+        t.tenantId = tenantId;
         return t;
     }
 
@@ -97,7 +113,7 @@ public final class TaskInstance {
      */
     public TaskInstance copy() {
         return reconstruct(id, instanceId, tokenId, nodeId, candidate,
-                new HashSet<>(completedApprovers), status, revision, createTime);
+                new HashSet<>(completedApprovers), status, revision, createTime, tenantId);
     }
 
     private void setIdViaReflection(String value) {
@@ -123,6 +139,10 @@ public final class TaskInstance {
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
     public long getCreateTime() { return createTime; }
+
+    /** 租户 ID（多租户隔离） */
+    public String getTenantId() { return tenantId; }
+    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
     /**
      * 记录一个审批人的完成操作

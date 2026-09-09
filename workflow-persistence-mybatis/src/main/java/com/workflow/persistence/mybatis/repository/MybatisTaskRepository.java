@@ -55,6 +55,7 @@ public class MybatisTaskRepository implements TaskRepository {
                 } catch (Exception e) {
                     throw new RuntimeException("序列化 completedApprovers 失败", e);
                 }
+                entity.setTenantId(task.getTenantId());
                 entity.setStatus(task.getStatus());
                 mapper.insert(entity);
             } else {
@@ -71,6 +72,7 @@ public class MybatisTaskRepository implements TaskRepository {
                 } catch (Exception e) {
                     throw new RuntimeException("序列化 completedApprovers 失败", e);
                 }
+                entity.setTenantId(task.getTenantId());
                 entity.setStatus(task.getStatus());
                 mapper.updateById(entity);
             }
@@ -105,7 +107,8 @@ public class MybatisTaskRepository implements TaskRepository {
                     } catch (Exception e) {
                         throw new RuntimeException("序列化 completedApprovers 失败", e);
                     }
-                    entity.setStatus(task.getStatus());
+                    entity.setTenantId(task.getTenantId());
+                entity.setStatus(task.getStatus());
                     mapper.insert(entity);
                 } else {
                     entity.setInstanceId(task.getInstanceId());
@@ -121,7 +124,8 @@ public class MybatisTaskRepository implements TaskRepository {
                     } catch (Exception e) {
                         throw new RuntimeException("序列化 completedApprovers 失败", e);
                     }
-                    entity.setStatus(task.getStatus());
+                    entity.setTenantId(task.getTenantId());
+                entity.setStatus(task.getStatus());
                     mapper.updateById(entity);
                 }
             }
@@ -200,11 +204,21 @@ public class MybatisTaskRepository implements TaskRepository {
 
     @Override
     public long countPending() {
+        return countPending(null);
+    }
+
+    @Override
+    public long countPending(String tenantId) {
         return mb.inSession(session -> {
-            Long c = session.getMapper(WfTaskMapper.class).selectCount(
+            com.baomidou.mybatisplus.core.conditions.query
+                    .QueryWrapper<WfTaskEntity> qw =
                     new com.baomidou.mybatisplus.core.conditions.query
                             .QueryWrapper<WfTaskEntity>()
-                            .eq("status", TaskStatus.PENDING.name()));
+                            .eq("status", TaskStatus.PENDING.name());
+            if (tenantId != null) {
+                qw.eq("tenant_id", tenantId);
+            }
+            Long c = session.getMapper(WfTaskMapper.class).selectCount(qw);
             return c == null ? 0L : c;
         });
     }
@@ -223,6 +237,6 @@ public class MybatisTaskRepository implements TaskRepository {
         // 统一走 TaskInstance.reconstruct：不再反射逐字段写，
         // 并把 create_time 读回来（此前丢弃导致按创建时间排序退化成按 id 排序）。
         return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
-                e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime());
+                e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime(), e.getTenantId());
     }
 }

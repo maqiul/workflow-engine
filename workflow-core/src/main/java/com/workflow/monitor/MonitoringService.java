@@ -55,9 +55,18 @@ public class MonitoringService {
      * @param bottleneckTopN 瓶颈节点取前 N 个(按平均耗时降序)
      */
     public DashboardMetrics snapshot(int bottleneckTopN) {
+        return snapshot(bottleneckTopN, null);
+    }
+
+    /**
+     * 生成指定租户的仪表盘快照(多租户隔离)。
+     *
+     * @param tenantId 租户 ID；null 表示统计全部(兼容老数据)
+     */
+    public DashboardMetrics snapshot(int bottleneckTopN, String tenantId) {
         // 实例分布:走 GROUP BY 聚合，避免 findAll 逐实例重建 Token/Task/变量(JPA 下 N 次子查询+反射)
         List<com.workflow.repository.ProcessStatusCount> groups =
-                instanceRepo.countGroupByProcessAndStatus();
+                instanceRepo.countGroupByProcessAndStatus(tenantId);
         long totalInstances = 0;
         Map<String, Long> byStatus = new LinkedHashMap<>();
         Map<String, Map<String, Long>> byProcessStatus = new LinkedHashMap<>();
@@ -77,12 +86,16 @@ public class MonitoringService {
         }
         processSummaries.sort(Comparator.comparingLong(DashboardMetrics.ProcessInstanceSummary::total).reversed());
 
-        // 待办:总数走 COUNT；按 (流程,节点) 分布只对涉及的实例回查 processKey(缓存,量=待办实例数)
-        long pendingTasks = taskRepo.countPending();
+        // 待办:总数走 COUNT(带租户)；按 (流程,节点) 分布只对涉及的实例回查 processKey(缓存,量=待办实例数)
+        long pendingTasks = taskRepo.countPending(tenantId);
         List<TaskInstance> pending = taskRepo.findByStatus(TaskStatus.PENDING);
         Map<String, String> instKey = new HashMap<>();
         Map<String, long[]> backlog = new LinkedHashMap<>(); // processKey|nodeId -> count
         for (TaskInstance t : pending) {
+            // 租户过滤：tenantId 非空时只统计该租户的待办
+            if (tenantId != null && !tenantId.equals(t.getTenantId())) {
+                continue;
+            }
             String key = instKey.computeIfAbsent(t.getInstanceId(), id -> {
                 try {
                     return instanceRepo.findById(id).getProcessKey();

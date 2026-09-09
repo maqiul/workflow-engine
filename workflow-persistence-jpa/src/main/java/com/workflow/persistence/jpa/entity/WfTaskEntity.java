@@ -54,6 +54,9 @@ public class WfTaskEntity {
     @Column(name = "create_time", nullable = false)
     private long createTime;
 
+    @Column(name = "tenant_id", length = 64)
+    private String tenantId;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getInstanceId() { return instanceId; }
@@ -72,4 +75,6 @@ public class WfTaskEntity {
     public void setStatus(com.workflow.enums.TaskStatus status) { this.status = status; }
     public long getCreateTime() { return createTime; }
     public void setCreateTime(long createTime) { this.createTime = createTime; }
+    public String getTenantId() { return tenantId; }
+    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 }

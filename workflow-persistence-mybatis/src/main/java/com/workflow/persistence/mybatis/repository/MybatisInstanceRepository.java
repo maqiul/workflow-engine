@@ -191,11 +191,19 @@ public class MybatisInstanceRepository implements InstanceRepository {
 
     @Override
     public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus() {
+        return countGroupByProcessAndStatus(null);
+    }
+
+    @Override
+    public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
         return mb.inSession(session -> {
             com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfInstanceEntity> qw =
                     new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
             qw.select("process_key", "status", "COUNT(1) AS cnt")
               .groupBy("process_key", "status");
+            if (tenantId != null) {
+                qw.eq("tenant_id", tenantId);
+            }
             java.util.List<java.util.Map<String, Object>> maps =
                     session.getMapper(WfInstanceMapper.class).selectMaps(qw);
             java.util.List<com.workflow.repository.ProcessStatusCount> out = new java.util.ArrayList<>();

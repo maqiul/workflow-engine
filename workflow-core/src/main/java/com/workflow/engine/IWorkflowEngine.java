@@ -210,4 +210,15 @@ public interface IWorkflowEngine {
      * @param bottleneckTopN 瓶颈节点取前 N 个(按平均耗时降序);传 &lt;0 表示不截断
      */
     com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN);
+
+    /**
+     * 生成指定租户的监控仪表盘快照(多租户隔离)。
+     *
+     * @param bottleneckTopN 瓶颈节点取前 N 个
+     * @param tenantId 租户 ID；null 表示统计全部
+     */
+    default com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN, String tenantId) {
+        // 默认忽略租户(向后兼容)；WorkflowEngine 覆写为真正的租户过滤
+        return dashboard(bottleneckTopN);
+    }
 }

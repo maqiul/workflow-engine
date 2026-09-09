@@ -498,6 +498,9 @@ public class WorkflowEngine implements IWorkflowEngine {
         if (initiator != null && !initiator.isBlank()) {
             instance.setVariable(INITIATOR_VAR, initiator);
         }
+        // 设置租户 ID（从流程定义或上下文获取）
+        String tenantId = def.getTenantId() != null ? def.getTenantId() : TenantContext.getTenantId();
+        instance.setTenantId(tenantId);
 
         Token token = new Token(instance.getId(), def.getStartNodeId());
         instance.addToken(token);
@@ -506,7 +509,8 @@ public class WorkflowEngine implements IWorkflowEngine {
         return exclusive(instance.getId(), "start", () -> {
             instanceRepo.save(instance);
 
-            log.info("[引擎] 发起流程 instance={} key={} v{} initiator={}", instance.getId(), def.getKey(), def.getVersion(), initiator);
+            log.info("[引擎] 发起流程 instance={} key={} v{} initiator={} tenant={}", 
+                    instance.getId(), def.getKey(), def.getVersion(), initiator, tenantId);
             audit(AuditEventType.PROCESS_STARTED, instance.getId(), null, initiator != null ? initiator : "system",
                     "发起流程 key=" + def.getKey() + " v" + def.getVersion());
             listenerSupport.fireExecutionStarted(instance);
@@ -538,6 +542,9 @@ public class WorkflowEngine implements IWorkflowEngine {
         List<String> instanceIds = new ArrayList<>();
         List<Token> firstTokens = new ArrayList<>();
 
+        // 租户 ID：流程定义优先，其次当前上下文
+        String tenantId = def.getTenantId() != null ? def.getTenantId() : TenantContext.getTenantId();
+
         for (Map<String, Object> variables : variablesList) {
             // 变量校验
             VariableValidator.validate(def, variables);
@@ -546,6 +553,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             if (variables != null) {
                 variables.forEach(instance::setVariable);
             }
+            instance.setTenantId(tenantId);  // 批量实例继承租户
 
             Token token = new Token(instance.getId(), def.getStartNodeId());
             instance.addToken(token);
@@ -1359,5 +1367,10 @@ public class WorkflowEngine implements IWorkflowEngine {
     @Override
     public com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN) {
         return monitoring.snapshot(bottleneckTopN);
+    }
+
+    @Override
+    public com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN, String tenantId) {
+        return monitoring.snapshot(bottleneckTopN, tenantId);
     }
 }

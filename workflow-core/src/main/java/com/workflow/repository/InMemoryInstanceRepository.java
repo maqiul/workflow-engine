@@ -114,8 +114,17 @@ public class InMemoryInstanceRepository implements InstanceRepository {
 
     @Override
     public java.util.List<ProcessStatusCount> countGroupByProcessAndStatus() {
+        return countGroupByProcessAndStatus(null);
+    }
+
+    @Override
+    public java.util.List<ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
         java.util.Map<String, java.util.Map<InstanceStatus, Long>> g = new java.util.LinkedHashMap<>();
         for (ProcessInstance i : store.values()) {
+            // 租户过滤：tenantId 为 null 时不过滤
+            if (tenantId != null && !tenantId.equals(i.getTenantId())) {
+                continue;
+            }
             g.computeIfAbsent(i.getProcessKey(), k -> new java.util.EnumMap<>(InstanceStatus.class))
              .merge(i.getStatus(), 1L, Long::sum);
         }

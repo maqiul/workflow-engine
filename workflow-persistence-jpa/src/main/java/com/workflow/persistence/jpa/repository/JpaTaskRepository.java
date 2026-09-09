@@ -53,6 +53,7 @@ public class JpaTaskRepository implements TaskRepository {
                 } catch (Exception e) {
                     throw new RuntimeException("序列化 completedApprovers 失败", e);
                 }
+                entity.setTenantId(task.getTenantId());
                 entity.setStatus(task.getStatus());
                 em.persist(entity);
             } else {
@@ -69,6 +70,7 @@ public class JpaTaskRepository implements TaskRepository {
                 } catch (Exception e) {
                     throw new RuntimeException("序列化 completedApprovers 失败", e);
                 }
+                entity.setTenantId(task.getTenantId());
                 entity.setStatus(task.getStatus());
             }
             em.flush();  // 立刻 flush,跨事务的 SELECT 可见
@@ -102,7 +104,8 @@ public class JpaTaskRepository implements TaskRepository {
                     } catch (Exception e) {
                         throw new RuntimeException("序列化 completedApprovers 失败", e);
                     }
-                    entity.setStatus(task.getStatus());
+                    entity.setTenantId(task.getTenantId());
+                entity.setStatus(task.getStatus());
                     em.persist(entity);
                 } else {
                     entity.setInstanceId(task.getInstanceId());
@@ -118,7 +121,8 @@ public class JpaTaskRepository implements TaskRepository {
                     } catch (Exception e) {
                         throw new RuntimeException("序列化 completedApprovers 失败", e);
                     }
-                    entity.setStatus(task.getStatus());
+                    entity.setTenantId(task.getTenantId());
+                entity.setStatus(task.getStatus());
                 }
             }
             em.flush();  // 批量 flush
@@ -216,15 +220,28 @@ public class JpaTaskRepository implements TaskRepository {
         // 并且把 create_time 读回来 —— 此前这个字段被丢弃，导致
         // TaskQuery.orderByCreateTime() 只能退化成按 id 排序。
         return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
-                e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime());
+                e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime(), e.getTenantId());
     }
 
     @Override
     public long countPending() {
-        return runInOrOpenTx(em -> ((Number) em.createQuery(
-                "SELECT COUNT(e) FROM WfTaskEntity e WHERE e.status = :st")
-                .setParameter("st", TaskStatus.PENDING)
-                .getSingleResult()).longValue());
+        return countPending(null);
+    }
+
+    @Override
+    public long countPending(String tenantId) {
+        return runInOrOpenTx(em -> {
+            String jpql = "SELECT COUNT(e) FROM WfTaskEntity e WHERE e.status = :st";
+            if (tenantId != null) {
+                jpql += " AND e.tenantId = :tenantId";
+            }
+            jakarta.persistence.TypedQuery<Long> query = em.createQuery(jpql, Long.class)
+                    .setParameter("st", TaskStatus.PENDING);
+            if (tenantId != null) {
+                query.setParameter("tenantId", tenantId);
+            }
+            return query.getSingleResult();
+        });
     }
 
     private <R> R runInOrOpenTx(Function<EntityManager, R> action) {

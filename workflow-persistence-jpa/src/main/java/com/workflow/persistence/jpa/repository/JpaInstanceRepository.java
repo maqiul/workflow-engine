@@ -198,12 +198,23 @@ public class JpaInstanceRepository implements InstanceRepository {
 
     @Override
     public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus() {
+        return countGroupByProcessAndStatus(null);
+    }
+
+    @Override
+    public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
         return runInOrOpenTx(em -> {
+            String jpql = "SELECT e.processKey, e.status, COUNT(e) FROM WfInstanceEntity e";
+            if (tenantId != null) {
+                jpql += " WHERE e.tenantId = :tenantId";
+            }
+            jpql += " GROUP BY e.processKey, e.status";
+            jakarta.persistence.TypedQuery<Object[]> query = em.createQuery(jpql, Object[].class);
+            if (tenantId != null) {
+                query.setParameter("tenantId", tenantId);
+            }
             @SuppressWarnings("unchecked")
-            java.util.List<Object[]> rows = em.createQuery(
-                    "SELECT e.processKey, e.status, COUNT(e) FROM WfInstanceEntity e"
-                            + " GROUP BY e.processKey, e.status")
-                    .getResultList();
+            java.util.List<Object[]> rows = query.getResultList();
             java.util.List<com.workflow.repository.ProcessStatusCount> out = new java.util.ArrayList<>();
             for (Object[] a : rows) {
                 out.add(new com.workflow.repository.ProcessStatusCount(

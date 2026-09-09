@@ -25,27 +25,28 @@ public final class ProcessDefinition {
     private final Map<String, List<Transition>> outgoing;  // nodeId -> 出口
     private final String startNodeId;
     private final List<VariableDefinition> variableDefinitions;  // 变量定义（可为 null）
+    private final String tenantId;  // 租户 ID（多租户隔离，可为 null 表示全局）
 
-    /** 构造器 - 仅供 ProcessBuilder 调用(默认版本 1，无变量定义) */
+    /** 构造器 - 仅供 ProcessBuilder 调用(默认版本 1，无变量定义，无租户) */
     public ProcessDefinition(String key,
                              String name,
                              Map<String, NodeDefinition> nodes,
                              Map<String, List<Transition>> outgoing,
                              String startNodeId) {
-        this(key, name, 1, nodes, outgoing, startNodeId, null);
+        this(key, name, 1, nodes, outgoing, startNodeId, null, null);
     }
 
-    /** 构造器 - 指定版本（无变量定义） */
+    /** 构造器 - 指定版本（无变量定义，无租户） */
     public ProcessDefinition(String key,
                              String name,
                              int version,
                              Map<String, NodeDefinition> nodes,
                              Map<String, List<Transition>> outgoing,
                              String startNodeId) {
-        this(key, name, version, nodes, outgoing, startNodeId, null);
+        this(key, name, version, nodes, outgoing, startNodeId, null, null);
     }
 
-    /** 构造器 - 完整参数（含变量定义） */
+    /** 构造器 - 完整参数（含变量定义，无租户） */
     public ProcessDefinition(String key,
                              String name,
                              int version,
@@ -53,6 +54,18 @@ public final class ProcessDefinition {
                              Map<String, List<Transition>> outgoing,
                              String startNodeId,
                              List<VariableDefinition> variableDefinitions) {
+        this(key, name, version, nodes, outgoing, startNodeId, variableDefinitions, null);
+    }
+
+    /** 构造器 - 完整参数（含变量定义 + 租户） */
+    public ProcessDefinition(String key,
+                             String name,
+                             int version,
+                             Map<String, NodeDefinition> nodes,
+                             Map<String, List<Transition>> outgoing,
+                             String startNodeId,
+                             List<VariableDefinition> variableDefinitions,
+                             String tenantId) {
         this.key = Objects.requireNonNull(key, "key 不能为空");
         this.name = name != null ? name : key;
         this.version = version > 0 ? version : 1;
@@ -62,6 +75,7 @@ public final class ProcessDefinition {
         this.variableDefinitions = variableDefinitions != null
                 ? Collections.unmodifiableList(variableDefinitions)
                 : null;
+        this.tenantId = tenantId;  // 可为 null，表示全局流程定义
     }
 
     public String getKey() { return key; }
@@ -79,6 +93,7 @@ public final class ProcessDefinition {
         return n;
     }
     public String getStartNodeId() { return startNodeId; }
+    public String getTenantId() { return tenantId; }
 
     public boolean hasNode(String nodeId) {
         return nodes.containsKey(nodeId);
