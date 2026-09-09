@@ -270,6 +270,8 @@ class ConcurrencySafetyTest {
             public List<AuditLog> findByTimeRange(Instant from, Instant to) { return List.of(); }
             @Override
             public void clear() { }
+            @Override
+            public List<com.workflow.repository.EventTypeCount> countGroupByEventTypePrefix(String prefix) { return List.of(); }
         };
 
         WorkflowEngine engine = newWorkflow(exploding);

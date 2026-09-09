@@ -64,4 +64,16 @@ public class InMemoryAuditLogRepository implements AuditLogRepository {
     public void clear() {
         logs.clear();
     }
+
+    @Override
+    public java.util.List<EventTypeCount> countGroupByEventTypePrefix(String prefix) {
+        return logs.stream()
+                .filter(log -> log.getEventType().name().startsWith(prefix))
+                .collect(java.util.stream.Collectors.groupingBy(
+                        AuditLog::getEventType,
+                        java.util.stream.Collectors.counting()))
+                .entrySet().stream()
+                .map(e -> new EventTypeCount(e.getKey(), e.getValue()))
+                .collect(java.util.stream.Collectors.toList());
+    }
 }

@@ -85,6 +85,37 @@ public class MybatisAuditLogRepository implements AuditLogRepository {
         });
     }
 
+    @Override
+    public java.util.List<com.workflow.repository.EventTypeCount> countGroupByEventTypePrefix(String prefix) {
+        return mb.inSession(session -> {
+            WfAuditLogMapper mapper = session.getMapper(WfAuditLogMapper.class);
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfAuditLogEntity> wrapper =
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+            wrapper.select("event_type", "COUNT(1) AS cnt")
+                    .likeRight("event_type", prefix)
+                    .groupBy("event_type");
+            java.util.List<java.util.Map<String, Object>> maps = mapper.selectMaps(wrapper);
+            java.util.List<com.workflow.repository.EventTypeCount> out = new java.util.ArrayList<>();
+            for (java.util.Map<String, Object> m : maps) {
+                Object et = pick(m, "event_type", "EVENT_TYPE");
+                Object cn = pick(m, "cnt", "CNT");
+                out.add(new com.workflow.repository.EventTypeCount(
+                        com.workflow.enums.AuditEventType.valueOf(String.valueOf(et)),
+                        ((Number) cn).longValue()));
+            }
+            return out;
+        });
+    }
+
+    private static Object pick(java.util.Map<String, Object> m, String... keys) {
+        for (String k : keys) {
+            if (m.containsKey(k)) {
+                return m.get(k);
+            }
+        }
+        return null;
+    }
+
     private static AuditLog toDomain(WfAuditLogEntity e) {
         AuditLog log = new AuditLog(
                 e.getInstanceId(),

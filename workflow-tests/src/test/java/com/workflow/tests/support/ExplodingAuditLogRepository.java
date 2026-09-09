@@ -57,4 +57,9 @@ public class ExplodingAuditLogRepository implements AuditLogRepository {
     public void clear() {
         // 无状态
     }
+
+    @Override
+    public java.util.List<com.workflow.repository.EventTypeCount> countGroupByEventTypePrefix(String prefix) {
+        return java.util.List.of();
+    }
 }

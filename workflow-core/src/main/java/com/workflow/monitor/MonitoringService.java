@@ -118,10 +118,9 @@ public class MonitoringService {
         // 超时自动处理事件统计(审计里以 TIMEOUT_ 开头的事件)
         Map<String, Long> timeoutEvents = new LinkedHashMap<>();
         if (auditLogRepo != null) {
-            for (AuditLog log : auditLogRepo.findByTimeRange(Instant.EPOCH, Instant.now())) {
-                if (log.getEventType() != null && log.getEventType().name().startsWith("TIMEOUT_")) {
-                    timeoutEvents.merge(log.getEventType().name(), 1L, Long::sum);
-                }
+            for (com.workflow.repository.EventTypeCount c :
+                    auditLogRepo.countGroupByEventTypePrefix("TIMEOUT_")) {
+                timeoutEvents.put(c.eventType().name(), c.count());
             }
         }
 

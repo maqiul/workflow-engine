@@ -85,6 +85,36 @@ public class JpaAuditLogRepository implements AuditLogRepository {
         });
     }
 
+    @Override
+    public java.util.List<com.workflow.repository.EventTypeCount> countGroupByEventTypePrefix(String prefix) {
+        return runInOrOpenTx(em -> {
+            // eventType 是枚举字段，不能直接 LIKE 字符串，需要列出匹配的枚举值
+            java.util.List<AuditEventType> matchedTypes = new java.util.ArrayList<>();
+            for (AuditEventType t : AuditEventType.values()) {
+                if (t.name().startsWith(prefix)) {
+                    matchedTypes.add(t);
+                }
+            }
+            if (matchedTypes.isEmpty()) {
+                return java.util.List.of();
+            }
+            @SuppressWarnings("unchecked")
+            java.util.List<Object[]> rows = em.createQuery(
+                    "SELECT a.eventType, COUNT(a) FROM WfAuditLogEntity a"
+                            + " WHERE a.eventType IN :types"
+                            + " GROUP BY a.eventType")
+                    .setParameter("types", matchedTypes)
+                    .getResultList();
+            java.util.List<com.workflow.repository.EventTypeCount> out = new java.util.ArrayList<>();
+            for (Object[] row : rows) {
+                out.add(new com.workflow.repository.EventTypeCount(
+                        (AuditEventType) row[0],
+                        ((Number) row[1]).longValue()));
+            }
+            return out;
+        });
+    }
+
     private static AuditLog toDomain(WfAuditLogEntity e) {
         AuditLog log = new AuditLog(
                 e.getInstanceId(),
