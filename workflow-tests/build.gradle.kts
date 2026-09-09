@@ -21,3 +21,11 @@ dependencies {
 
     // 测试相关依赖由根 build.gradle.kts 统一通过 testImplementation 引入
 }
+
+// 每个测试类 fork 独立 JVM：消除跨类静态状态耦合。
+// JpaPersistence/MybatisPersistence 是单例、H2 为命名内存库、TransactionContext 为 ThreadLocal，
+// 多类共跑时会相互污染(如 JPA 事务原子性测试混跑偶现回滚失效)。forkEvery=1 让静态状态随 JVM 重置。
+tasks.test {
+    forkEvery = 1
+    maxParallelForks = 4
+}
