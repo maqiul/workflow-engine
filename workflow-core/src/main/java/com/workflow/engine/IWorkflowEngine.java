@@ -182,4 +182,13 @@ public interface IWorkflowEngine {
      * @return 批处理结果
      */
     BatchResult batchTerminateInstances(List<String> instanceIds, String operator, String reason);
+
+    // ========== 监控 ==========
+
+    /**
+     * 生成监控仪表盘快照(只读聚合)。
+     *
+     * @param bottleneckTopN 瓶颈节点取前 N 个(按平均耗时降序);传 &lt;0 表示不截断
+     */
+    com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN);
 }

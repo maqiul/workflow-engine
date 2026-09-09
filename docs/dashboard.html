@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Workflow 引擎 · 监控看板</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #1f2329; }
+    header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: #1f2329; color: #fff; }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header input { flex: 1; max-width: 360px; padding: 6px 10px; border-radius: 6px; border: 1px solid #444; background: #2b2f36; color: #fff; }
+    header button { padding: 6px 14px; border: 0; border-radius: 6px; background: #3b82f6; color: #fff; cursor: pointer; }
+    main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .card { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .card .num { font-size: 26px; font-weight: 700; }
+    .card .lbl { font-size: 12px; color: #8a9099; margin-top: 4px; }
+    section { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px; }
+    section h2 { font-size: 14px; margin: 0 0 12px; color: #4b5563; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eef0f2; }
+    th { color: #8a9099; font-weight: 600; }
+    .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+    .RUNNING { background: #dbeafe; color: #1e40af; }
+    .COMPLETED { background: #dcfce7; color: #166534; }
+    .TERMINATED { background: #fee2e2; color: #991b1b; }
+    .SUSPENDED { background: #fef9c3; color: #854d0e; }
+    .empty { color: #9ca3af; font-size: 13px; padding: 8px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Workflow 引擎 · 监控看板</h1>
+    <input id="base" value="http://localhost:8080" placeholder="API base url"/>
+    <button onclick="load()">刷新</button>
+    <span id="err" style="color:#fca5a5;font-size:12px"></span>
+  </header>
+  <main>
+    <div class="cards" id="cards"></div>
+    <section><h2>实例按状态</h2><div id="byStatus"></div></section>
+    <section><h2>实例按流程</h2><table id="byProcess"></table></section>
+    <section><h2>待办分布 (流程 · 节点 · 数量)</h2><table id="backlog"></table></section>
+    <section><h2>瓶颈节点 (平均耗时 Top)</h2><table id="slowest"></table></section>
+    <section><h2>超时自动处理事件</h2><table id="timeout"></table></section>
+  </main>
+<script>
+async function load() {
+  const base = document.getElementById('base').value.replace(/\/$/, '');
+  const err = document.getElementById('err'); err.textContent = '';
+  try {
+    const r = await fetch(base + '/api/metrics/dashboard?topN=10', { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+  } catch (e) {
+    err.textContent = '加载失败：' + e.message + '（需 REST 服务在线且允许跨域）';
+  }
+}
+function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function ms(v){ return v >= 1000 ? (v/1000).toFixed(1)+'s' : Math.round(v)+'ms'; }
+function render(m) {
+  document.getElementById('cards').innerHTML =
+    card(m.totalInstances,'实例总数') + card(m.pendingTasks,'当前待办') +
+    card(m.instancesByStatus.RUNNING || 0,'运行中') + card(Object.keys(m.timeoutEvents||{}).length,'超时事件类型');
+  const bs = Object.entries(m.instancesByStatus||{});
+  document.getElementById('byStatus').innerHTML = bs.length
+    ? bs.map(([k,v])=>`<span class="tag ${k}">${esc(k)} · ${v}</span>`).join(' ') : empty();
+  document.getElementById('byProcess').innerHTML = rowHeader(['流程 Key','实例数','状态分布']) +
+    rows((m.instancesByProcess||[]).map(p=>[esc(p.processKey), p.total,
+      Object.entries(p.byStatus||{}).map(([k,v])=>`${esc(k)}:${v}`).join(' ')]));
+  document.getElementById('backlog').innerHTML = rowHeader(['流程 Key','节点','待办数']) +
+    rows((m.pendingByNode||[]).map(n=>[esc(n.processKey), esc(n.nodeId), n.pendingCount]));
+  document.getElementById('slowest').innerHTML = rowHeader(['流程 Key','节点','平均耗时']) +
+    rows((m.slowestNodes||[]).map(n=>[esc(n.processKey), esc(n.nodeId), ms(n.avgDurationMillis)]));
+  document.getElementById('timeout').innerHTML = rowHeader(['事件','次数']) +
+    rows(Object.entries(m.timeoutEvents||{}).map(([k,v])=>[esc(k), v]));
+}
+function card(n,l){ return `<div class="card"><div class="num">${n==null?0:n}</div><div class="lbl">${esc(l)}</div></div>`; }
+function rowHeader(h){ return '<thead><tr>'+h.map(x=>`<th>${esc(x)}</th>`).join('')+'</tr></thead>'; }
+function rows(rs){ return rs.length ? '<tbody>'+rs.map(r=>'<tr>'+r.map(c=>`<td>${c}</td>`).join('')+'</tr>').join('')+'</tbody>' : '<tbody><tr><td class="empty">暂无数据</td></tr></tbody>'; }
+function empty(){ return '<div class="empty">暂无数据</div>'; }
+load();
+</script>
+</body>
+</html>

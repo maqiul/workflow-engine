@@ -121,6 +121,9 @@ public class WorkflowEngine implements IWorkflowEngine {
     /** 超时处理器 - 负责处理任务超时回调 */
     private final TimeoutHandler timeoutHandler;
 
+    /** 监控服务 - 只读聚合引擎各仓储数据为仪表盘快照 */
+    private final com.workflow.monitor.MonitoringService monitoring;
+
     /**
      * 最简构造器 - 仅注入三个必填仓储
      *
@@ -218,6 +221,10 @@ public class WorkflowEngine implements IWorkflowEngine {
             this::advanceToken,
             this::defOf
         );
+
+        // 初始化监控服务(只读聚合)
+        this.monitoring = new com.workflow.monitor.MonitoringService(
+            instanceRepo, taskRepo, historyRepo, auditLogRepo);
     }
 
     /**
@@ -1289,5 +1296,10 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
 
         return BatchResult.allSuccess(instanceIds.size());
+    }
+
+    @Override
+    public com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN) {
+        return monitoring.snapshot(bottleneckTopN);
     }
 }

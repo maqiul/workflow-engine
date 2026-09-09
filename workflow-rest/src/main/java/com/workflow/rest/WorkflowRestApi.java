@@ -96,6 +96,30 @@ public class WorkflowRestApi {
             return RestResponse.ok(Map.of("status", "UP"));
         }
 
+        // /api/metrics/dashboard —— 只读监控快照
+        int qi = path.indexOf('?');
+        String base = qi < 0 ? path : path.substring(0, qi);
+        if (base.equals("/api/metrics/dashboard") && m.equals("GET")) {
+            int topN = 10;
+            String t = req.query().get("topN");
+            if ((t == null || t.isBlank()) && qi >= 0) {
+                for (String kv : path.substring(qi + 1).split("&")) {
+                    String[] ab = kv.split("=", 2);
+                    if (ab.length == 2 && ab[0].equals("topN")) {
+                        t = ab[1];
+                    }
+                }
+            }
+            if (t != null && !t.isBlank()) {
+                try {
+                    topN = Integer.parseInt(t.trim());
+                } catch (NumberFormatException ex) {
+                    throw new BadRequest("topN 必须是整数: " + t);
+                }
+            }
+            return RestResponse.ok(engine.dashboard(topN));
+        }
+
         // /api/processes/{key}/start
         if (path.startsWith("/api/processes/") && path.endsWith("/start") && m.equals("POST")) {
             String key = segment(path, 3);
