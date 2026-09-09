@@ -13,6 +13,13 @@ public interface InstanceRepository {
     /** 保存(新增或覆盖) */
     void save(ProcessInstance instance);
 
+    /** 批量保存流程实例（默认实现：逐个保存，子类可优化为真正的批量插入） */
+    default void saveBatch(List<ProcessInstance> instances) {
+        for (ProcessInstance instance : instances) {
+            save(instance);
+        }
+    }
+
     /** 按 id 查找 */
     ProcessInstance findById(String instanceId);
 

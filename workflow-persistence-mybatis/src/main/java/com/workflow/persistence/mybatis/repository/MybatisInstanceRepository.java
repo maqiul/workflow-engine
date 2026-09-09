@@ -88,6 +88,61 @@ public class MybatisInstanceRepository implements InstanceRepository {
     }
 
     @Override
+    public void saveBatch(List<ProcessInstance> instances) {
+        if (instances == null || instances.isEmpty()) {
+            return;
+        }
+        // 批量优化：单事务内批量插入，减少事务开销
+        mb.inSession(session -> {
+            WfInstanceMapper instanceMapper = session.getMapper(WfInstanceMapper.class);
+            WfTokenMapper tokenMapper = session.getMapper(WfTokenMapper.class);
+
+            for (ProcessInstance instance : instances) {
+                WfInstanceEntity entity = instanceMapper.selectById(instance.getId());
+                if (entity == null) {
+                    entity = new WfInstanceEntity();
+                    entity.setId(instance.getId());
+                    entity.setProcessKey(instance.getProcessKey());
+                    entity.setProcessVersion(instance.getProcessVersion());
+                    entity.setStatus(instance.getStatus());
+                    entity.setCreateTime(instance.getCreateTime());
+                    entity.setEndTime(instance.getEndTime() > 0 ? instance.getEndTime() : null);
+                    entity.setVariablesJson(JSON.toJSONString(instance.getVariables()));
+                    entity.setParentInstanceId(instance.getParentInstanceId());
+                    entity.setParentTokenId(instance.getParentTokenId());
+                    entity.setParentNodeId(instance.getParentNodeId());
+                    entity.setRootInstanceId(instance.getRootInstanceId());
+                    instanceMapper.insert(entity);
+                } else {
+                    entity.setProcessKey(instance.getProcessKey());
+                    entity.setProcessVersion(instance.getProcessVersion());
+                    entity.setStatus(instance.getStatus());
+                    entity.setCreateTime(instance.getCreateTime());
+                    entity.setEndTime(instance.getEndTime() > 0 ? instance.getEndTime() : null);
+                    entity.setVariablesJson(JSON.toJSONString(instance.getVariables()));
+                    entity.setParentInstanceId(instance.getParentInstanceId());
+                    entity.setParentTokenId(instance.getParentTokenId());
+                    entity.setParentNodeId(instance.getParentNodeId());
+                    entity.setRootInstanceId(instance.getRootInstanceId());
+                    instanceMapper.updateById(entity);
+                }
+
+                // Token 批量插入
+                tokenMapper.deleteByInstanceId(instance.getId());
+                for (Token t : instance.getActiveTokens().values()) {
+                    WfTokenEntity te = new WfTokenEntity();
+                    te.setId(t.getId());
+                    te.setInstanceId(instance.getId());
+                    te.setCurrentNodeId(t.getCurrentNodeId());
+                    te.setStatus(t.getStatus());
+                    tokenMapper.insert(te);
+                }
+            }
+            return null;
+        });
+    }
+
+    @Override
     public ProcessInstance findById(String instanceId) {
         return mb.inSession(session -> {
             WfInstanceEntity e = session.getMapper(WfInstanceMapper.class).selectById(instanceId);

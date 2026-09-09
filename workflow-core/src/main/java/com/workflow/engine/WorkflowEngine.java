@@ -516,6 +516,64 @@ public class WorkflowEngine implements IWorkflowEngine {
         });
     }
 
+    @Override
+    public List<String> batchStart(String processKey, List<Map<String, Object>> variablesList) {
+        return batchStart(processKey, -1, variablesList);
+    }
+
+    @Override
+    public List<String> batchStart(String processKey, int version, List<Map<String, Object>> variablesList) {
+        if (variablesList == null || variablesList.isEmpty()) {
+            return new ArrayList<>();
+        }
+        ProcessDefinition def = version > 0
+                ? processRepo.findByKeyAndVersion(processKey, version)
+                : processRepo.findByKey(processKey);
+        if (def == null) {
+            throw new IllegalArgumentException("流程定义不存在: " + processKey + (version > 0 ? " v" + version : ""));
+        }
+
+        // 批量优化：先创建所有实例，再单事务批量插入
+        List<ProcessInstance> instances = new ArrayList<>();
+        List<String> instanceIds = new ArrayList<>();
+        List<Token> firstTokens = new ArrayList<>();
+
+        for (Map<String, Object> variables : variablesList) {
+            // 变量校验
+            VariableValidator.validate(def, variables);
+
+            ProcessInstance instance = new ProcessInstance(def.getKey(), def.getVersion());
+            if (variables != null) {
+                variables.forEach(instance::setVariable);
+            }
+
+            Token token = new Token(instance.getId(), def.getStartNodeId());
+            instance.addToken(token);
+
+            instances.add(instance);
+            instanceIds.add(instance.getId());
+            firstTokens.add(token);
+        }
+
+        // 批量保存（单事务）
+        instanceRepo.saveBatch(instances);
+
+        // 审计 + 监听器 + Token 推进（逐个实例）
+        for (int i = 0; i < instances.size(); i++) {
+            ProcessInstance instance = instances.get(i);
+            Token token = firstTokens.get(i);
+
+            log.info("[引擎] 批量发起流程 instance={} key={} v{}", instance.getId(), def.getKey(), def.getVersion());
+            audit(AuditEventType.PROCESS_STARTED, instance.getId(), null, "system",
+                    "批量发起流程 key=" + def.getKey() + " v" + def.getVersion());
+            listenerSupport.fireExecutionStarted(instance);
+            // 推进第一个 Token
+            advanceToken(instance, def, token.getId());
+        }
+
+        return instanceIds;
+    }
+
     /**
      * 按实例所属版本取流程定义:
      *  - processVersion > 0 取精确版本(实例发起时固化的版本)

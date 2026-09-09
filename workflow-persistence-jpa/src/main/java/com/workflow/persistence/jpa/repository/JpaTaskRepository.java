@@ -77,6 +77,56 @@ public class JpaTaskRepository implements TaskRepository {
     }
 
     @Override
+    public void saveBatch(List<TaskInstance> tasks) {
+        if (tasks == null || tasks.isEmpty()) {
+            return;
+        }
+        // 批量优化：单事务内批量插入，减少事务开销
+        runInOrOpenTx(em -> {
+            for (TaskInstance task : tasks) {
+                WfTaskEntity entity = em.find(WfTaskEntity.class, task.getId());
+                if (entity == null) {
+                    entity = new WfTaskEntity();
+                    entity.setId(task.getId());
+                    entity.setCreateTime(System.currentTimeMillis());
+                    entity.setInstanceId(task.getInstanceId());
+                    entity.setTokenId(task.getTokenId());
+                    entity.setNodeId(task.getNodeId());
+                    entity.setCandidateJson(JSON.toJSONString(task.getCandidate()));
+                    try {
+                        java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
+                        f.setAccessible(true);
+                        @SuppressWarnings("unchecked")
+                        Set<String> approvers = (Set<String>) f.get(task);
+                        entity.setCompletedApproversJson(JSON.toJSONString(approvers));
+                    } catch (Exception e) {
+                        throw new RuntimeException("序列化 completedApprovers 失败", e);
+                    }
+                    entity.setStatus(task.getStatus());
+                    em.persist(entity);
+                } else {
+                    entity.setInstanceId(task.getInstanceId());
+                    entity.setTokenId(task.getTokenId());
+                    entity.setNodeId(task.getNodeId());
+                    entity.setCandidateJson(JSON.toJSONString(task.getCandidate()));
+                    try {
+                        java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
+                        f.setAccessible(true);
+                        @SuppressWarnings("unchecked")
+                        Set<String> approvers = (Set<String>) f.get(task);
+                        entity.setCompletedApproversJson(JSON.toJSONString(approvers));
+                    } catch (Exception e) {
+                        throw new RuntimeException("序列化 completedApprovers 失败", e);
+                    }
+                    entity.setStatus(task.getStatus());
+                }
+            }
+            em.flush();  // 批量 flush
+            return null;
+        });
+    }
+
+    @Override
     public TaskInstance findById(String taskId) {
         return runInOrOpenTx(em -> {
             WfTaskEntity e = em.find(WfTaskEntity.class, taskId);

@@ -32,6 +32,25 @@ public interface IWorkflowEngine {
     /** 发起新流程 - 指定流程定义版本 + 发起人 */
     String start(String processKey, int version, String initiator, Map<String, Object> variables);
 
+    /**
+     * 批量发起流程 - 一次启动多个实例（优化：单事务内批量插入）
+     *
+     * @param processKey 流程 key
+     * @param variablesList 每个实例的变量列表（列表大小即为实例数量）
+     * @return 实例 ID 列表（与 variablesList 顺序一致）
+     */
+    List<String> batchStart(String processKey, List<Map<String, Object>> variablesList);
+
+    /**
+     * 批量发起流程 - 指定版本
+     *
+     * @param processKey 流程 key
+     * @param version 流程版本
+     * @param variablesList 每个实例的变量列表
+     * @return 实例 ID 列表
+     */
+    List<String> batchStart(String processKey, int version, List<Map<String, Object>> variablesList);
+
     /** 查询实例 */
     ProcessInstance getInstance(String instanceId);
 

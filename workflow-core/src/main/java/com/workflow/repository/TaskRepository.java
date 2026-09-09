@@ -12,6 +12,13 @@ public interface TaskRepository {
     /** 保存(新增或覆盖) */
     void save(TaskInstance task);
 
+    /** 批量保存任务（默认实现：逐个保存，子类可优化为真正的批量插入） */
+    default void saveBatch(List<TaskInstance> tasks) {
+        for (TaskInstance task : tasks) {
+            save(task);
+        }
+    }
+
     /** 按 id 查找 */
     TaskInstance findById(String taskId);
 
