@@ -2,7 +2,42 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.7.0 已完成** — P0 正确性加固（并发锁 + 事务边界 + 查询能力做实），177/177 可运行测试全绿。
+项目状态：**v3.8.0 已完成** — 纯基础引擎能力补齐（监控仪表盘 · 多租户隔离 · 批处理/批量启动 · 通知实现 · 性能基准 · 退回到任意节点 · DMN 持久化），约 270 用例、全量 0 失败（跨库需 Docker）。
+
+---
+
+## [3.8.0] - 2026-09-10
+
+定位收敛为**纯基础工作流引擎**：移除业务层的表单集成与附件管理，补齐监控、多租户、批量、通知、性能等企业级基础能力。
+
+### 新增
+- **退回到任意节点** `jumpToNode(instanceId, targetNodeId, operator, reason)`：消耗全部活跃 Token、终止 PENDING 任务、在目标节点重建 Token 并推进;并行网关下终止全分支任务;记审计 `PROCESS_JUMPED`;REST `POST /api/instances/{id}/jump`。
+- **批处理 API**：`batchCompleteTasks` / `batchTerminateInstances`,原子事务(全成功或全回滚),`BatchResult` 带成败计数与逐条失败详情,`BatchPartialFailureException`。
+- **批量启动**：`batchStart(key[,version], List<vars>)` 单事务 `saveBatch` 落库后逐个推进,所有实例继承当前租户;仓储新增 `saveBatch`。
+- **监控仪表盘** `com.workflow.monitor`：`DashboardMetrics` + `MonitoringService`,`IWorkflowEngine.dashboard(topN[,tenantId])`,REST `GET /api/metrics/dashboard`,示例看板 `docs/dashboard.html`。
+- **多租户隔离**：`TenantContext`(ThreadLocal + `withTenant`),三模型加 `tenantId`,start/批量/任务创建继承租户;`dashboard`/`countGroupByProcessAndStatus`/`countPending` 带 `tenantId` 过滤(null=全局兼容);Flyway `V7__multi_tenant.sql`。
+- **通知实现**(零依赖)：`LoggingNotificationService`(SLF4J + 环形缓冲)、`WebhookNotificationService`(JDK HttpClient POST JSON;url 未配置静默跳过、失败吞异常不断流程)。
+- **性能基准** `PerformanceBenchmarkTest`,`-Dperf=true` 门控(常规构建跳过,不拖慢 CI)。
+
+### 变更
+- `terminate` 收紧语义:仅 `RUNNING` 可终止(与挂起/恢复一致)。
+- 监控指标从 `findAll()` 全表重建**下沉为 SQL 层聚合**:`countGroupByProcessAndStatus`(GROUP BY)、`countPending`(COUNT)、`countGroupByEventTypePrefix`(枚举 IN / 字符串 LIKE);`historyRepo`/`auditLogRepo` 为 null 时降级为空。
+- 测试:`workflow-tests` 设 `forkEvery=1`(每类独立 JVM),消除 JPA/MyBatis 事务原子性测试与静态单例/H2 命名库/ThreadLocal 的跨类耦合;此前混跑偶现的 4 个红消失。
+
+### 移除
+- **表单集成与附件管理**(`com.workflow.form.*`、`com.workflow.attachment.*`、`FormSubmitResult` 及相关测试):属业务/前端层,移出以保持基础引擎纯粹性;业务系统可自行实现,引擎只需"任务完成"信号。
+
+### 修复（本轮踩坑,均已修 + 记忆留档)
+- `ProcessInstance.snapshot()` / `TaskInstance.copy()` 漏传 `tenantId` → 内存仓储丢租户(多租户测试红)。
+- 实体引用 `tenant_id` 列但 `V7` 迁移未落地(Flyway 停 v6) → 全量 99 个 DB 测试 `Column TENANT_ID not found`;补 `V7` 并核验文件真实存在。
+- JPA `countGroupByEventTypePrefix` 用 `LIKE` 打在枚举列上抛 `QueryArgumentException` → 改为枚举值 `IN` 查询。
+- 测试 `assertThatThrownBy`/`Set-Content` 误用致断言/编码问题 → 修正。
+
+### 测试
+- 约 270 用例、全量 **0 失败**(跨库 4 项需 Docker 时 skip);新增覆盖:事件网关、DMN、监控聚合三套一致、批处理、批量启动、多租户、通知、退回任意节点。
+
+### 说明
+- 性能基准暴露**反直觉事实**:InMemory 下"批量启动"反而慢于逐个(内存写极便宜,批量徒增 GC);批量收益只在真实 DB。基准测试的价值即在于照出这种想当然。
 
 ---
 

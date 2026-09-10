@@ -1,7 +1,9 @@
 # 自研工作流引擎 (Workflow Engine)
 
 > 一个**纯代码 DSL**、**零第三方工作流框架依赖**、**国产基础库 + Java 17** 的轻量级审批流引擎。
-> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止,三仓储实现（InMemory + JPA + MyBatis-Plus）。
+> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点,
+> 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务,
+> 三仓储实现（InMemory + JPA + MyBatis-Plus）。
 
 ---
 
@@ -24,6 +26,11 @@
 - [15. 关键工程决策与坑](#15-关键工程决策与坑)
 - [16. 后续可扩展方向](#16-后续可扩展方向)
 - [17. 并发与事务模型](#17-并发与事务模型)
+- [18. 监控仪表盘](#18-监控仪表盘)
+- [19. 多租户隔离](#19-多租户隔离)
+- [20. 批处理与批量启动](#20-批处理与批量启动)
+- [21. 通知服务](#21-通知服务)
+- [22. 性能基准](#22-性能基准)
 
 ---
 
@@ -706,7 +713,13 @@ mb.inSession(session -> {
 
 ## 13. 测试覆盖
 
-### 13.1 七套件共 168 个用例（168/168 PASSED）
+### 13.1 核心套件 168 用例 + v3.8 增量套件（全量 0 失败）
+
+> 下表是流程引擎**核心能力**的历史套件快照（168）。v3.8 起另增以下能力套件，随核心一起计入总用例：
+> `EventGatewayTest`(事件网关) · `DecisionTableTest`(DMN) · `Jpa/Mybatis*AggregationTest`(监控聚合三套一致) ·
+> `BatchStartTest`/`BatchApiTest`(批处理) · `MultiTenantTest`(多租户) · `NotificationServiceTest`(通知) ·
+> `JumpToNodeTest`(退回任意节点) · `PerformanceBenchmarkTest`(性能基准,`-Dperf=true` 才跑)。
+> 实测 `gradle :workflow-tests:test` 约 **270 用例**（跨库需 Docker 者 skip）。
 
 | 套件 | 测试类数 | 用例数 | 继承基类 |
 |---|---|---|---|
@@ -920,9 +933,12 @@ H2 中 `key` 是保留字,`WfProcessDefEntity.key` 字段必须映射到 `key_` 
 3. ~~超时与定时器~~ ✅ **v3.2 已完成**——UserTask 超时策略(AUTO_APPROVE/AUTO_REJECT/AUTO_TERMINATE/AUTO_TRANSFER)+ 自研调度器
 4. ~~审计日志~~ ✅ **v3.3 已完成**——自动记录 11 种事件类型，三仓储实现，支持按实例/任务/时间范围查询
 5. ~~流程变量强类型~~ ✅ **v3.4 已完成**——`VariableDefinition` schema（类型/必填/默认值），启动时自动校验，三仓储持久化
-6. **可视化设计器**——若需要,可用 bpmn.js + 后端导出 ProcessBuilder JSON
-7. **多租户隔离**——所有表加 `tenant_id`,仓储方法过滤
-8. **REST API 化**——把 IWorkflowEngine 包成 Spring Boot Controller
+6. ~~多租户隔离~~ ✅ **v3.8 已完成**——所有运行态表加 `tenant_id`,`TenantContext` + 仓储聚合过滤,见 §19
+7. ~~REST API 化~~ ✅ **已完成**——零依赖 `workflow-rest`(JDK HttpServer + fastjson2),含监控端点
+8. ~~监控仪表盘~~ ✅ **v3.8 已完成**——聚合服务 + 三套一致 + 全量下沉 SQL + 示例看板,见 §18
+9. ~~企业级补充~~ ✅ **v3.8 已完成**——退回到任意节点 / 批处理 API / 批量启动 / 通知实现,见 §20-§21
+10. **可视化设计器**——若需要,可用 bpmn.js + 后端导出 ProcessBuilder JSON（引擎本体刻意不含,保持"纯基础库"定位）
+11. **流程版本迁移**——挂起态下把运行中实例批量迁移到新版本定义
 
 ---
 
@@ -1026,6 +1042,81 @@ WorkflowEngine legacy = engine.withoutConcurrencyControl();  // 无锁 + 无事�
 迟到者会被前置校验拒绝，抛 `IllegalStateException: 任务非 PENDING 状态: X` —— 这是**预期行为**（告知调用方"这条待办已被他人处理"），不是引擎缺陷。上层应捕获并提示刷新，而非当作崩溃。
 
 不可接受的是内部一致性异常（`ConcurrentModificationException`、`Token 不存在或已消耗`）—— `ConcurrencySafetyTest` 正是按这条界线设计断言的。
+
+---
+
+## 18. 监控仪表盘
+
+`com.workflow.monitor` 提供**内生只读**的运行态聚合，UI 由业务系统据此自建。`DashboardMetrics`（record）字段：
+
+- 实例总数 / 按状态分布 / 按流程 key 分布
+- 待办总数 + 按 `(流程, 节点)` 分布
+- 瓶颈节点 TopN（节点平均耗时降序）
+- 超时自动处理事件计数（`TIMEOUT_*` 审计事件）
+
+关键设计：
+
+| 点 | 落地 |
+|---|---|
+| **不新增 SQL 聚合层** | 全部复用既有仓储：`countGroupByProcessAndStatus` / `countPending` / `averageClosedDuration` / `countGroupByEventTypePrefix` |
+| **聚合下沉，不 findAll** | 早期版本 `findAll()` 会为每个实例重建 Token/Task/变量（JPA 下 N 次子查询 + 反射），大表即热点;已改为 `GROUP BY` / `COUNT` |
+| **缺失即降级** | `historyRepo`/`auditLogRepo` 为 null 时对应指标返回空，不抛异常、不返回误导性的 0 |
+| **三套一致** | 每个聚合方法都是抽象方法，InMemory / JPA / MyBatis 各实现 + `*AggregationTest` 跨仓储对齐（吸取"只有 InMemory 能用、真库缺席"的教训） |
+
+入口：`IWorkflowEngine.dashboard(int topN)` / `dashboard(int topN, String tenantId)`；REST `GET /api/metrics/dashboard?topN=N`；示例看板 `docs/dashboard.html`（自包含，填 API 地址即用）。
+
+> **JPA 枚举 LIKE 坑**：`countGroupByEventTypePrefix` 在 JPA 里 `eventType` 是枚举字段，不能 `LIKE 'TIMEOUT_%'`,改为先列匹配前缀的枚举值再 `WHERE ... IN :types`。MyBatis 侧存的是字符串，`LIKE` 直接可用。
+
+---
+
+## 19. 多租户隔离
+
+- `TenantContext`（`ThreadLocal`）承载当前租户，`withTenant(id, supplier)` 临时切换并自动恢复。
+- `ProcessDefinition` / `ProcessInstance` / `TaskInstance` 带 `tenantId`（null = 全局，兼容老数据）。
+- 引擎 `start` / `batchStart` 设置实例租户（定义优先，其次上下文）；`TokenAdvancer` 创建任务时继承实例租户。
+- 查询隔离：`countGroupByProcessAndStatus(tenantId)` / `countPending(tenantId)` / `dashboard(topN, tenantId)`,`tenantId` 传 null 即跨租户(全局视图)。
+- DDL：Flyway `V7__multi_tenant.sql` 给 `wf_instance` / `wf_task` 加 `tenant_id`。
+
+> ⚠️ **两个真实踩坑**：① `ProcessInstance.snapshot()` 与 `TaskInstance.copy()` 重建时曾漏传 `tenantId`,导致内存仓储丢租户（多租户测试全红）——凡新增字段，**快照/拷贝/重建三处都要同步带上**;② 实体加了 `tenant_id` 列进入 SELECT,但 `V7` 迁移没落地,Flyway 仍停 v6 → 全量 99 个 DB 测试报 `Column TENANT_ID not found`。写完迁移脚本必须用 `dir` 真实核验文件存在。
+
+---
+
+## 20. 批处理与批量启动
+
+| 能力 | 说明 |
+|---|---|
+| `batchCompleteTasks(taskIds, userId, approved)` | 原子事务:全成功或全回滚,失败抛 `BatchPartialFailureException` 带 `BatchResult`（成功/失败计数 + 逐条失败详情） |
+| `batchTerminateInstances(instanceIds, operator, reason)` | 同上,批量终止 |
+| `batchStart(key[, version], List<vars>)` | 批量发起:先建全部实例 → 仓储 `saveBatch` 单事务插入 → 逐个推进 Token;所有实例继承当前租户 |
+| `saveBatch` | 仓储新增,JPA/MyBatis 单事务批量落库;InMemory 默认循环 |
+
+> **terminate 语义收紧**：`terminate` 现在校验实例状态,仅 `RUNNING` 可终止(与挂起/恢复一致),避免对终态实例重复操作。
+
+---
+
+## 21. 通知服务
+
+接口 `NotificationService`（`notify` + `urge`/`timeoutReminder` default）。引擎内置两个**零依赖**实现：
+
+- `LoggingNotificationService`：SLF4J 记录 + 有界环形缓冲（演示/测试可查最近通知）。默认兜底。
+- `WebhookNotificationService`：JDK `HttpClient` POST JSON 到配置端点,业务侧用一个 HTTP 网关即可转发到邮件/短信/钉钉/企微——引擎自身不耦合任何渠道 SDK 与凭据。`url` 未配置静默跳过、发送失败吞异常（**通知失败绝不影响流程**,与 §17.4 "提交后才生效"同源）。
+
+---
+
+## 22. 性能基准
+
+`workflow-tests` 里 `PerformanceBenchmarkTest`,用 `@EnabledIfSystemProperty(named="perf")` 门控——**常规构建默认跳过**（不拖慢 CI）,`gradle :workflow-tests:test -Dperf=true` 才跑,输出耗时报表。
+
+实测（InMemory,机器相关,看趋势不看绝对值）：
+
+```
+逐个启动 2000  :   815 ms
+批量启动 2000  :  2262 ms   ← 反而更慢
+批量完成 1000  :   882 ms
+dashboard 3000 :    31 ms   ← 聚合下沉有效的佐证
+```
+
+> **诚实的发现**：InMemory 下"批量启动"不比逐个快,反而慢——内存写本就极便宜,批量还额外常驻整批实例对象徒增 GC。批量的真正收益只在**真实数据库**(省网络往返与事务开销)。基准测试最大的价值,就是把这种"想当然"照出来。
 
 ---
 
