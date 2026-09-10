@@ -130,4 +130,38 @@ class MultiInstanceTest {
         assertThat(engine.getInstance(id).getStatus()).isEqualTo(InstanceStatus.COMPLETED);
         assertThat(signTasks(id)).isEmpty();
     }
+
+    @Test
+    @DisplayName("加签：给进行中的会签增加审批人，需一并完成")
+    void addSign_expandsApprover() {
+        register(CandidateStrategy.ALL);
+        String id = engine.start("mi-flow", Map.of("approvers", List.of("u1", "u2")));
+        assertThat(signTasks(id)).hasSize(2);
+
+        engine.addSign(id, "sign", "u3", "admin");
+        List<TaskInstance> tasks = signTasks(id);
+        assertThat(tasks).hasSize(3);
+        assertThat(tasks).allMatch(t -> t.getStatus() == TaskStatus.PENDING);
+
+        engine.completeTask(taskIdFor(id, "u1"), "u1", true);
+        engine.completeTask(taskIdFor(id, "u2"), "u2", true);
+        assertThat(engine.getInstance(id).getStatus()).isEqualTo(InstanceStatus.RUNNING); // 加签人 u3 未办
+
+        engine.completeTask(taskIdFor(id, "u3"), "u3", true);
+        assertThat(engine.getInstance(id).getStatus()).isEqualTo(InstanceStatus.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("减签：移除剩余待办后满足 ALL 完成条件即推进")
+    void removeSign_canCompleteFlow() {
+        register(CandidateStrategy.ALL);
+        String id = engine.start("mi-flow", Map.of("approvers", List.of("u1", "u2")));
+
+        engine.completeTask(taskIdFor(id, "u1"), "u1", true);
+        assertThat(engine.getInstance(id).getStatus()).isEqualTo(InstanceStatus.RUNNING); // u2 仍 pending
+
+        engine.removeSign(id, "sign", "u2", "admin");
+        // 移除唯一 pending → 无 pending 且已有完成 → 推进完成
+        assertThat(engine.getInstance(id).getStatus()).isEqualTo(InstanceStatus.COMPLETED);
+    }
 }

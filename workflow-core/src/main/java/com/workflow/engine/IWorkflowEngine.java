@@ -99,6 +99,28 @@ public interface IWorkflowEngine {
     void jumpToNode(String instanceId, String targetNodeId, String operator, String reason);
 
     /**
+     * 加签 - 给进行中的多实例会签节点临时增加一个审批人(新建一个独立待办任务)。
+     *
+     * @param instanceId 流程实例 ID
+     * @param nodeId     多实例节点 ID(该节点须有进行中的 token)
+     * @param assignee   新增审批人
+     * @param operator   操作人
+     */
+    void addSign(String instanceId, String nodeId, String assignee, String operator);
+
+    /**
+     * 减签 - 移除多实例会签节点上某个审批人的待办任务。
+     *
+     * <p>移除后若该节点已无 pending 且已有完成,会重新判定完成条件(ALL 满足则推进)。
+     *
+     * @param instanceId 流程实例 ID
+     * @param nodeId     多实例节点 ID
+     * @param assignee   要移除的审批人
+     * @param operator   操作人
+     */
+    void removeSign(String instanceId, String nodeId, String assignee, String operator);
+
+    /**
      * 设置委托 - A 委托 B 代为审批（全局委托）
      *
      * @param delegator 委托人

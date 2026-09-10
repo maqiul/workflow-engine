@@ -933,6 +933,57 @@ public class WorkflowEngine implements IWorkflowEngine {
         });
     }
 
+    // ========== 加签/减签（多实例会签） ==========
+
+    @Override
+    public void addSign(String instanceId, String nodeId, String assignee, String operator) {
+        exclusiveVoid(instanceId, "addSign", () -> {
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            if (instance.getStatus() != InstanceStatus.RUNNING) {
+                throw new IllegalStateException("仅 RUNNING 状态的流程可加签,当前: " + instance.getStatus());
+            }
+            Token token = instance.getActiveTokens().values().stream()
+                    .filter(t -> nodeId.equals(t.getCurrentNodeId())).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("节点无进行中任务,无法加签: " + nodeId));
+            TaskInstance t = new TaskInstance(instanceId, token.getId(), nodeId, Candidate.ofAny(assignee));
+            t.setTenantId(instance.getTenantId());
+            taskRepo.save(t);
+            syncTaskInInstance(instance, t);
+            instanceRepo.save(instance);
+            log.info("[引擎] 加签 instance={} node={} assignee={} by={}", instanceId, nodeId, assignee, operator);
+            audit(AuditEventType.SIGN_ADDED, instanceId, t.getId(), operator,
+                    "加签 " + assignee + " @ " + nodeId);
+        });
+    }
+
+    @Override
+    public void removeSign(String instanceId, String nodeId, String assignee, String operator) {
+        exclusiveVoid(instanceId, "removeSign", () -> {
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            if (instance.getStatus() != InstanceStatus.RUNNING) {
+                throw new IllegalStateException("仅 RUNNING 状态的流程可减签,当前: " + instance.getStatus());
+            }
+            Token token = instance.getActiveTokens().values().stream()
+                    .filter(t -> nodeId.equals(t.getCurrentNodeId())).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("节点无进行中任务,无法减签: " + nodeId));
+            TaskInstance target = taskRepo.findByInstanceId(instanceId).stream()
+                    .filter(t -> token.getId().equals(t.getTokenId()) && nodeId.equals(t.getNodeId())
+                            && t.getStatus() == TaskStatus.PENDING
+                            && t.getCandidate().getUserIds().contains(assignee))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("无可移除的待办: assignee=" + assignee + " node=" + nodeId));
+            target.setStatus(TaskStatus.TERMINATED);
+            taskRepo.save(target);
+            syncTaskInInstance(instance, target);
+            instanceRepo.save(instance);
+            log.info("[引擎] 减签 instance={} node={} assignee={} by={}", instanceId, nodeId, assignee, operator);
+            audit(AuditEventType.SIGN_REMOVED, instanceId, target.getId(), operator,
+                    "减签 " + assignee + " @ " + nodeId);
+            // 重判完成条件：若移除后该节点无 pending 且已有完成，ALL 将推进
+            advanceToken(instance, defOf(instance), token.getId());
+        });
+    }
+
     // ========== 委托管理 ==========
 
     @Override

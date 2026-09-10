@@ -29,5 +29,9 @@ public enum AuditEventType {
     /** 流程撤回 - 发起人撤回未审批的申请 */
     PROCESS_WITHDRAWN,
     /** 流程跳转 - 跳转到任意节点 */
-    PROCESS_JUMPED
+    PROCESS_JUMPED,
+    /** 加签 - 多实例会签节点新增审批人 */
+    SIGN_ADDED,
+    /** 减签 - 多实例会签节点移除审批人 */
+    SIGN_REMOVED
 }
