@@ -97,53 +97,56 @@
 ```
 workflow-engine/
 ├── build.gradle.kts                  # 根 build
-├── settings.gradle.kts               # 5 模块声明
+├── settings.gradle.kts               # 7 模块声明
 ├── gradle.properties
 ├── gradle/wrapper/                   # Gradle 8.5 wrapper
-├── gradle-8.5/                       # 本地解压的 Gradle 发行版
+├── gradle-8.5/                       # 本地解压的 Gradle 发行版（已 gitignore，不入库）
 │
 ├── workflow-core/                    # 【核心引擎 + 仓储接口 + InMemory 实现】
 │   └── src/main/java/com/workflow/
-│       ├── enums/                    # 枚举:NodeType, TaskStatus, InstanceStatus, ...
-│       ├── definition/               # 流程定义:ProcessDefinition, NodeDefinition, ...
-│       ├── builder/                  # 链式 DSL:ProcessBuilder
-│       ├── runtime/                  # 运行态:ProcessInstance, Token, TaskInstance
-│       ├── engine/                   # 引擎核心:WorkflowEngine, IWorkflowEngine, GatewayKind, PathNavigator
-│       └── repository/               # 仓储接口 + 3 个 InMemory 实现
-│
-├── workflow-sample/                  # 【请假审批 Demo】
-│   └── src/main/java/com/workflow/sample/LeaveDemo.java
-│
-├── workflow-tests/                   # 【单元测试 - 三仓储 87 + 跨库 32 个测试】
-│   └── src/test/java/com/workflow/tests/
-│       ├── engine/                   # InMemory 24 个测试
-│       ├── jpa/                      # JPA 24 个测试
-│       ├── mybatis/                  # MyBatis-Plus 24 个测试
-│       ├── crossdb/                  # 跨库测试(MySQL/PostgreSQL × JPA/MyBatis)
-│       ├── EngineTestBase.java
-│       ├── JpaEngineTestBase.java
-│       └── MybatisEngineTestBase.java
+│       ├── enums/                    # NodeType, TaskStatus, InstanceStatus, TimeoutPolicy, HistoryKind...
+│       ├── definition/               # ProcessDefinition, NodeDefinition, Candidate, Transition, VariableDefinition, MessageEvent/SignalEvent/TimerBoundaryEvent
+│       ├── builder/                  # 链式 DSL: ProcessBuilder
+│       ├── runtime/                  # ProcessInstance, Token, TaskInstance, AuditLog, HistoricActivity/TaskInstance, CarbonCopy, Delegation
+│       ├── engine/                   # WorkflowEngine, IWorkflowEngine, WorkflowEngineBuilder, TokenAdvancer, SubProcessHandler, ListenerSupport, TimeoutHandler, GatewayKind, PathNavigator, ConditionEvaluator, TenantContext, NotificationService(Logging/Webhook), BatchResult
+│       ├── repository/               # 仓储接口 + InMemory 实现（Process/Instance/Task/Audit/History/Event/Decision/DecisionHistory/Delegation/CarbonCopy）
+│       ├── concurrency/              # InstanceLockProvider, LocalInstanceLocks, WorkflowConflictException
+│       ├── tx/                       # TransactionRunner, TransactionContext, UndoLogTransactionRunner
+│       ├── listener/                 # ExecutionListener, TaskListener
+│       ├── history/                  # HistoryKind, HistoryRetention
+│       ├── query/                    # TaskQuery
+│       ├── bpmn/                     # BpmnExporter / BpmnImporter
+│       ├── dmn/                      # DecisionTable, DecisionTableExecutor, DecisionRepository, DecisionHistory(+InMemory)
+│       └── monitor/                  # DashboardMetrics, MonitoringService
 │
 ├── workflow-persistence-flyway/      # 【Flyway 统一 DDL 迁移模块】
-│   ├── build.gradle.kts
-│   └── src/main/
-│       ├── java/com/workflow/persistence/migrate/FlywayMigrator.java
-│       └── resources/db/migration/V1__init.sql   # 跨库同一份建表脚本
+│   ├── java/com/workflow/persistence/migrate/FlywayMigrator.java
+│   └── resources/db/migration/       # V1__init … V7__multi_tenant（三库同一份）
 │
-├── workflow-persistence-jpa/         # 【JPA 持久化实现】
-│   └── src/main/
-│       ├── java/com/workflow/persistence/jpa/
-│       │   ├── JpaPersistence.java           # 入口/工厂(init 时跑 Flyway)
-│       │   ├── entity/                      # 4 个 JPA Entity
-│       │   └── repository/                  # 3 个 JpaRepository
-│       └── resources/META-INF/persistence.xml
+├── workflow-persistence-jpa/         # 【JPA 持久化实现（Hibernate）】
+│   ├── .../jpa/JpaPersistence.java   # 入口/工厂（init 时跑 Flyway）
+│   ├── .../jpa/entity/               # Wf*Entity（instance/token/task/hist*/event/decision*/audit…）
+│   └── .../jpa/repository/            # 各 JpaRepository（与 InMemory 行为一致）
 │
-└── workflow-persistence-mybatis/     # 【MyBatis-Plus 持久化实现（国产 ORM）】
-    └── src/main/java/com/workflow/persistence/mybatis/
-        ├── MybatisPersistence.java           # 入口/工厂（无 Spring 轻量用法,init 时跑 Flyway）
-        ├── entity/                           # 4 个 MyBatis-Plus Entity（@TableName）
-        ├── mapper/                           # 4 个 Mapper（BaseMapper + 注解 SQL）
-        └── repository/                       # 3 个 MybatisRepository
+├── workflow-persistence-mybatis/     # 【MyBatis-Plus 持久化实现（国产 ORM）】
+│   ├── .../mybatis/MybatisPersistence.java
+│   ├── .../mybatis/entity/  ·  mapper/（BaseMapper + 注解 SQL）  ·  repository/
+│   └── （与 JPA 版实现同一批仓储接口）
+│
+├── workflow-rest/                    # 【REST API —— 零依赖（JDK HttpServer + fastjson2）】
+│   └── .../rest/                      # RestServer, WorkflowRestApi, RestRequest, RestResponse
+│
+├── workflow-sample/                  # 【请假审批 Demo: LeaveDemo（gradlew :workflow-sample:run）】
+│   └── src/main/java/com/workflow/sample/LeaveDemo.java
+│
+└── workflow-tests/                   # 【约 270 用例；跨库需 Docker，否则 skip】
+    └── src/test/java/com/workflow/
+        ├── tests/engine/             # InMemory 核心用例
+        ├── tests/jpa/  tests/mybatis/ # 同套用例 × JPA / MyBatis-Plus
+        ├── tests/crossdb/            # 跨库(MySQL/PostgreSQL × JPA/MyBatis, Testcontainers)
+        ├── tests/dmn/  tests/concurrency/  tests/perf/  tests/support/ …
+        ├── monitor/                  # MonitoringServiceTest（聚合）
+        └── tests/{EngineTestBase, JpaEngineTestBase, MybatisEngineTestBase}
 ```
 
 ---
@@ -1133,51 +1136,40 @@ dashboard 3000 :    31 ms   ← 聚合下沉有效的佐证
 ```
 workflow-engine/
 ├── build.gradle.kts                                          # 根 build
-├── settings.gradle.kts                                       # 6 模块声明
+├── settings.gradle.kts                                       # 7 模块声明
 ├── gradle.properties
 ├── gradle/wrapper/gradle-wrapper.jar
 ├── gradle/wrapper/gradle-wrapper.properties
 │
-├── workflow-core/                                            # 核心引擎
-│   ├── enums/                  (5)
-│   ├── definition/             (4)
-│   ├── builder/                (1)
-│   ├── runtime/                (3)
-│   ├── engine/                 (4)
-│   └── repository/             (6 = 3 interface + 3 InMemory impl)
-│
-├── workflow-sample/                                          # Demo
-│   ├── build.gradle.kts
-│   └── LeaveDemo.java
-│
-├── workflow-tests/                                           # 测试
-│   ├── build.gradle.kts
-│   ├── EngineTestBase.java
-│   ├── JpaEngineTestBase.java
-│   ├── MybatisEngineTestBase.java
-│   ├── engine/   (7 文件, 24 个测试方法)
-│   ├── jpa/      (7 文件, 24 个测试方法)
-│   ├── mybatis/  (7 文件, 24 个测试方法)
-│   └── crossdb/  (AbstractCrossDbTest + 4 组合, 32 个测试方法)
+├── workflow-core/                                            # 核心引擎（各子包职责见 §4）
+│   ├── enums/  definition/  builder/  runtime/
+│   ├── engine/  repository/  concurrency/  tx/  listener/
+│   └── history/  query/  bpmn/  dmn/  monitor/
 │
 ├── workflow-persistence-flyway/                              # Flyway 统一 DDL
-│   ├── build.gradle.kts
 │   ├── FlywayMigrator.java
-│   └── db/migration/V1__init.sql
+│   └── resources/db/migration/  V1__init … V7__multi_tenant
 │
 ├── workflow-persistence-jpa/                                 # JPA 实现
-│   ├── build.gradle.kts
-│   ├── META-INF/persistence.xml
-│   ├── entity/  (4)
-│   ├── repository/ (3)
-│   └── JpaPersistence.java
+│   ├── JpaPersistence.java
+│   ├── entity/  ·  repository/
+│   └── resources/META-INF/persistence.xml
 │
-└── workflow-persistence-mybatis/                             # MyBatis-Plus 实现
-    ├── build.gradle.kts
-    ├── entity/  (4)
-    ├── mapper/  (4)
-    ├── repository/ (3)
-    └── MybatisPersistence.java
+├── workflow-persistence-mybatis/                             # MyBatis-Plus 实现
+│   ├── MybatisPersistence.java
+│   └── entity/  ·  mapper/  ·  repository/
+│
+├── workflow-rest/                                            # REST API（零依赖，JDK HttpServer）
+│   ├── RestServer.java  ·  WorkflowRestApi.java
+│   └── RestRequest.java  ·  RestResponse.java
+│
+├── workflow-sample/                                          # 请假审批 Demo
+│   └── LeaveDemo.java
+│
+└── workflow-tests/                                           # 约 270 用例（分类见 §13）
+    ├── EngineTestBase / JpaEngineTestBase / MybatisEngineTestBase
+    ├── engine/  jpa/  mybatis/  crossdb/  dmn/  monitor/
+    └── concurrency/  perf/  runtime/  definition/  support/
 ```
 
 ### B. 依赖坐标
