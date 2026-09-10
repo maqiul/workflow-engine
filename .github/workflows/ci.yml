@@ -25,3 +25,14 @@ jobs:
       # 由 -PskipCrossDb 控制；真库兼容性作为可选深度验证单独跑。
       - name: Build & Test
         run: chmod +x ./gradlew && ./gradlew build --no-daemon -PskipCrossDb=true
+
+      # 失败时把具体失败用例名+报错写进 Job Summary(公开 run 页面直接可见，便于定位)
+      - name: Test failure report
+        if: failure()
+        run: |
+          echo "## ❌ 失败的测试用例" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -rl "<failure" workflow-tests/build/test-results/test/ 2>/dev/null | while read -r f; do
+            grep -E "<testcase|<failure|expected:|but was:|Caused by" "$f" | head -60
+          done >> "$GITHUB_STEP_SUMMARY" 2>&1 || echo "(未解析到失败用例，见 Build & Test 日志)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
