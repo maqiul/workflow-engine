@@ -2,6 +2,7 @@
 
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![CI](https://github.com/maqiul/workflow-engine/actions/workflows/ci.yml/badge.svg?branch=main)
+![License](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 > 一个**纯代码 DSL**、**零第三方工作流框架依赖**、**国产基础库 + Java 17** 的轻量级审批流引擎。
 > 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点,
