@@ -27,6 +27,6 @@ CREATE TABLE IF NOT EXISTS wf_decision_history (
     executed_at         BIGINT
 );
 
-CREATE INDEX IF NOT EXISTS idx_decision_history_instance ON wf_decision_history (instance_id);
-CREATE INDEX IF NOT EXISTS idx_decision_history_node ON wf_decision_history (node_id);
-CREATE INDEX IF NOT EXISTS idx_decision_history_table ON wf_decision_history (decision_table_id);
+CREATE INDEX idx_decision_history_instance ON wf_decision_history (instance_id);
+CREATE INDEX idx_decision_history_node ON wf_decision_history (node_id);
+CREATE INDEX idx_decision_history_table ON wf_decision_history (decision_table_id);

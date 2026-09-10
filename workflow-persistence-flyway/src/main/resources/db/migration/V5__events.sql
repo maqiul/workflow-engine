@@ -20,6 +20,6 @@ CREATE TABLE IF NOT EXISTS wf_event (
     PRIMARY KEY (instance_id, node_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_event_message_key ON wf_event (message_key);
-CREATE INDEX IF NOT EXISTS idx_event_signal_name ON wf_event (signal_name);
-CREATE INDEX IF NOT EXISTS idx_event_trigger_time ON wf_event (trigger_time);
+CREATE INDEX idx_event_message_key ON wf_event (message_key);
+CREATE INDEX idx_event_signal_name ON wf_event (signal_name);
+CREATE INDEX idx_event_trigger_time ON wf_event (trigger_time);

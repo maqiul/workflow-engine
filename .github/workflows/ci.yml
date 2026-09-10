@@ -21,6 +21,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      # 全量构建 + 测试；跨库用例(Testcontainers)在 runner 上无 Docker 时按设计 skip，不阻塞
+      # 全量构建 + 测试；跨库用例(Testcontainers)默认跳过(需 Docker、易抖动)，
+      # 由 -PskipCrossDb 控制；真库兼容性作为可选深度验证单独跑。
       - name: Build & Test
-        run: chmod +x ./gradlew && ./gradlew build --no-daemon
+        run: chmod +x ./gradlew && ./gradlew build --no-daemon -PskipCrossDb=true

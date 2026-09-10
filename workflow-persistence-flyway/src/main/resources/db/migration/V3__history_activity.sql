@@ -33,9 +33,9 @@ CREATE TABLE IF NOT EXISTS wf_hist_activity (
     performer        VARCHAR(64)
 );
 
-CREATE INDEX IF NOT EXISTS idx_hist_act_inst ON wf_hist_activity (instance_id);
-CREATE INDEX IF NOT EXISTS idx_hist_act_key  ON wf_hist_activity (process_key, activity_id);
+CREATE INDEX idx_hist_act_inst ON wf_hist_activity (instance_id);
+CREATE INDEX idx_hist_act_key  ON wf_hist_activity (process_key, activity_id);
 -- findOpen 走这条：按实例+令牌+节点定位未闭合记录
-CREATE INDEX IF NOT EXISTS idx_hist_act_open ON wf_hist_activity (instance_id, token_id, activity_id);
+CREATE INDEX idx_hist_act_open ON wf_hist_activity (instance_id, token_id, activity_id);
 -- 报表按实例还原路径时用它，避免大表 filesort
-CREATE INDEX IF NOT EXISTS idx_hist_act_order ON wf_hist_activity (instance_id, start_time, seq);
+CREATE INDEX idx_hist_act_order ON wf_hist_activity (instance_id, start_time, seq);

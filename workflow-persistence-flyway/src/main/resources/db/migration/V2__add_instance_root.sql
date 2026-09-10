@@ -14,4 +14,4 @@
 
 ALTER TABLE wf_instance ADD COLUMN root_instance_id VARCHAR(64);
 
-CREATE INDEX IF NOT EXISTS idx_wf_instance_root ON wf_instance (root_instance_id);
+CREATE INDEX idx_wf_instance_root ON wf_instance (root_instance_id);

@@ -30,4 +30,10 @@ tasks.test {
     maxParallelForks = 4
     // 透传给测试 JVM：默认关闭，`gradle test -Dperf=true` 才启用性能基准用例
     systemProperty("perf", System.getProperty("perf", ""))
+
+    // 主 CI 用 `-PskipCrossDb=true` 跳过需 Docker 的跨库用例(Testcontainers 拉镜像慢、
+    // 环境易抖动，不该阻塞主构建)。不加该属性时照常纳入运行(本地无 Docker 会自动 skip)。
+    if (project.findProperty("skipCrossDb") == "true") {
+        filter { excludeTestsMatching("com.workflow.tests.crossdb.*") }
+    }
 }

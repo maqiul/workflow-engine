@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS wf_hist_task (
     end_reason       VARCHAR(16)  NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_hist_task_inst ON wf_hist_task (instance_id);
-CREATE INDEX IF NOT EXISTS idx_hist_task_node ON wf_hist_task (process_key, node_id);
-CREATE INDEX IF NOT EXISTS idx_hist_task_time ON wf_hist_task (end_time);
+CREATE INDEX idx_hist_task_inst ON wf_hist_task (instance_id);
+CREATE INDEX idx_hist_task_node ON wf_hist_task (process_key, node_id);
+CREATE INDEX idx_hist_task_time ON wf_hist_task (end_time);
 -- 按实例还原审批链顺序时用它，避免 filesort
-CREATE INDEX IF NOT EXISTS idx_hist_task_order ON wf_hist_task (instance_id, end_time, seq);
+CREATE INDEX idx_hist_task_order ON wf_hist_task (instance_id, end_time, seq);
