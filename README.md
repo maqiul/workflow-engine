@@ -4,6 +4,8 @@
 > 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点,
 > 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务,
 > 三仓储实现（InMemory + JPA + MyBatis-Plus）。
+>
+> 📘 **要用起来？** 看面向接入方的操作手册 → **[OPERATIONS.md](OPERATIONS.md)**（跑 Demo、五步接入、DSL 速查、REST 全表、多租户/监控/DB 接入、排错）。变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
