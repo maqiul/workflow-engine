@@ -25,5 +25,7 @@ public enum NodeType {
     /** 定时器边界事件 - 附加在任务节点上，超时后触发 */
     TIMER_BOUNDARY,
     /** 决策节点 - 基于 DMN 决策表进行业务规则决策 */
-    DECISION
+    DECISION,
+    /** 多实例任务节点 - 运行时按集合变量展开为「每人一个独立任务」，ALL/ANY 完成判定（OA 会签/或签） */
+    MULTI_INSTANCE
 }

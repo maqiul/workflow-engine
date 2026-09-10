@@ -130,6 +130,20 @@ public class ProcessBuilder {
     }
 
     /**
+     * 多实例任务节点（OA 会签/或签）：运行时按集合变量为每个审批人各建一个独立任务。
+     *
+     * @param id           节点 ID
+     * @param displayName  节点名称
+     * @param variable     集合变量名（List，元素为审批人）
+     * @param strategy     完成策略 ANY(或签)/ALL(会签)
+     */
+    public ProcessBuilder multiInstance(String id, String displayName, String variable, CandidateStrategy strategy) {
+        checkDuplicate(id);
+        nodes.put(id, NodeDefinition.multiInstance(id, displayName, variable, strategy));
+        return this;
+    }
+
+    /**
      * 注册消息事件节点 - 等待外部消息触发
      *
      * @param id        节点 ID

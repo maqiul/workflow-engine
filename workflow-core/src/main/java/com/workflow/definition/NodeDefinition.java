@@ -195,6 +195,24 @@ public final class NodeDefinition {
     }
 
     /**
+     * 创建多实例任务节点（OA 会签/或签）—— 运行时按集合变量展开为「每人一个独立任务」。
+     *
+     * <p>与 {@link #dynamicParallel} 的区别：dynamicParallel 把整个候选人集合挂到<b>一个</b>任务上；
+     * 多实例为集合里<b>每个元素各建一个单候选人任务</b>，可逐人完成/加签/减签，
+     * 完成判定按 {@code strategy}（ALL=全部完成、ANY=任一完成即取消其余）。
+     *
+     * @param id           节点 ID
+     * @param name         节点名称
+     * @param collectionVar 运行时集合变量名（List，元素为审批人）
+     * @param strategy     完成策略 ANY/ALL
+     */
+    public static NodeDefinition multiInstance(String id, String name, String collectionVar, CandidateStrategy strategy) {
+        Objects.requireNonNull(collectionVar, "多实例集合变量名不能为空");
+        Objects.requireNonNull(strategy, "多实例完成策略不能为空");
+        return new NodeDefinition(id, name, NodeType.MULTI_INSTANCE, null, null, 0, TimeoutPolicy.NONE, null, collectionVar, strategy, null, null, null, null);
+    }
+
+    /**
      * 返回带超时配置的节点副本(不可变风格)
      */
     public NodeDefinition withTimeout(long millis, TimeoutPolicy policy) {
@@ -278,6 +296,18 @@ public final class NodeDefinition {
     @JSONField(serialize = false)
     public boolean isDecision() {
         return type == NodeType.DECISION && decisionTableId != null;
+    }
+
+    /** 多实例集合变量名 - 仅 MULTI_INSTANCE 节点有值（复用 dynamicParallelVariable 字段） */
+    public String getMultiInstanceCollection() { return dynamicParallelVariable; }
+
+    /** 多实例完成策略 - 仅 MULTI_INSTANCE 节点有值（复用 dynamicParallelStrategy 字段） */
+    public CandidateStrategy getMultiInstanceStrategy() { return dynamicParallelStrategy; }
+
+    /** 是否为多实例任务节点 */
+    @JSONField(serialize = false)
+    public boolean isMultiInstance() {
+        return type == NodeType.MULTI_INSTANCE && dynamicParallelVariable != null;
     }
 
     @Override

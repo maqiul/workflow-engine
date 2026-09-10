@@ -173,6 +173,9 @@ public class TokenAdvancer {
             case DECISION -> {
                 handleDecision(instance, def, tokenId, current, recordsActivity);
             }
+            case MULTI_INSTANCE -> {
+                handleMultiInstance(instance, def, tokenId, current, recordsActivity);
+            }
         }
 
         checkAndFinalize(instance);
@@ -672,6 +675,99 @@ public class TokenAdvancer {
     private void syncTaskInInstance(ProcessInstance instance, TaskInstance task) {
         if (instance.getTasks().stream().noneMatch(t -> t.getId().equals(task.getId()))) {
             instance.addTask(task);
+        }
+    }
+
+    /** 某 token+node 上的全部任务（含各状态），供多实例完成判定。 */
+    private List<TaskInstance> tasksOf(ProcessInstance instance, String tokenId, String nodeId) {
+        return taskRepo.findByInstanceId(instance.getId()).stream()
+                .filter(t -> t.getTokenId().equals(tokenId) && t.getNodeId().equals(nodeId))
+                .toList();
+    }
+
+    private java.util.List<String> toStringList(Object v) {
+        List<String> out = new ArrayList<>();
+        if (v instanceof List<?> list) {
+            for (Object o : list) {
+                out.add(o instanceof String s ? s : String.valueOf(o));
+            }
+        }
+        return out;
+    }
+
+    /** 多实例节点完成后推进 token 到唯一出口（复用 USER_TASK 的推进尾）。 */
+    private void advanceMultiInstanceToken(ProcessInstance instance, ProcessDefinition def,
+                                           Token token, NodeDefinition current, String tokenId,
+                                           boolean recordsActivity) {
+        List<Transition> outs = def.getOutgoing(current.getId());
+        if (outs.isEmpty()) {
+            instance.consumeToken(tokenId);
+            instanceRepo.save(instance);
+        } else if (outs.size() == 1) {
+            token.setCurrentNodeId(outs.get(0).getTo());
+            instanceRepo.save(instance);
+            advanceToken(instance, def, tokenId, recordsActivity);
+        } else {
+            throw new IllegalStateException("MULTI_INSTANCE 节点 " + current.getId() + " 有多条出口");
+        }
+    }
+
+    /**
+     * 多实例会签/或签：进入时按集合变量为每个审批人各建一个单候选人任务；
+     * 之后每次有任务完成回到本节点，按 ALL/ANY 判定是否推进。
+     */
+    private void handleMultiInstance(ProcessInstance instance, ProcessDefinition def,
+                                     String tokenId, NodeDefinition current, boolean recordsActivity) {
+        String markKey = "__mi_" + tokenId;
+        Object expanded = instance.getVariable(markKey);
+        Token token = instance.getActiveTokens().get(tokenId);
+
+        if (expanded == null) {
+            java.util.List<String> assignees = toStringList(instance.getVariable(current.getMultiInstanceCollection()));
+            if (assignees.isEmpty()) {
+                log.info("[TokenAdvancer] MULTI_INSTANCE 节点 {} 集合为空,直接推进", current.getId());
+                instance.setVariable(markKey, "expanded");
+                instanceRepo.save(instance);
+                advanceMultiInstanceToken(instance, def, token, current, tokenId, recordsActivity);
+                return;
+            }
+            for (String a : assignees) {
+                TaskInstance t = new TaskInstance(instance.getId(), tokenId, current.getId(), Candidate.ofAny(a));
+                t.setTenantId(instance.getTenantId());  // 继承实例租户
+                taskRepo.save(t);
+                syncTaskInInstance(instance, t);
+            }
+            instance.setVariable(markKey, "expanded");
+            instanceRepo.save(instance);
+            log.info("[TokenAdvancer] MULTI_INSTANCE 节点 {} 展开 {} 个独立任务 assignees={}",
+                    current.getId(), assignees.size(), assignees);
+            return;  // 停在节点等待任务完成
+        }
+
+        // 已展开：判完成条件
+        List<TaskInstance> tasks = tasksOf(instance, tokenId, current.getId());
+        long pending = tasks.stream().filter(t -> t.getStatus() == TaskStatus.PENDING).count();
+        long completed = tasks.stream().filter(t -> t.getStatus() == TaskStatus.COMPLETED).count();
+        CandidateStrategy strategy = current.getMultiInstanceStrategy();
+
+        if (strategy == CandidateStrategy.ALL) {
+            if (pending == 0 && completed >= 1) {
+                log.info("[TokenAdvancer] MULTI_INSTANCE 节点 {} 会签全部完成({}),推进", current.getId(), completed);
+                advanceMultiInstanceToken(instance, def, token, current, tokenId, recordsActivity);
+            }
+            // 否则仍有 pending，停等
+        } else { // ANY：任一完成即通过，取消其余
+            if (completed >= 1) {
+                for (TaskInstance t : tasks) {
+                    if (t.getStatus() == TaskStatus.PENDING) {
+                        t.setStatus(TaskStatus.TERMINATED);
+                        taskRepo.save(t);
+                        syncTaskInInstance(instance, t);
+                    }
+                }
+                log.info("[TokenAdvancer] MULTI_INSTANCE 节点 {} 或签任一完成,取消其余,推进", current.getId());
+                advanceMultiInstanceToken(instance, def, token, current, tokenId, recordsActivity);
+            }
         }
     }
 }

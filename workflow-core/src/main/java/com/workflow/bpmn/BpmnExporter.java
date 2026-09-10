@@ -115,6 +115,9 @@ public final class BpmnExporter {
             case SIGNAL_EVENT -> "intermediateCatchEvent";
             case TIMER_BOUNDARY -> "boundaryEvent";
             case DECISION -> "businessRuleTask";
+            case MULTI_INSTANCE -> throw new UnsupportedOperationException(
+                    "MULTI_INSTANCE 节点暂无 BPMN 标准多实例映射，不支持导出: node=" + node.getId()
+                            + "。需要交换格式请先改造为 USER_TASK，或自行写 multiInstanceLoopCharacteristics 扩展。");
         };
 
         var el = doc.createElementNS(BPMN_NS, tag);
