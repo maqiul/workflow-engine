@@ -45,7 +45,8 @@ public class TimeoutTest extends EngineTestBase {
         String taskId = taskRepo.findByInstanceId(instanceId).get(0).getId();
         assertThat(taskRepo.findById(taskId).getStatus()).isEqualTo(TaskStatus.PENDING);
 
-        Await.until(() -> taskRepo.findById(taskId).getStatus() == TaskStatus.COMPLETED, 5000);
+        // 轮询最终态(实例完成)
+        Await.until(() -> engine.getInstance(instanceId).getStatus() == InstanceStatus.COMPLETED, 5000);
 
         TaskInstance task = taskRepo.findById(taskId);
         assertThat(task.getStatus()).isEqualTo(TaskStatus.COMPLETED);
@@ -74,7 +75,9 @@ public class TimeoutTest extends EngineTestBase {
 
         String task2Id = taskRepo.findByInstanceId(instanceId).stream()
                 .filter(t -> t.getNodeId().equals("task2")).findFirst().orElseThrow().getId();
-        Await.until(() -> taskRepo.findById(task2Id).getStatus() == TaskStatus.REJECTED, 5000);
+        // 轮询到"驳回后回到 task1 且新待办已生成"最终态，避免读中间态
+        Await.until(() -> taskRepo.findByInstanceId(instanceId).stream()
+                .anyMatch(t -> t.getNodeId().equals("task1") && t.getStatus() == TaskStatus.PENDING), 5000);
 
         assertThat(taskRepo.findById(task2Id).getStatus()).isEqualTo(TaskStatus.REJECTED);
         assertThat(taskRepo.findByInstanceId(instanceId).stream()
@@ -117,7 +120,8 @@ public class TimeoutTest extends EngineTestBase {
         String instanceId = engine.start("timeout_transfer", Map.of());
         String originalId = taskRepo.findByInstanceId(instanceId).get(0).getId();
 
-        Await.until(() -> taskRepo.findById(originalId).getStatus() == TaskStatus.TRANSFERRED, 5000);
+        Await.until(() -> taskRepo.findByInstanceId(instanceId).stream()
+                .anyMatch(t -> t.getCandidate().getUserIds().contains("user2") && t.getStatus() == TaskStatus.PENDING), 5000);
 
         assertThat(taskRepo.findById(originalId).getStatus()).isEqualTo(TaskStatus.TRANSFERRED);
         assertThat(taskRepo.findByInstanceId(instanceId).stream()

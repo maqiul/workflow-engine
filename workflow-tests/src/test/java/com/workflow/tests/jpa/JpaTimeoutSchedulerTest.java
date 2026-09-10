@@ -39,7 +39,8 @@ class JpaTimeoutSchedulerTest extends JpaEngineTestBase {
         String taskId = tasks.get(0).getId();
         assertThat(taskRepo.findById(taskId).getStatus()).isEqualTo(TaskStatus.PENDING);
 
-        Await.until(() -> taskRepo.findById(taskId).getStatus() == TaskStatus.COMPLETED, 5000);
+        // 轮询最终态(实例完成)，而非 task COMPLETED 这一中间态
+        Await.until(() -> engine.getInstance(instanceId).getStatus() == InstanceStatus.COMPLETED, 5000);
 
         TaskInstance task = taskRepo.findById(taskId);
         assertThat(task.getStatus()).isEqualTo(TaskStatus.COMPLETED);
@@ -67,7 +68,8 @@ class JpaTimeoutSchedulerTest extends JpaEngineTestBase {
 
         String reviewId = taskRepo.findByInstanceId(instanceId).stream()
                 .filter(t -> t.getNodeId().equals("review")).findFirst().orElseThrow().getId();
-        Await.until(() -> taskRepo.findById(reviewId).getStatus() == TaskStatus.REJECTED, 5000);
+        Await.until(() -> taskRepo.findByInstanceId(instanceId).stream()
+                .anyMatch(t -> t.getNodeId().equals("apply") && t.getStatus() == TaskStatus.PENDING), 5000);
 
         assertThat(taskRepo.findById(reviewId).getStatus()).isEqualTo(TaskStatus.REJECTED);
         assertThat(engine.getInstance(instanceId).getStatus()).isEqualTo(InstanceStatus.RUNNING);
@@ -112,7 +114,9 @@ class JpaTimeoutSchedulerTest extends JpaEngineTestBase {
         String instanceId = engine.start("timeout-transfer", null);
         String originalId = taskRepo.findByInstanceId(instanceId).get(0).getId();
 
-        Await.until(() -> taskRepo.findById(originalId).getStatus() == TaskStatus.TRANSFERRED, 5000);
+        Await.until(() -> taskRepo.findByInstanceId(instanceId).stream()
+                .anyMatch(t -> t.getStatus() == TaskStatus.PENDING
+                        && t.getCandidate().getUserIds().contains("user2")), 5000);
 
         assertThat(taskRepo.findById(originalId).getStatus()).isEqualTo(TaskStatus.TRANSFERRED);
         TaskInstance newTask = taskRepo.findByInstanceId(instanceId).stream()
