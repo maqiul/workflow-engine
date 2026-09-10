@@ -28,4 +28,6 @@ dependencies {
 tasks.test {
     forkEvery = 1
     maxParallelForks = 4
+    // 透传给测试 JVM：默认关闭，`gradle test -Dperf=true` 才启用性能基准用例
+    systemProperty("perf", System.getProperty("perf", ""))
 }
