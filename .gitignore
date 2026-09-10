@@ -19,3 +19,9 @@ tmp-json-test/
 # 本地解压的 Gradle 发行版与安装包（勿入库）
 gradle-8.5/
 gradle-8.5-bin.zip
+
+# 助手工作区私有笔记（开发过程记录，不入库、不推公开仓库）
+memory/
+MEMORY.md
+FEATURES.md
+*_TODO.md
