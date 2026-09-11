@@ -100,6 +100,56 @@ public class TimeoutHandler {
     }
 
     /**
+     * 进程重启后恢复超时调度。
+     *
+     * <p>调度器的注册表本身在内存里，重启即空 —— 若不恢复，重启前建立的待办任务会
+     * <b>静默地</b>永不超时：任务数据还在库里，只是再也没人来触发它，审批就此卡死
+     * 且无人知晓。
+     *
+     * <p>恢复依据是<b>可派生</b>的：{@code createTime}（已落库 {@code wf_task.create_time}）
+     * + 节点超时配置（在流程定义的 nodes_json 里），与建任务时算出的到期时刻完全一致，
+     * 因此无需额外持久化一份 dueAt —— 那反而会造出第二真相来源。
+     *
+     * <p>已经过期的任务交给调度器按 delay=0 在调度线程立即触发，这正是重启后的补偿动作。
+     * 扫描与既有调度的重叠、以及多节点同时恢复造成的重复触发，都由
+     * {@link #doTaskTimeout} 的「回调前重查任务状态」幂等保证兜底。
+     *
+     * @param pendingTasks 待恢复的任务（通常来自 {@code TaskRepository.findByStatus(PENDING)}）
+     * @return 实际注册的调度数量
+     */
+    public int restoreTimeouts(List<TaskInstance> pendingTasks) {
+        if (scheduler == null || pendingTasks == null || pendingTasks.isEmpty()) {
+            return 0;
+        }
+        int restored = 0;
+        for (TaskInstance task : pendingTasks) {
+            if (task.getStatus() != TaskStatus.PENDING) {
+                continue;
+            }
+            ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
+            if (instance == null || instance.getStatus() != InstanceStatus.RUNNING) {
+                continue;
+            }
+            ProcessDefinition def = defResolver.apply(instance);
+            if (def == null) {
+                continue;
+            }
+            NodeDefinition node = def.getNode(task.getNodeId());
+            if (node == null || !node.hasTimeout()) {
+                continue;
+            }
+            scheduler.schedule(task.getId(), instance.getId(),
+                    task.getCreateTime() + node.getTimeoutMillis(),
+                    node.getTimeoutPolicy(), node.getTimeoutTargetUserId());
+            restored++;
+        }
+        if (restored > 0) {
+            log.info("[TimeoutHandler] 重启恢复：重新注册 {} 个任务的超时调度", restored);
+        }
+        return restored;
+    }
+
+    /**
      * 超时回调入口 - 由调度线程触发
      *
      * <p>必须与用户手动操作走同一把流程树锁，否则会出现
@@ -212,7 +262,8 @@ public class TimeoutHandler {
                     long timeout = nodeDef.getTimeoutMillis();
                     TimeoutPolicy autoPolicy = nodeDef.getTimeoutPolicy();
                     String autoTarget = nodeDef.getTimeoutTargetUserId();
-                    afterCommitSchedule.accept(() -> scheduler.schedule(newTaskId, instId, timeout, autoPolicy, autoTarget));
+                    afterCommitSchedule.accept(() -> scheduler.schedule(newTaskId, instId,
+                            newTask.getCreateTime() + timeout, autoPolicy, autoTarget));
                 }
                 audit(AuditEventType.TIMEOUT_AUTO_TRANSFERRED, instanceId, taskId, SYSTEM_USER,
                         "超时自动转办给 toUser=" + targetUserId + " newTaskId=" + newTask.getId());

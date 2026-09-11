@@ -803,7 +803,8 @@ public class WorkflowEngine implements IWorkflowEngine {
             long timeout = nodeDef.getTimeoutMillis();
             TimeoutPolicy policy = nodeDef.getTimeoutPolicy();
             String target = nodeDef.getTimeoutTargetUserId();
-            afterCommitSchedule(() -> scheduler.schedule(newTaskId, instanceId, timeout, policy, target));
+            afterCommitSchedule(() -> scheduler.schedule(newTaskId, instanceId,
+                    newTask.getCreateTime() + timeout, policy, target));
         }
 
         log.info("[引擎] 转办 task={} from={} to={}", taskId, fromUserId, toUserId);
@@ -1363,6 +1364,23 @@ public class WorkflowEngine implements IWorkflowEngine {
     }
 
     // ========== 查询 ==========
+
+    /**
+     * 进程重启后恢复超时调度。
+     *
+     * <p>扫描仍处于 PENDING 的任务，按 {@code createTime + 节点超时配置} 重算到期时刻
+     * 重新注册；已经过期的交给调度器立即触发（异步，不阻塞调用方）。
+     *
+     * <p>不调用它数据也不会坏，但重启前建立的待办会<b>静默地</b>永不超时。因此
+     * {@link WorkflowEngineBuilder} 默认在 {@code build()} 时自动调用一次，
+     * 可用 {@code autoRecoverTimeouts(false)} 关闭。
+     *
+     * @return 实际恢复的调度数量
+     * @see TimeoutHandler#restoreTimeouts
+     */
+    public int recoverTimeouts() {
+        return timeoutHandler.restoreTimeouts(taskRepo.findByStatus(TaskStatus.PENDING));
+    }
 
     @Override
     public ProcessInstance getInstance(String instanceId) {

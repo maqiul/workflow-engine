@@ -262,7 +262,8 @@ public class TokenAdvancer {
                 TimeoutPolicy policy = current.getTimeoutPolicy();
                 String target = current.getTimeoutTargetUserId();
                 if (afterCommitSchedule != null) {
-                    afterCommitSchedule.accept(() -> scheduler.schedule(newTaskId, instId, timeout, policy, target));
+                    afterCommitSchedule.accept(() -> scheduler.schedule(newTaskId, instId,
+                            task.getCreateTime() + timeout, policy, target));
                 }
             }
             registerTimerBoundaryFor(def, instance, current, tokenId);

@@ -38,7 +38,7 @@ public class JpaTaskRepository implements TaskRepository {
             if (entity == null) {
                 entity = new WfTaskEntity();
                 entity.setId(task.getId());
-                entity.setCreateTime(System.currentTimeMillis());
+                                    entity.setCreateTime(task.getCreateTime());
                 entity.setInstanceId(task.getInstanceId());
                 entity.setTokenId(task.getTokenId());
                 entity.setNodeId(task.getNodeId());
@@ -92,7 +92,7 @@ public class JpaTaskRepository implements TaskRepository {
                 if (entity == null) {
                     entity = new WfTaskEntity();
                     entity.setId(task.getId());
-                    entity.setCreateTime(System.currentTimeMillis());
+                                        entity.setCreateTime(task.getCreateTime());
                     entity.setInstanceId(task.getInstanceId());
                     entity.setTokenId(task.getTokenId());
                     entity.setNodeId(task.getNodeId());

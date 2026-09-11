@@ -64,6 +64,7 @@ public final class WorkflowEngineBuilder {
     private TransactionRunner transactionRunner;
     private int conflictRetries = 3;
     private long retryBackoffMillis = 20;
+    private boolean autoRecoverTimeouts = true;
 
     private WorkflowEngineBuilder(ProcessRepository processRepo,
                                    InstanceRepository instanceRepo,
@@ -89,6 +90,21 @@ public final class WorkflowEngineBuilder {
     /** 超时调度器；不设置时使用默认 {@link ScheduledTimeoutScheduler} */
     public WorkflowEngineBuilder timeoutScheduler(TimeoutScheduler scheduler) {
         this.timeoutScheduler = scheduler;
+        return this;
+    }
+
+    /**
+     * 构建后是否自动恢复超时调度（默认 {@code true}）。
+     *
+     * <p>调度器注册表在内存里，进程重启即空 —— 不恢复的话，重启前建立的待办会
+     * <b>静默地</b>永不超时。开启时 {@link #build()} 会扫描仍 PENDING 的任务，
+     * 按 {@code createTime + 节点超时配置} 重算到期时刻重新注册；已过期的立即触发
+     * （异步，不阻塞 build）。
+     *
+     * <p>仅在仓储里已有历史数据、且不希望构建即触发时才需要关闭。
+     */
+    public WorkflowEngineBuilder autoRecoverTimeouts(boolean enabled) {
+        this.autoRecoverTimeouts = enabled;
         return this;
     }
 
@@ -172,7 +188,7 @@ public final class WorkflowEngineBuilder {
 
     /** 构建 WorkflowEngine */
     public WorkflowEngine build() {
-        return new WorkflowEngine(
+        WorkflowEngine engine = new WorkflowEngine(
                 processRepo, instanceRepo, taskRepo,
                 timeoutScheduler,
                 auditLogRepository,
@@ -189,5 +205,9 @@ public final class WorkflowEngineBuilder {
                 conflictRetries,
                 retryBackoffMillis
         );
+        if (autoRecoverTimeouts) {
+            engine.recoverTimeouts();
+        }
+        return engine;
     }
 }
