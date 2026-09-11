@@ -41,6 +41,7 @@
 - [24. 动态 assignee 支持](#24-动态-assignee-支持)
 - [25. serviceTask 自动节点](#25-servicetask-自动节点)
 - [26. 拓扑自省](#26-拓扑自省)
+- [27. Flowable BPMN 导入兼容性](#27-flowable-bpmn-导入兼容性)
 
 ---
 
@@ -768,7 +769,7 @@ mb.inSession(session -> {
 > `EventGatewayTest`(事件网关) · `DecisionTableTest`(DMN) · `Jpa/Mybatis*AggregationTest`(监控聚合三套一致) ·
 > `BatchStartTest`/`BatchApiTest`(批处理) · `MultiTenantTest`(多租户) · `NotificationServiceTest`(通知) ·
 > `JumpToNodeTest`(退回任意节点) · `PerformanceBenchmarkTest`(性能基准,`-Dperf=true` 才跑)。
-> 实测全量 `gradle build --rerun-tasks`：**397 PASSED / 0 FAILED / 35 SKIPPED**（skipped 均为需 Docker 的跨库套件）。
+> 实测全量 `gradle build --rerun-tasks`：**411 PASSED / 0 FAILED / 35 SKIPPED**（skipped 均为需 Docker 的跨库套件）。
 
 | 套件 | 测试类数 | 用例数 | 继承基类 |
 |---|---|---|---|
@@ -812,6 +813,12 @@ mb.inSession(session -> {
 | `TimeoutRecoveryTest` / `JpaTimeoutRecoveryTest` / `MybatisTimeoutRecoveryTest` | 7 × 3 套仓储 | 到期时刻重算与建任务时**完全一致**、停机期间过期任务的补偿、重启后真实触发 AUTO_APPROVE、不该恢复的四种场景（已完成 / 无超时配置 / 实例挂起 / 关闭开关） |
 | `RestAuthenticationTest` | 16 | 鉴权语义：401/403 区分、头名大小写、Bearer 前缀、多密钥、fail-closed、空白名单构造失败、写操作无副作用 |
 | `RestAuthHttpTest` | 5 | 真 HTTP 往返：无凭证/错凭证 → 401、带凭证放行、被拒请求不产生副作用 |
+
+**v3.16 增量套件**（Flowable BPMN 导入兼容性）：
+
+| 套件 | 用例 | 覆盖 |
+|---|---|---|
+| `FlowableImportCompatibilityTest` | 14 | 静态/动态 `flowable:assignee`、`candidateUsers`、`candidateGroups`（组名保留 + 诊断）、assignee 与候选池并存时的优先级、`flowable:collection` → `MULTI_INSTANCE` 映射、或签/会签判定、导入导出往返对称、顺序多实例诊断、未知属性/元素诊断、被忽略节点导致的校验失败报错、无审批人来源时的错误可操作性 |
 
 ### 13.3 测试运行
 
@@ -1509,6 +1516,70 @@ Flowable 用 `repositoryService.getBpmnModel()` 返回完整 `BpmnModel` 对象�
 ### 26.7 设计文档
 
 详见 `docs/TOPOLOGY_VIEW_DESIGN.md`。
+
+---
+
+## 27. Flowable BPMN 导入兼容性
+
+### 27.1 支持的 Flowable 审批人写法
+
+`BpmnImporter` 按以下优先级解析 `userTask` 的办理人：
+
+| 写法 | 映射结果 |
+|---|---|
+| `flowable:assignee="${var}"` | 动态办理人（运行时从变量取） |
+| `flowable:assignee="zhangsan"` | 静态单人，ANY |
+| `wf:candidate` 扩展 | 本项目原生格式，含 ANY/ALL 策略 |
+| `flowable:candidateUsers="u1,u2"` | 候选池，ANY |
+| `flowable:candidateGroups="g1"` | 候选标识，**组名原样保留不展开**，ANY |
+| `wf:cardinality` 占位 | 兜底，生成 `u1..uN` 占位用户 |
+
+**多实例**：`multiInstanceLoopCharacteristics` + `flowable:collection="${approvers}"` → `MULTI_INSTANCE` 节点；
+`completionCondition` 为 `nrOfCompletedInstances >= 1` 判**或签**（ANY），其余（含缺省）判**会签**（ALL）。
+`flowable:elementVariable` 无需映射 —— 引擎按人为单位建任务，天然具备该语义。
+
+### 27.2 组织架构不在引擎职责内
+
+`candidateGroups` 的组名会被原样保留为候选标识，**引擎不会把它展开成具体用户**
+（Flowable 同样把 group 交给 `ACT_ID_` 表 + `IdentityService` 解析）。
+未展开的组名对任何人都不可办理，调用方需在建任务前自行展开，
+否则该任务无人可办 —— 导入时对每个此类节点产生一条诊断。
+
+### 27.3 不静默降级
+
+导入器只做「能映射的映射」，无法映射的属性与元素**不会无声消失**：
+
+```java
+BpmnImportDiagnostics diag = new BpmnImportDiagnostics();
+ProcessDefinition def = BpmnImporter.importFrom(bpmnXml, diag);
+
+if (diag.hasWarnings()) {
+    // 例如：flowable:formKey 不受支持 / candidateGroups 未展开 / 顺序多实例语义未保留
+    diag.getWarnings().forEach(System.err::println);
+}
+```
+
+单参 `BpmnImporter.importFrom(xml)` 保持兼容，诊断只写日志（`WARN` 级）。
+
+设计动机：导入器最危险的失败不是抛异常，而是**静默降级** ——
+定义导进来了、流程也能跑，但某个节点少了会签、丢了候选池，
+直到生产上有人绕过审批才发现。抛异常至少是响的。
+
+### 27.4 往返对称
+
+`BpmnExporter` 支持 `MULTI_INSTANCE` 导出（`flowable:collection` + 完成条件），与导入侧构成闭环。
+判别依据：本引擎导出 `USER_TASK + candidate` 时只写 `wf:cardinality`、从不写 `flowable:collection`，
+因此「真 Flowable 多实例」与「自有格式往返」不会互相误判。
+
+### 27.5 不支持的
+
+- `sendTask` / `receiveTask` / `scriptTask` / `manualTask` —— 引擎无对应节点类型，导入时记入诊断
+- 若被忽略的节点参与了连线，`build()` 校验会失败，此时错误信息会点出被忽略的节点 id
+- `flowable:assignee` 与 `candidateUsers/candidateGroups` 并存时按 Flowable 语义 **assignee 优先**，候选池忽略并告警
+
+### 27.6 测试
+
+`FlowableImportCompatibilityTest`（14 用例）+ `FlowableSampleImportTest`（真实样本 `customer_order_flow.bpmn` 零降级断言）。
 
 ---
 

@@ -2,7 +2,46 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.15.0 进行中** — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移）。
+项目状态：**v3.16.0**
+- v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
+- v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
+
+---
+
+## [3.16.0] - 2026-09-11
+
+定位：**Flowable BPMN 导入兼容性加固** —— 修掉三类缺陷：导入硬失败、静默降级、静默丢弃。
+
+> ⚠️ **行为变更（导入语义）**：带 `flowable:collection` 的 `userTask` 现在映射为 `MULTI_INSTANCE` 节点。
+> 早先这类节点被当成「单人动态指派」导入 —— 会签静默退化成单人任务，流程照跑但语义错。
+> 若已依赖旧行为，升级后需重新核对此类节点。
+
+### 修复
+
+- **`flowable:candidateGroups` / `flowable:candidateUsers` 硬失败**：导入器只认自有 `wf:candidate` 扩展，遇到 Flowable 标准属性直接抛 `BpmnException`，整份定义导不进来。现两者都映射为候选池（ANY 策略）
+- **静态 `flowable:assignee="zhangsan"` 硬失败**：早先只处理 `${var}` 动态形式，静态值掉进 candidate 分支后抛错
+- **多实例会签被静默降级**：`multiInstanceLoopCharacteristics` + `flowable:collection="${var}"` 此前被完全忽略，只取了同节点的 `flowable:assignee` —— 于是一个「按集合展开的会签」被导入成「单人动态指派」：**导入成功、无任何报错、流程照跑，但会签没了**
+- **未知属性 / 元素静默丢弃**：`flowable:formKey` / `taskListener` / `priority` 以及 `scriptTask` 等不支持的节点，此前无声无息地消失
+
+### 新增
+
+- **`BpmnImportDiagnostics`**（导入诊断）：约定是「能映射的映射，不能映射的一律记下来」。`importFrom(xml, diag)` 把语义降级交给调用方决定接受 / 告警 / 拒绝；单参 `importFrom(xml)` 保持兼容，只写日志。动机：导入器最危险的失败不是抛异常而是静默降级 —— 抛异常至少是响的
+- **导入侧 `multiInstanceLoopCharacteristics` 支持**：读 `flowable:collection` → `MULTI_INSTANCE`；`completionCondition` 为 `nrOfCompletedInstances >= 1` 判或签（ANY），其余（含缺省）判会签（ALL）
+- **导出侧 `MULTI_INSTANCE` 支持**：`BpmnExporter` 此前对该类型抛 `UnsupportedOperationException`，现导出为 `multiInstanceLoopCharacteristics flowable:collection="${var}"` + 完成条件，导入导出**往返对称**
+
+### 设计要点
+
+- **`candidateGroups` 的组名原样保留，不展开**：引擎不做组织架构解析（Flowable 同样把 group 交给 `ACT_ID_` 表 + `IdentityService`）。静默丢弃是数据损失，比语义不精确更糟 —— 组名照存 + 诊断点名，需调用方展开
+- **区分「真 Flowable 多实例」与「自有格式往返」靠 `flowable:collection` 的有无**：本引擎导出 `USER_TASK + candidate` 时只写 `wf:cardinality`、从不写 `flowable:collection`，两种格式不会互相误判。这条判别线是让改动安全的关键
+- **`flowable:elementVariable` 不需映射**：引擎按人为单位建任务，天然具备该语义
+- **顺序多实例（`isSequential="true"`）产生诊断而非报错**：引擎的 `MULTI_INSTANCE` 一次展开全部任务（并行），顺序性未保留 —— 能跑但不精确，属于该让人知道的事
+- **被忽略的节点 id 参与报错**：不支持的节点跳过后，指向它的连线会让 `build()` 报「转移终点不存在」——一句让人摸不着头脑的话。现在把被忽略的节点 id 一并点出来
+
+### 测试
+
+- **`FlowableImportCompatibilityTest`**（14 用例）：静态 / 动态 assignee、`candidateUsers`、`candidateGroups`、assignee 与候选池并存时的优先级、`flowable:collection` 映射、或签 / 会签判定、往返对称、顺序多实例诊断、未知属性诊断、未知元素诊断、被忽略节点导致校验失败时的报错内容、无审批人来源时的错误可操作性
+- **修正 `FlowableSampleImportTest` 中被固化的错误断言**：真实样本 `customer_order_flow.bpmn` 的 `edraft_submit` 曾被测成「动态 assignee 单人任务」——把静默降级当成了正确行为。现断言其为 `MULTI_INSTANCE` + `edraft_submitApprovers` + ANY，并额外断言真实样本导入**零语义降级警告**
+- **全量回归 411 用例 0 失败**：PASSED 411 / FAILED 0 / SKIPPED 35（`--rerun-tasks` 实测）
 
 ---
 
