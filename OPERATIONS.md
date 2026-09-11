@@ -270,6 +270,46 @@ List<String> ids2 = engine.batchStart("leave", 2, vars);      // 指定版本
 ```
 > 提醒：InMemory 下批量启动未必比逐个快（内存写本就便宜）；批量的价值在**真实数据库**（省往返/事务），见 §15。
 
+### 5.6 批量版本迁移（v3.15）
+
+把一批运行中实例从旧版流程定义迁到新版（例如流程新增了一个审批节点，已发起的单据需要跟上）。
+
+```java
+// 单实例：nodeMapping = 旧节点 ID → 新节点 ID；未映射的节点必须在新版中仍存在且 ID 相同
+engine.migrateInstance(instanceId, "leave", 2, Map.of("apply", "application"), "admin");
+
+// 批量：targetVersion 传 -1 表示迁到最新版
+BatchResult r = engine.migrateInstances(
+        List.of("inst-1", "inst-2", "inst-3"), "leave", 2, Map.of(), "admin");
+
+if (!r.isAllSuccess()) {
+    // 失败不抛异常，只逐个点名 —— 拿 id 重试即可
+    r.getFailures().forEach(f ->
+        log.warn("实例 {} 迁移失败({}): {}", f.getId(), f.getExceptionType(), f.getErrorMessage()));
+}
+```
+
+**⚠️ 与 §5.4 的批量终止/完成语义相反，别以为是笔误**：
+
+| API | 语义 | 失败时 |
+|---|---|---|
+| `batchCompleteTasks` / `batchTerminateInstances` | 全或无 | 抛 `BatchPartialFailureException`，整批回滚 |
+| `migrateInstances` | **逐个提交、部分成功保留** | 只记进 `BatchResult.failures`，不中断整批 |
+
+这是**有意为之**：批量迁移的诉求是"尽量多迁成功"。迁 100 个实例时第 37 个失败，
+把前 36 个一起回滚纯属倒退 —— 运维要的是"哪几个没成、各自为什么"。
+
+**迁移前置条件**（任一不满足即该实例迁移失败，且**不影响**同批其他实例）：
+
+| 条件 | 不满足的后果 |
+|---|---|
+| 实例状态为 `RUNNING` | 抛 `IllegalStateException`（仅 RUNNING 可迁） |
+| 目标流程定义存在 | 抛 `IllegalArgumentException` |
+| 每个活跃 Token 的目标节点存在 | 抛 `IllegalStateException`（点名"目标节点不存在"） |
+| 节点**类型**兼容（UserTask 只能迁到 UserTask 等） | 抛 `IllegalStateException`（点名"节点类型不兼容"） |
+
+> 重试姿势：直接把 `r.getFailures()` 里的 id 重新组一批再调一次，无需人工挑拣。
+
 ---
 
 ## 6. 事件网关操作
@@ -417,7 +457,18 @@ mb.close();
 - 默认连独立 H2 库 `jdbc:h2:mem:workflow_mybatis`；`init(url,user,pwd)` 换库。
 
 ### Flyway（DDL 单一真相）
-迁移脚本在 `workflow-persistence-flyway/src/main/resources/db/migration/`：`V1__init` → `V7__multi_tenant`。启动时 `FlywayMigrator.migrate(url,...)` 自动执行；三库同一份脚本。
+迁移脚本**全部**在 `workflow-persistence-flyway/src/main/resources/db/migration/`：`V1__init` → `V9__optimistic_lock`。启动时 `FlywayMigrator.migrate(url,...)` 自动执行；三库同一份脚本。
+
+> **⚠️ 迁移脚本只有一个家** —— 别的模块的 `src/main/resources/db/migration/` 下**不得**再放 `.sql`。
+> Flyway 扫的是**合并后的 classpath**（`locations("classpath:db/migration")` 会命中所有 jar 的同名目录），
+> 两处各有一份同号脚本会直接抛 `Found more than one migration with version 8`，
+> 历史上曾导致 **41 个持久化用例集体 `initializationError`** —— 迁移号撞一次，半套测试起不来。
+>
+> **新增迁移前，先 `dir workflow-persistence-flyway\src\main\resources\db\migration` 看一眼现有版本号。**
+> 若该号已被占用，顺延即可（例：V8 被占用时，乐观锁脚本定为 **V9** 而非 V10）。
+>
+> **挪动脚本时一个字节都不要改**：checksum 只认**文件内容**，顺手改注释会让存量库校验失败；
+> 而记在 `flyway_schema_history.script` 里的路径是 `db/migration/xxx.sql`（**不含模块名**），故纯移动不影响已应用的库。
 
 > 加新列的规矩：改 domain → 改三套实体/仓储读写 → 加一条 `V{n}__*.sql` → **务必真实核验脚本已生成并执行**（历史上出现过实体引用新列但迁移未落地，导致 `Column not found` 大面积红）。
 
@@ -525,8 +576,12 @@ gradlew.bat :workflow-sample:run --no-daemon
 :: 编译（不测试）
 gradlew.bat assemble --no-daemon
 
-:: 全量测试（约 270 用例；跨库需 Docker，否则 skip）
+:: 全量测试（约 397 用例；跨库需 Docker，否则 skip）
 gradlew.bat :workflow-tests:test --no-daemon
+
+:: ⚠️ 最终验证一律用这个：增量构建的"绿灯"可能是复用上次的 XML 结果
+::    （判断信号：跑完只用 8 秒 vs 真跑的 ~2 分钟）
+gradlew.bat build --rerun-tasks --no-daemon
 
 :: 分套件
 gradlew.bat :workflow-tests:test --no-daemon --tests "com.workflow.tests.engine.*"   :: 仅 InMemory
@@ -556,6 +611,8 @@ gradlew.bat :workflow-tests:test --no-daemon --tests "com.workflow.tests.perf.*"
 | `目标节点 X 不存在于流程定义中` | jumpToNode target 非法 | 传定义里真实存在的 nodeId |
 | `仅 RUNNING 状态的流程可终止/跳转` | 实例已终态 | 先判 `getInstance(id).getStatus()` |
 | `批量启动/完成失败` `BatchPartialFailureException` | 批内某条非法 | 读 `e.getResult().getFailures()` 定位；整批已回滚 |
+| `WorkflowConflictException`（重试耗尽） | 跨 JVM 并发写同一实例，CAS 连续冲突 | 引擎已自动重试 `conflictRetries` 次；仍失败说明热点实例竞争激烈 —— 重试调用或降低并发。REST 侧映射 **409** |
+| 批量迁移"有几个没成功"但**没抛异常** | `migrateInstances` **有意不抛** | 读 `result.getFailures()`（含 id / 原因 / 异常类型），拿 id 重试。**整批并未回滚，已成功的都在** —— 别误以为是全或无 |
 | `Column "TENANT_ID" not found`（DB） | 实体引用了新列但迁移没跑 | 确认对应 `V*.sql` 已生成并执行（`flyway_schema_history` 有记录） |
 | `UnsupportedOperationException: ... not implemented` | 某仓储缺实现 | 用抽象方法暴露缺口是刻意设计；补齐该仓储实现 |
 
