@@ -3,6 +3,7 @@ package com.workflow.persistence.jpa.repository;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.TypeReference;
 import com.workflow.definition.Candidate;
+import com.workflow.definition.CandidateCodec;
 import com.workflow.enums.TaskStatus;
 import com.workflow.persistence.jpa.JpaPersistence;
 import com.workflow.persistence.jpa.entity.WfTaskEntity;
@@ -58,7 +59,7 @@ public class JpaTaskRepository implements TaskRepository {
                 entity.setInstanceId(task.getInstanceId());
                 entity.setTokenId(task.getTokenId());
                 entity.setNodeId(task.getNodeId());
-                entity.setCandidateJson(JSON.toJSONString(task.getCandidate()));
+                entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
                 // 直接序列化底层 HashSet,避免 unmodifiableSet 包装类型的序列化问题
                 try {
                     java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
@@ -77,7 +78,7 @@ public class JpaTaskRepository implements TaskRepository {
                 entity.setInstanceId(task.getInstanceId());
                 entity.setTokenId(task.getTokenId());
                 entity.setNodeId(task.getNodeId());
-                entity.setCandidateJson(JSON.toJSONString(task.getCandidate()));
+                entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
                 try {
                     java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
                     f.setAccessible(true);
@@ -121,7 +122,7 @@ public class JpaTaskRepository implements TaskRepository {
                     entity.setInstanceId(task.getInstanceId());
                     entity.setTokenId(task.getTokenId());
                     entity.setNodeId(task.getNodeId());
-                    entity.setCandidateJson(JSON.toJSONString(task.getCandidate()));
+                    entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
                     try {
                         java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
                         f.setAccessible(true);
@@ -139,7 +140,7 @@ public class JpaTaskRepository implements TaskRepository {
                     entity.setInstanceId(task.getInstanceId());
                     entity.setTokenId(task.getTokenId());
                     entity.setNodeId(task.getNodeId());
-                    entity.setCandidateJson(JSON.toJSONString(task.getCandidate()));
+                    entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
                     try {
                         java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
                         f.setAccessible(true);
@@ -228,7 +229,7 @@ public class JpaTaskRepository implements TaskRepository {
     }
 
     private static TaskInstance toDomain(WfTaskEntity e) {
-        Candidate candidate = JSON.parseObject(e.getCandidateJson(), Candidate.class);
+        Candidate candidate = CandidateCodec.fromJson(e.getCandidateJson());
         Set<String> completed = JSON.parseObject(e.getCompletedApproversJson(), STRING_SET_TYPE);
         if (completed == null) completed = new HashSet<>();
         return rebuildFromEntity(e, candidate, completed);
@@ -236,7 +237,7 @@ public class JpaTaskRepository implements TaskRepository {
 
     /** Entity -> TaskInstance,供 JpaInstanceRepository 复用 */
     public static TaskInstance rebuildFromEntity(WfTaskEntity e) {
-        Candidate candidate = JSON.parseObject(e.getCandidateJson(), Candidate.class);
+        Candidate candidate = CandidateCodec.fromJson(e.getCandidateJson());
         Set<String> completed = JSON.parseObject(e.getCompletedApproversJson(), STRING_SET_TYPE);
         if (completed == null) completed = new HashSet<>();
         return rebuildFromEntity(e, candidate, completed);

@@ -66,8 +66,17 @@ public interface IWorkflowEngine {
     /** 驳回任务到上一个 UserTask */
     void rejectTask(String taskId, String userId, String reason);
 
-    /** 转办 */
+    /** 转办（要求 fromUserId 本身就是该任务的候选人） */
     void transferTask(String taskId, String fromUserId, String toUserId);
+
+    /**
+     * 管理员强制改派 —— 绕过候选人校验的兜底通道。
+     *
+     * <p>用于候选人离职/长期不在、或组织架构故障导致没人能接手的窘境。
+     * 引擎<b>不做权限判断</b>（它不知道调用方的权限模型），
+     * 调用方须自行确认 {@code operator} 具备管理员权限；{@code operator} 会进审计。
+     */
+    void adminTransferTask(String taskId, String toUserId, String operator);
 
     /** 暂停实例 */
     void suspend(String instanceId);

@@ -44,6 +44,7 @@ import java.util.stream.Stream;
 public final class TaskQuery {
 
     private String assignee;
+    private String candidateGroup;
     private String processDefinitionKey;
     private Integer processDefinitionVersion;
     private String processInstanceId;
@@ -61,9 +62,25 @@ public final class TaskQuery {
         return new TaskQuery();
     }
 
-    /** 按候选人过滤 */
+    /** 按候选人过滤（我被直接列为候选人的任务） */
     public TaskQuery candidate(String userId) {
         this.assignee = userId;
+        return this;
+    }
+
+    /**
+     * 按候选组过滤（"我所在组的待办"）。
+     *
+     * <p>引擎不持有组织架构，所以这里传的是<b>组名</b>，不是用户 ID ——
+     * 调用方先从自己的用户中心取出"我属于哪些组"，再对每个组各查一次。
+     *
+     * <p>与 {@link #candidate(String)} 的分工：后者匹配候选人的 {@code userIds}
+     * （任务直接列了谁），本方法匹配 {@code groupIds}（任务的候选组里有没有这个组）。
+     * 组在任务创建时已展开成具体用户，但原始组名会保留在候选信息里，
+     * 因此两条路能查到同一批任务。
+     */
+    public TaskQuery candidateGroup(String groupId) {
+        this.candidateGroup = groupId;
         return this;
     }
 
@@ -208,6 +225,9 @@ public final class TaskQuery {
             return false;
         }
         if (assignee != null && !task.getCandidate().getUserIds().contains(assignee)) {
+            return false;
+        }
+        if (candidateGroup != null && !task.getCandidate().getGroupIds().contains(candidateGroup)) {
             return false;
         }
         if (processInstanceId != null && !processInstanceId.equals(task.getInstanceId())) {

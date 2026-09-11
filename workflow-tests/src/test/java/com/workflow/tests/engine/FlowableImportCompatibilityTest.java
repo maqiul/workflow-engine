@@ -69,16 +69,19 @@ class FlowableImportCompatibilityTest {
     }
 
     @Test
-    @DisplayName("flowable:candidateGroups 不再抛异常，组名保留并产生诊断")
+    @DisplayName("flowable:candidateGroups 解析为候选组（groupIds），不再混进 userIds")
     void candidateGroups() {
         BpmnImportDiagnostics diag = new BpmnImportDiagnostics();
         ProcessDefinition def = BpmnImporter.importFrom(processWith("""
                 <bpmn:userTask id="task1" name="候选组" flowable:candidateGroups="ROLE_MGR,ROLE_HR"/>
                 """), diag);
 
-        // 组名不被静默丢弃——丢了就是数据损失，保留下来调用方才可能展开
+        // 组名既不静默丢弃，也不当成用户：早先把它并进 userIds，
+        // 模型层就分不清人与组，组名会被拿去匹配"能不能办"（永远匹配不上）
         var candidate = def.getNode("task1").getCandidate();
-        assertThat(candidate.getUserIds()).containsExactly("ROLE_MGR", "ROLE_HR");
+        assertThat(candidate.getGroupIds()).containsExactlyInAnyOrder("ROLE_MGR", "ROLE_HR");
+        assertThat(candidate.getUserIds()).isEmpty();
+        assertThat(candidate.isUnresolved()).isTrue();
 
         assertThat(diag.getWarnings())
                 .anyMatch(w -> w.contains("candidateGroups") && w.contains("ROLE_MGR"));

@@ -540,6 +540,10 @@ public class WorkflowEngine implements IWorkflowEngine {
         // 变量校验（如果定义了变量 schema）
         VariableValidator.validate(def, variables);
 
+        // 候选组预检：定义里用了候选组却没接组织架构，属部署配置错误。
+        // 必须赶在实例落库之前拦下 —— 否则会留下"实例已存在、任务建不出来"的脏数据。
+        requireGroupResolverIfNeeded(def);
+
         ProcessInstance instance = new ProcessInstance(def.getKey(), def.getVersion());
         if (variables != null) {
             variables.forEach(instance::setVariable);
@@ -568,6 +572,32 @@ public class WorkflowEngine implements IWorkflowEngine {
             advanceToken(instance, def, token.getId());
             return instance.getId();
         });
+    }
+
+    /**
+     * 定义里含候选组却没配解析器 → 启动前直接失败。
+     *
+     * <p>只做零成本的配置检查（不调用解析器）：真正的组织数据问题留给建任务时暴露，
+     * 那里能同时拿到具体节点与组名，错误信息更精确。
+     */
+    private void requireGroupResolverIfNeeded(ProcessDefinition def) {
+        if (groupResolver != null) {
+            return;
+        }
+        List<String> groupNodes = new ArrayList<>();
+        for (NodeDefinition node : def.getNodes().values()) {
+            Candidate nc = node.getCandidate();
+            if (nc != null && nc.hasGroups()) {
+                groupNodes.add(node.getId() + "=" + nc.getGroupIds());
+            }
+        }
+        if (!groupNodes.isEmpty()) {
+            throw new GroupResolutionException(
+                    "流程 [" + def.getKey() + "] 含候选组节点 " + groupNodes
+                            + "，但引擎未配置 GroupResolver，无法展开为具体用户。"
+                            + "请先注入组织架构解析器（engine.setGroupResolver(...)）再启动",
+                    null, null);
+        }
     }
 
     @Override
@@ -681,7 +711,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                 delegatedBy = userId;                         // 代理人是操作人
                 log.info("[引擎] 代理人 {} 代 {} 审批 task={}", userId, actualApprover, taskId);
             } else {
-                throw new IllegalArgumentException("用户 " + userId + " 不是本任务候选人，且无委托关系");
+                throw new IllegalArgumentException(task.getCandidate().explainRejection(userId) + "，且无委托关系");
             }
         }
         
@@ -724,7 +754,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         ProcessDefinition def = defOf(instance);
 
         if (!task.getCandidate().getUserIds().contains(userId)) {
-            throw new IllegalArgumentException("用户 " + userId + " 不是本任务候选人");
+            throw new IllegalArgumentException(task.getCandidate().explainRejection(userId));
         }
         task.setStatus(TaskStatus.REJECTED);
         taskRepo.save(task);
@@ -772,7 +802,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         ensureRunning(task);
 
         if (!task.getCandidate().getUserIds().contains(fromUserId)) {
-            throw new IllegalArgumentException("用户 " + fromUserId + " 不是本任务候选人");
+            throw new IllegalArgumentException(task.getCandidate().explainRejection(fromUserId));
         }
         ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
 
@@ -812,6 +842,70 @@ public class WorkflowEngine implements IWorkflowEngine {
         audit(AuditEventType.TASK_TRANSFERRED, instance.getId(), taskId, fromUserId,
                 "转办给 toUser=" + toUserId + " newTaskId=" + newTask.getId());
         listenerSupport.fireTaskTransferred(task, fromUserId, toUserId);
+    }
+
+    @Override
+    public void adminTransferTask(String taskId, String toUserId, String operator) {
+        exclusiveVoidByTask(taskId, "adminTransferTask",
+                () -> adminTransferTaskInternal(taskId, toUserId, operator));
+    }
+
+    /**
+     * 管理员强制改派实现 —— 必须在 {@link #exclusiveVoidByTask} 内调用。
+     *
+     * <p>与 {@link #transferTaskInternal} 的唯一差别是<b>不做候选人校验</b>：
+     * 常规转办要求发起人本身就是候选人（防越权改派别人的活），而这条通道
+     * 正是为"候选人离职、长期不在，或组织架构故障导致没人能接手"准备的。
+     *
+     * <p>引擎不判断 {@code operator} 的权限 —— 它不知道调用方的权限模型，
+     * 这与不替调用方决定组织架构是同一条边界。调用方须自行鉴权。
+     */
+    private void adminTransferTaskInternal(String taskId, String toUserId, String operator) {
+        if (operator == null || operator.isBlank()) {
+            throw new IllegalArgumentException("管理员改派必须记录操作人（operator）");
+        }
+        if (toUserId == null || toUserId.isBlank()) {
+            throw new IllegalArgumentException("管理员改派必须指定目标用户（toUserId）");
+        }
+        TaskInstance task = taskRepo.findById(taskId);
+        ensureRunning(task);
+        ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
+
+        // 简化:与常规转办一致 —— 原任务置 TRANSFERRED，同节点新建一个给 toUserId 的任务
+        task.setStatus(TaskStatus.TRANSFERRED);
+        taskRepo.save(task);
+
+        // 同步 instance 视图：转办后待办列表必须反映 TRANSFERRED
+        syncTaskInInstance(instance, task);
+
+        // 取消原任务的超时调度（调度器活在 JVM 内存，回滚时不该生效 → 登记到提交后）
+        afterCommitSchedule(() -> scheduler.cancel(taskId));
+
+        ProcessDefinition def = defOf(instance);
+        NodeDefinition nodeDef = def.getNode(task.getNodeId());
+        TaskInstance newTask = new TaskInstance(instance.getId(), task.getTokenId(),
+                nodeDef.getId(), Candidate.ofAny(toUserId));
+        newTask.setArrival(task.getArrival());  // 改派继承原任务的到达代次
+        instance.addTask(newTask);
+        taskRepo.save(newTask);
+        instanceRepo.save(instance);
+
+        // 新任务继承原节点的超时配置(若有)
+        if (nodeDef.hasTimeout()) {
+            String newTaskId = newTask.getId();
+            String instanceId = instance.getId();
+            long timeout = nodeDef.getTimeoutMillis();
+            TimeoutPolicy policy = nodeDef.getTimeoutPolicy();
+            String target = nodeDef.getTimeoutTargetUserId();
+            afterCommitSchedule(() -> scheduler.schedule(newTaskId, instanceId,
+                    newTask.getCreateTime() + timeout, policy, target));
+        }
+
+        log.info("[引擎] 管理员改派 task={} to={} operator={}", taskId, toUserId, operator);
+        audit(AuditEventType.TASK_TRANSFERRED, instance.getId(), taskId, operator,
+                "管理员强制改派给 toUser=" + toUserId + " newTaskId=" + newTask.getId()
+                        + "（原候选人=" + task.getCandidate().getAllIds() + "）");
+        listenerSupport.fireTaskTransferred(task, operator, toUserId);
     }
 
     /** 把调度器等不受事务保护的副作用推迟到事务提交后执行。 */
@@ -1415,6 +1509,25 @@ public class WorkflowEngine implements IWorkflowEngine {
      *
      * <p>TokenAdvancer 负责所有节点类型的路由逻辑，WorkflowEngine 只提供回调方法。
      */
+    /** 候选组解析器；启动期预检用，建任务时的展开由 {@link TokenAdvancer} 共用同一引用。 */
+    private GroupResolver groupResolver;
+
+    /**
+     * 注入候选组解析器（引擎与组织架构的接缝）。
+     *
+     * <p>不注入 → 定义里带候选组的流程会<b>拒绝启动</b>并抛
+     * {@link GroupResolutionException}：部署期没接组织架构属于配置错误，
+     * 要在实例落库之前暴露，而不是留下一个谁都办不了的任务。
+     *
+     * <p>展开结果是<b>快照</b>：只在任务创建时解析一次，此后组成员变动不影响在途任务。
+     * 原始组名仍留在任务的候选信息里，供审计与「我所在组的待办」查询。
+     * 紧急情况下可用 {@link #adminTransferTask} 强行改派。
+     */
+    public void setGroupResolver(GroupResolver groupResolver) {
+        this.groupResolver = groupResolver;
+        this.tokenAdvancer.setGroupResolver(groupResolver);
+    }
+
     private void advanceToken(ProcessInstance instance, ProcessDefinition def, String tokenId) {
         tokenAdvancer.advanceToken(instance, def, tokenId, recordsActivity());
     }
@@ -1649,11 +1762,14 @@ public class WorkflowEngine implements IWorkflowEngine {
         for (NodeDefinition nodeDef : def.getNodes().values()) {
             List<String> userIds = nodeDef.getCandidate() != null ? 
                     new ArrayList<>(nodeDef.getCandidate().getUserIds()) : null;
+            List<String> groupIds = nodeDef.getCandidate() != null && nodeDef.getCandidate().hasGroups()
+                    ? new ArrayList<>(nodeDef.getCandidate().getGroupIds()) : null;
             nodes.add(new NodeView(
                     nodeDef.getId(),
                     nodeDef.getName(),
                     nodeDef.getType(),
                     userIds,
+                    groupIds,
                     nodeDef.getAssigneeVariable(),
                     nodeDef.getDelegateKey()
             ));

@@ -54,9 +54,11 @@ import java.util.regex.Pattern;
  *   <li>{@code wf:cardinality} 占位 → 手写 XML 的兜底，生成 u1..uN 占位用户</li>
  * </ol>
  *
- * <p><b>组织架构不在引擎职责内</b>：Flowable 把候选组交给 ACT_ID_ 表 + IdentityService 解析，
- * 本项目同理——{@code candidateGroups} 的组名会原样作为候选标识保留，<b>不静默丢弃</b>，
- * 但引擎不会把它展开成具体用户，需调用方自行展开（否则该任务对任何人都不可办理）。
+ * <p><b>组织架构不在引擎职责内，但组是一等公民</b>：Flowable 把候选组交给
+ * ACT_ID_ 表 + IdentityService 解析，本项目同理 —— {@code candidateGroups} 的组名存进候选人的
+ * {@code groupIds}（<b>与 userIds 分开</b>，不再混为一谈），运行时由调用方注入的
+ * {@code GroupResolver} 在任务创建时展开成具体用户并快照进候选人。
+ * 未注入解析器时组保持未展开，任务对任何人都不可办理并<b>告警</b>（不会静默丢弃）。
  *
  * <p><b>多实例会签</b>：{@code multiInstanceLoopCharacteristics} 带 {@code flowable:collection="${var}"}
  * 时映射为 MULTI_INSTANCE 节点（运行时按集合里每人各建一个独立任务）。
@@ -310,18 +312,19 @@ public final class BpmnImporter {
             return;
         }
 
-        // 3) flowable:candidateUsers / candidateGroups
+        // 3) flowable:candidateUsers / candidateGroups —— 两者语义不同，必须分开存：
+        //    candidateUsers 是"哪些人能办"，candidateGroups 是"哪些组能办"。
+        //    此前把组名并进 userIds，模型层就再也分不清人和组，
+        //    查询过滤、会签人数、导出往返全跟着错。
         Set<String> users = splitCsv(readFlowableAttr(el, "candidateUsers"));
         Set<String> groups = splitCsv(readFlowableAttr(el, "candidateGroups"));
         if (!users.isEmpty() || !groups.isEmpty()) {
             if (!groups.isEmpty()) {
                 diag.warn("userTask [" + id + "] 使用 flowable:candidateGroups=" + groups
-                        + "；引擎不做组织架构解析，组名按候选标识原样保留，"
-                        + "需调用方展开为具体用户，否则该任务对任何人都不可办理");
+                        + "；组名存进候选组的 groupIds，运行时需注入 GroupResolver 展开为具体用户，"
+                        + "否则该任务对任何人都不可办理");
             }
-            Set<String> all = new LinkedHashSet<>(users);
-            all.addAll(groups);
-            builder.userTask(id, name, new Candidate(all, CandidateStrategy.ANY));
+            builder.userTask(id, name, new Candidate(users, groups, CandidateStrategy.ANY));
             return;
         }
 
@@ -360,11 +363,12 @@ public final class BpmnImporter {
                 Element cand = (Element) candList.item(0);
                 CandidateStrategy cs = CandidateStrategy.valueOf(cand.getAttribute("strategy"));
                 Set<String> userIds = splitCsv(cand.getTextContent());
-                if (userIds.isEmpty()) {
+                Set<String> groups = splitCsv(cand.getAttribute("groups"));
+                if (userIds.isEmpty() && groups.isEmpty()) {
                     throw new BpmnException("userTask 节点 " + userTask.getAttribute("id")
-                            + " 的 wf:candidate 未列出任何用户");
+                            + " 的 wf:candidate 既未列出用户、也未列出候选组");
                 }
-                return new Candidate(userIds, cs);
+                return new Candidate(userIds, groups, cs);
             }
         }
         return null;

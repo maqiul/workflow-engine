@@ -71,6 +71,8 @@ public class TokenAdvancer {
     private final Consumer<Runnable> afterCommitSchedule;
     private final Consumer<ProcessInstance> onProcessCompleted;
     private final Function<String, ServiceTaskDelegate> delegateProvider;
+    /** 候选组解析器（组织架构接缝）；未注入时定义层里的候选组保持未展开。 */
+    private GroupResolver groupResolver;
     
     public interface SubProcessStarter {
         void startSubProcess(ProcessInstance parent, ProcessDefinition parentDef, 
@@ -217,6 +219,16 @@ public class TokenAdvancer {
         checkAndFinalize(instance);
     }
     
+    /**
+     * 注入候选组解析器（引擎与组织架构的接缝）。
+     *
+     * <p>不注入 → 定义层里的候选组保持未展开，相关任务对任何人都不可办理并告警；
+     * 流程本身不会因此卡住（{@code transferTask} 可兜底指定办理人）。
+     */
+    public void setGroupResolver(GroupResolver groupResolver) {
+        this.groupResolver = groupResolver;
+    }
+
     private void handleUserTask(ProcessInstance instance, ProcessDefinition def,
                                String tokenId, NodeDefinition current, boolean recordsActivity) {
         TaskInstance existing = currentTaskOf(instance, tokenId, current.getId());
@@ -239,7 +251,9 @@ public class TokenAdvancer {
                 }
                 candidate = Candidate.ofAny((String) varValue);
             } else {
-                candidate = current.getCandidate();
+                // 候选组在此展开为具体用户并快照进任务候选：
+                // 展开后 userIds 是真实办理人，groupIds 留原始组名供审计与「我所在组的待办」查询
+                candidate = CandidateExpander.expand(current.getCandidate(), groupResolver, current.getId());
             }
             TaskInstance task = new TaskInstance(instance.getId(), tokenId,
                     current.getId(), candidate);

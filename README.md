@@ -284,7 +284,8 @@ WorkflowEngine engine = new WorkflowEngine(mb.processRepo(), mb.instanceRepo(), 
 | `TaskInstance getTask(String taskId)` | 查询单个任务 |
 | `void completeTask(String taskId, String userId, boolean approved)` | 完成任务。`approved=false` 等同 `rejectTask`（带 reason=null） |
 | `void rejectTask(String taskId, String userId, String reason)` | 驳回到上一个 UserTask |
-| `void transferTask(String taskId, String fromUserId, String toUserId)` | 转办（把任务候选人换成新用户,旧任务标记 TRANSFERRED） |
+| `void transferTask(String taskId, String fromUserId, String toUserId)` | 转办（把任务候选人换成新用户,旧任务标记 TRANSFERRED）。要求 `fromUserId` 本身是候选人 |
+| `void adminTransferTask(String taskId, String toUserId, String operator)` | 管理员强制改派：**不校验候选人**，供候选人离职/长期不在/组织架构故障时兜底；`operator` 进审计。引擎不判断权限，鉴权属调用方责任 |
 | `void suspend(String instanceId)` | 暂停实例（状态置 SUSPENDED） |
 | `void resume(String instanceId)` | 恢复实例（状态置 RUNNING） |
 | `void terminate(String instanceId)` | 终止实例（状态置 TERMINATED,所有 PENDING 任务标 TERMINATED） |
@@ -769,7 +770,7 @@ mb.inSession(session -> {
 > `EventGatewayTest`(事件网关) · `DecisionTableTest`(DMN) · `Jpa/Mybatis*AggregationTest`(监控聚合三套一致) ·
 > `BatchStartTest`/`BatchApiTest`(批处理) · `MultiTenantTest`(多租户) · `NotificationServiceTest`(通知) ·
 > `JumpToNodeTest`(退回任意节点) · `PerformanceBenchmarkTest`(性能基准,`-Dperf=true` 才跑)。
-> 实测全量 `gradle build --rerun-tasks`：**411 PASSED / 0 FAILED / 35 SKIPPED**（skipped 均为需 Docker 的跨库套件）。
+> 实测全量 `gradle build --rerun-tasks`：**430 PASSED / 0 FAILED / 35 SKIPPED**（总 465；skipped 均为需 Docker 的跨库套件）。
 
 | 套件 | 测试类数 | 用例数 | 继承基类 |
 |---|---|---|---|
@@ -1531,19 +1532,29 @@ Flowable 用 `repositoryService.getBpmnModel()` 返回完整 `BpmnModel` 对象�
 | `flowable:assignee="zhangsan"` | 静态单人，ANY |
 | `wf:candidate` 扩展 | 本项目原生格式，含 ANY/ALL 策略 |
 | `flowable:candidateUsers="u1,u2"` | 候选池，ANY |
-| `flowable:candidateGroups="g1"` | 候选标识，**组名原样保留不展开**，ANY |
+| `flowable:candidateGroups="g1"` | 候选组 → `Candidate.groupIds`，建任务时经 `GroupResolver` 展开，ANY |
 | `wf:cardinality` 占位 | 兜底，生成 `u1..uN` 占位用户 |
 
 **多实例**：`multiInstanceLoopCharacteristics` + `flowable:collection="${approvers}"` → `MULTI_INSTANCE` 节点；
 `completionCondition` 为 `nrOfCompletedInstances >= 1` 判**或签**（ANY），其余（含缺省）判**会签**（ALL）。
 `flowable:elementVariable` 无需映射 —— 引擎按人为单位建任务，天然具备该语义。
 
-### 27.2 组织架构不在引擎职责内
+### 27.2 组织架构：引擎留钩子，不内置存储
 
-`candidateGroups` 的组名会被原样保留为候选标识，**引擎不会把它展开成具体用户**
-（Flowable 同样把 group 交给 `ACT_ID_` 表 + `IdentityService` 解析）。
-未展开的组名对任何人都不可办理，调用方需在建任务前自行展开，
-否则该任务无人可办 —— 导入时对每个此类节点产生一条诊断。
+`candidateGroups` 的组名**不会被当成用户** —— 早期版本曾把它们混进候选用户集合，结果是任务对谁都不可办。
+导入后组名进 `Candidate.groupIds`，再由调用方注入的 `GroupResolver` 在**任务创建时**展开成具体候选用户：
+
+```java
+engine.setGroupResolver(groupId -> orgService.membersOf(groupId));
+```
+
+展开结果作为**快照**写入任务候选（此后组成员变动不影响在途任务 —— 实时解析会让事后追责链漂移），
+原始组名同时保留，供审计与「我所在组」查询。引擎不内置组织架构存储 ——
+这与 Flowable 把 group 交给 `ACT_ID_` 表 + `IdentityService` 是同一条边界。
+
+展开失败（未配 resolver / 组内无人 / 解析器抛异常）会抛 `GroupResolutionException`，
+**不会**留下"流程在跑但谁都办不了"的静默死锁；紧急情况下用 `adminTransferTask` 强行改派。
+详见 CHANGELOG v3.17.0。
 
 ### 27.3 不静默降级
 

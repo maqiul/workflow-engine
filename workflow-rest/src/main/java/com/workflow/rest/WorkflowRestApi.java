@@ -404,6 +404,11 @@ public class WorkflowRestApi {
         m.put("nodeId", t.getNodeId());
         m.put("status", t.getStatus().name());
         m.put("candidateUsers", t.getCandidate().getUserIds());
+        // 候选组只在确实存在时输出：它的语义是"尚未展开的组名"，
+        // 绝大多数任务没有组，恒定输出一个空数组只是噪音
+        if (t.getCandidate().hasGroups()) {
+            m.put("candidateGroups", t.getCandidate().getGroupIds());
+        }
         m.put("strategy", t.getCandidate().getStrategy().name());
         m.put("completedBy", t.getCompletedApprovers());
         m.put("createTime", t.getCreateTime());

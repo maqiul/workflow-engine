@@ -156,6 +156,10 @@ public final class BpmnExporter {
             Candidate c = node.getCandidate();
             var cand = doc.createElementNS(WF_NS, "wf:candidate");
             cand.setAttribute("strategy", c.getStrategy().name());
+            // 候选组单独写 @groups 属性，与用户文本分开 —— 否则往返一次组名就被当成用户
+            if (c.hasGroups()) {
+                cand.setAttribute("groups", String.join(",", c.getGroupIds()));
+            }
             cand.setTextContent(String.join(",", c.getUserIds()));
             ext.appendChild(cand);
         }
@@ -229,7 +233,14 @@ public final class BpmnExporter {
             Candidate c = node.getCandidate();
             var mi = doc.createElementNS(BPMN_NS, "multiInstanceLoopCharacteristics");
             mi.setAttribute("isSequential", "false");
-            mi.setAttributeNS(WF_NS, "wf:cardinality", String.valueOf(c.getUserIds().size()));
+            // wf:cardinality 只表达"已知的具体候选人数"。组在导出期尚未展开、人数无从得知，
+            // 拿组数充人数会误导外部工具，故纯组场景不写 cardinality，改用 wf:candidateGroups 标注。
+            if (!c.getUserIds().isEmpty()) {
+                mi.setAttributeNS(WF_NS, "wf:cardinality", String.valueOf(c.getUserIds().size()));
+            }
+            if (c.hasGroups()) {
+                mi.setAttributeNS(WF_NS, "wf:candidateGroups", String.join(",", c.getGroupIds()));
+            }
             appendCompletionCondition(doc, mi, c.getStrategy());
             el.appendChild(mi);
         }

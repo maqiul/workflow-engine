@@ -2,9 +2,57 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.16.0**
+项目状态：**v3.17.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
+- v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
+
+---
+
+## [3.17.0] - 2026-09-11
+
+定位：**候选组（`candidateGroups`）组织架构支持** —— 从模型层到三套仓储完整打通，并修掉这条链上被将就过的历史缺陷。
+
+> ⚠️ **行为变更（组展开失败）**：候选组无法展开成具体用户时，引擎现在**抛出 `GroupResolutionException`**，
+> 不再"保留未展开任务 + 告警"。旧策略换来的是**静默死锁** —— `start` 返回成功、界面显示"进行中"，
+> 实际谁都办不了；而它标榜的兜底路径（`transferTask`）在未展开时恰恰**走不通**（转办同样要求发起人是候选人），
+> 等于承诺了一条不存在的退路。
+> **升级要求**：定义里含候选组的流程**必须注入 `GroupResolver`**，否则启动即失败（这是有意的 ——
+> 部署期没接组织架构属配置错误，要在实例落库之前暴露）。存量"未展开任务"请用 `adminTransferTask` 处理。
+
+### 修复
+
+- **ALL 会签永久死锁**：`completedApprovers.containsAll(candidate.getUserIds())` —— 组名混进候选用户后该条件**永远无法满足**，任务卡死。现按展开后的用户集合判定
+- **`Candidate.ofAny/ofAll` 重复元素即崩**：内部 `Set.of(...)` 遇重复直接抛 `IllegalArgumentException`。组展开结果与显式用户极易重叠，撞上引擎就崩。改用 `LinkedHashSet` 收集
+- **`candidateGroups` 组名被当成用户**：导入器把组名塞进 `userIds`，任务对任何人都不可办。现映射进独立的 `groupIds`
+- **导出往返丢组**：`BpmnExporter` 只写 `userIds`，`candidateGroups` 往返后消失。现用户与组分别写回，往返对称
+- **转办路径的隐性死锁**：`transferTask` 要求发起人本身是候选人，而**未展开的任务谁都转办不了**
+- **`Candidate` 缺 `equals`/`hashCode`**：对象比较永远不等
+
+### 新增
+
+- **`Candidate.groupIds`**：候选人区分「用户」与「组」两个维度；`isUnresolved()` / `explainRejection()` 给出可定位的拒因
+- **`GroupResolver`**：组织架构解析钩子 —— 引擎**不内置**组织架构存储，只留接缝
+- **`CandidateExpander`**：任务创建时把组展开成**候选快照**；原始组名同时保留，供审计与「我所在组」查询
+- **`GroupResolutionException`**：携带 `nodeId` + 未展开的组名，直接定位到节点，不用翻日志
+- **`WorkflowEngine.adminTransferTask(taskId, toUserId, operator)`**：绕过候选人校验的管理员兜底通道；必须记录 `operator` 进审计
+- **`CandidateCodec`**：`candidate_json` 统一编解码，兼容无 `groupIds` 的历史数据
+- **三套仓储 + `TaskQuery` 支持按组查询**：「我所在组的待办」此前查不出来（只看 `getUserIds()`）
+
+### 设计要点
+
+- **失败即抛出，而不是降级告警**：无论是导入还是运行期，最危险的失败都是静默降级 —— 抛异常至少是响的。两条落地细节：① 未配 `GroupResolver` 且定义含组 → 在**实例落库之前**预检拦下（零成本、无脏数据）；② 引擎 `exclusive` 本身是事务边界，其余展开失败**整体回滚**，调用方可安全重试
+- **部分静默失败最难查**：某节点有"好组 + 坏组"时不做"只丢坏组"的处理（那样 `managers` 有人可办、`broken` 无声消失），整体失败并点名是哪个组
+- **组不携带策略**：策略是节点级的。"组 ALL" = 展开全员 + 节点 ALL（全员会签），"组 ANY" = 展开 + 组内任一可办。不为组引入第二套策略，也就不存在两套策略打架
+- **展开结果是快照**：只在任务创建时解析一次，此后组成员变动不影响在途任务 —— 实时解析会让事后追责链漂移
+- **管理员通道不做权限判断**：引擎不知道调用方的权限模型，这与不替调用方决定组织架构**是同一条边界**，鉴权属调用方责任
+- **`Set.of` 的教训**：凡"把外部数据收进集合"的地方都该用 `LinkedHashSet` —— `Set.of` 撞重复即抛，而外部数据天然可能重复
+
+### 测试
+
+- 新增 `GroupExpansionTest`（展开 / 空组 / 无 resolver / 部分故障 / 组名自陷 / 老数据 / 管理员改派）、`CandidateCodecTest`、`BpmnGroupRoundTripTest`
+- 修正 `FlowableImportCompatibilityTest` 中被固化的旧断言（把"组名当用户"当成了正确行为）
+- **全量回归 0 失败**：PASSED 430 / FAILED 0 / SKIPPED 35（总 465，`--rerun-tasks` 实测）
 
 ---
 

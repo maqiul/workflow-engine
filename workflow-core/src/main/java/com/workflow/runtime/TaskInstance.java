@@ -160,7 +160,7 @@ public final class TaskInstance {
     public boolean recordCompletion(String userId) {
         Objects.requireNonNull(userId);
         if (!candidate.getUserIds().contains(userId)) {
-            throw new IllegalArgumentException("用户 " + userId + " 不是本任务候选人");
+            throw new IllegalArgumentException(candidate.explainRejection(userId));
         }
         completedApprovers.add(userId);
 
@@ -169,14 +169,17 @@ public final class TaskInstance {
             // 或签:任一完成即满足
             this.status = TaskStatus.COMPLETED;
             return true;
-        } else {
-            // 会签:全部完成才满足
-            if (completedApprovers.containsAll(candidate.getUserIds())) {
-                this.status = TaskStatus.COMPLETED;
-                return true;
-            }
-            return false;
         }
+        // 会签:全部完成才满足。
+        // 显式排除空候选人集合——containsAll(空集) 恒为 true，
+        // 那会让"候选组尚未展开、谁都办不了"的任务一被触碰就自动完成。
+        // （上面的校验其实已把所有人拒之门外，这里是防御性的第二道。）
+        Set<String> required = candidate.getUserIds();
+        if (!required.isEmpty() && completedApprovers.containsAll(required)) {
+            this.status = TaskStatus.COMPLETED;
+            return true;
+        }
+        return false;
     }
 
     /**
