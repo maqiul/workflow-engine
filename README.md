@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 > 一个**纯代码 DSL**、**零第三方工作流框架依赖**、**国产基础库 + Java 17** 的轻量级审批流引擎。
-> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）/ **动态 assignee**（运行时从变量取办理人）,
+> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）/ **动态 assignee**（运行时从变量取办理人）/ **serviceTask 自动节点**（自动执行 delegate），
 > 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务,
 > 三仓储实现（InMemory + JPA + MyBatis-Plus）。
 >
@@ -39,6 +39,7 @@
 - [22. 性能基准](#22-性能基准)
 - [23. 循环回边支持](#23-循环回边支持)
 - [24. 动态 assignee 支持](#24-动态-assignee-支持)
+- [25. serviceTask 自动节点](#25-servicetask-自动节点)
 
 ---
 
@@ -1315,6 +1316,58 @@ String instanceId = engine.start("leave-flow", Map.of(
 ### 24.6 设计文档
 
 详见 `docs/DYNAMIC_ASSIGNEE_DESIGN.md`。
+
+---
+
+## 25. serviceTask 自动节点
+
+### 25.1 场景
+
+Flowable 样本 `customer_order_flow.bpmn` 里有 `serviceTask` + `flowable:delegateExpression="${ccNotificationDelegate}"`（`cc_node`、`loop_cc_node` 自动抄送）。典型用例：
+- 自动抄送：审批通过后自动发通知给相关人员
+- 数据转换：节点间自动处理数据格式
+- 外部系统回调：流程结束后自动调用外部系统接口
+
+### 25.2 设计：`ServiceTaskDelegate` 函数式接口
+
+- **`ServiceTaskDelegate`**：`void execute(DelegateExecution execution)`，轻量无依赖
+- **`DelegateExecution`**：提供 `instanceId`、`currentNodeId`、`variables`（只读）、`processDefinition`
+- **注册机制**：`WorkflowEngine.registerDelegate(key, delegate)`，启动时注册
+- **执行语义**：Token 到达 serviceTask → 执行 delegate → 自动推进（不创建 TaskInstance）
+- **异常处理**：delegate 抛异常 → 流程挂起（SUSPENDED），需人工干预
+
+### 25.3 DSL 用法
+
+```java
+// 1. 注册 delegate
+engine.registerDelegate("sendNotification", execution -> {
+    String assignee = (String) execution.getVariable("assignee");
+    System.out.println("发送通知给：" + assignee);
+});
+
+// 2. 流程定义中使用
+ProcessDefinition def = ProcessBuilder.create("leave-flow")
+    .start("start")
+    .userTask("apply", "申请", Candidate.ofAny("user1"))
+    .serviceTask("notify", "发送通知", "sendNotification")  // 自动节点
+    .end("end")
+    .connect("start", "apply")
+    .connect("apply", "notify")
+    .connect("notify", "end")
+    .build();
+```
+
+### 25.4 测试
+
+- `ServiceTaskTest`（InMemory）：5 个用例。
+- `JpaServiceTaskTest`（JPA）：2 个用例。
+- `MybatisServiceTaskTest`（MyBatis）：2 个用例。
+- `BpmnServiceTaskRoundTripTest`：2 个用例（导出/导入往返）。
+- 全量回归 319/319 通过，零回归（现有节点不受影响）。
+
+### 25.5 设计文档
+
+详见 `docs/SERVICE_TASK_DESIGN.md`。
 
 ---
 

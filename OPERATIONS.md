@@ -2,7 +2,7 @@
 
 > 本手册面向**接入方 / 运维**，讲"怎么用"。想了解设计原理与内部机制请看 [README.md](README.md)，版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 >
-> 文中所有类名、方法签名、命令、REST 路径、异常文案均对照当前源码（v3.10.0）核验。
+> 文中所有类名、方法签名、命令、REST 路径、异常文案均对照当前源码（v3.11.0）核验。
 
 ---
 
@@ -25,6 +25,7 @@
 - [15. 最佳实践](#15-最佳实践)
 - [16. 循环回边操作](#16-循环回边操作)
 - [17. 动态 assignee 操作](#17-动态-assignee-操作)
+- [18. serviceTask 自动节点操作](#18-servicetask-自动节点操作)
 
 ---
 
@@ -650,4 +651,55 @@ engine.rejectTask(reviewTask.getId(), "manager1", "需要修改");
 
 ---
 
-*本手册对应 v3.10.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*
+## 18. serviceTask 自动节点操作
+
+### 18.1 场景
+
+自动执行逻辑，不创建 TaskInstance：
+- 自动抄送：审批通过后自动发通知给相关人员
+- 数据转换：节点间自动处理数据格式
+- 外部系统回调：流程结束后自动调用外部系统接口
+
+### 18.2 DSL 定义
+
+```java
+// 1. 注册 delegate
+engine.registerDelegate("sendNotification", execution -> {
+    String assignee = (String) execution.getVariable("assignee");
+    System.out.println("发送通知给：" + assignee);
+});
+
+// 2. 流程定义中使用
+ProcessDefinition def = ProcessBuilder.create("leave-flow")
+    .start("start")
+    .userTask("apply", "申请", Candidate.ofAny("user1"))
+    .serviceTask("notify", "发送通知", "sendNotification")  // 自动节点
+    .end("end")
+    .connect("start", "apply")
+    .connect("apply", "notify")
+    .connect("notify", "end")
+    .build();
+```
+
+### 18.3 执行语义
+
+- Token 到达 serviceTask → 执行 delegate → 自动推进到下一节点
+- 不创建 TaskInstance（无需人工干预）
+- delegate 可以访问流程变量（只读）
+
+### 18.4 异常处理
+
+- **delegate 未注册**：抛 `IllegalStateException("delegate 'xxx' 未注册")`，流程挂起
+- **delegate 抛异常**：抛 `RuntimeException("SERVICE_TASK delegate 执行失败")`，流程挂起
+- **挂起后恢复**：调用 `engine.resumeInstance(instanceId)` 继续执行
+
+### 18.5 注意事项
+
+- **delegate 应异步化**：如果 delegate 执行时间长（如调用外部系统），应在 delegate 内部用线程池异步化，避免阻塞 Token 推进
+- **与 USER_TASK 互斥**：serviceTask 不需要候选人，不能指定 `candidate` 或 `assigneeVariable`
+- **不支持加签/减签/驳回/转办**：serviceTask 是自动节点，无人工干预
+- **BPMN 兼容**：导出为 `<serviceTask><extensionElements><wf:delegate key="..."/></extensionElements></serviceTask>`，导入时自动识别
+
+---
+
+*本手册对应 v3.11.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*

@@ -142,7 +142,8 @@ public final class BpmnExporter {
     private static void appendExtensions(Document doc, org.w3c.dom.Element el, NodeDefinition node) {
         boolean hasStd = node.getCandidate() != null;
         boolean hasAssigneeVar = node.hasAssigneeVariable();
-        boolean hasWf = hasStd || hasAssigneeVar || node.hasTimeout()
+        boolean hasDelegate = node.isServiceTask();
+        boolean hasWf = hasStd || hasAssigneeVar || hasDelegate || node.hasTimeout()
                 || node.getTimeoutPolicy() != TimeoutPolicy.NONE
                 || node.isMessageEvent() || node.isSignalEvent() || node.isTimerBoundary()
                 || node.isDecision();
@@ -161,6 +162,12 @@ public final class BpmnExporter {
         // 动态 assignee 导出为 flowable:assignee="${varName}" 兼容格式
         if (hasAssigneeVar) {
             el.setAttributeNS(FLOWABLE_NS, "flowable:assignee", "${" + node.getAssigneeVariable() + "}");
+        }
+        // serviceTask delegate 导出为 wf:delegate
+        if (hasDelegate) {
+            var delegate = doc.createElementNS(WF_NS, "wf:delegate");
+            delegate.setAttribute("key", node.getDelegateKey());
+            ext.appendChild(delegate);
         }
         if (node.hasTimeout() || node.getTimeoutPolicy() != TimeoutPolicy.NONE) {
             var to = doc.createElementNS(WF_NS, "wf:timeout");

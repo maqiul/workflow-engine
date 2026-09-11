@@ -2,7 +2,40 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.10.0 已完成** — 动态 assignee 支持（运行时从变量取办理人），约 300 用例、全量 0 失败。
+项目状态：**v3.11.0 已完成** — serviceTask 自动节点支持（ServiceTaskDelegate），约 319 用例、全量 0 失败。
+
+---
+
+## [3.11.0] - 2026-09-11
+
+定位：**serviceTask 自动节点支持**——复刻 Flowable 样本里的 `serviceTask` + `delegateExpression`，支持流程内自动执行逻辑（如自动抄送、数据转换、外部系统回调）。
+
+### 新增
+- **`ServiceTaskDelegate` 函数式接口**：`void execute(DelegateExecution execution)`，轻量无依赖。
+- **`DelegateExecution` 上下文类**：提供 `instanceId`、`currentNodeId`、`variables`（只读）、`processDefinition`。
+- **`NodeType.SERVICE_TASK`**：新节点类型，执行 delegate 后自动推进（不创建 TaskInstance）。
+- **`NodeDefinition.delegateKey`**：指向注册的 delegate，与静态 `Candidate` 互斥（serviceTask 不需要候选人）。
+- **`ProcessBuilder.serviceTask(id, name, delegateKey)`**：DSL 语法。
+- **`WorkflowEngine.registerDelegate(key, delegate)`**：运行时注册 delegate。
+- **BPMN 导出/导入兼容**：导出为 `<serviceTask><extensionElements><wf:delegate key="..."/></extensionElements></serviceTask>`，导入时自动识别。
+
+### 变更
+- **`NodeDefinition` 构造器扩展**：新增第 16 个参数 `delegateKey`，向后兼容（旧数据默认 null）。
+- **`TokenAdvancer.handleServiceTask`**：执行 delegate → 自动推进；delegate 未注册或抛异常 → 流程挂起（SUSPENDED）。
+
+### 修复
+- **delegate 执行失败 → 流程挂起**：不自动重试，需人工干预（`resumeInstance`）后继续。
+
+### 测试
+- **`ServiceTaskTest`**（InMemory）：5 个用例（正常执行、delegate 未注册、delegate 抛异常、访问流程变量、多个 serviceTask 顺序执行）。
+- **`JpaServiceTaskTest`**（JPA）：2 个用例（正常执行、访问流程变量）。
+- **`MybatisServiceTaskTest`**（MyBatis）：2 个用例（同上）。
+- **`BpmnServiceTaskRoundTripTest`**：2 个用例（导出/导入往返、userTask 不受影响）。
+- **全量回归 319/319 通过**：InMemory 273 + JPA 39 + MyBatis 39（含跨库一致性），0 失败。
+- **零回归验证**：现有 USER_TASK/PARALLEL_GATEWAY 等节点不受影响。
+
+### 设计文档
+- `docs/SERVICE_TASK_DESIGN.md`：serviceTask 设计方案，含正确性论证、改动清单、实施节奏、风险与回退。
 
 ---
 

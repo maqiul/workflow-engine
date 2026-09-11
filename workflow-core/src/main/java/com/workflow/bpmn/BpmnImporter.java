@@ -99,6 +99,7 @@ public final class BpmnImporter {
                 case "startEvent" -> builder.start(el.getAttribute("id"));
                 case "endEvent" -> builder.end(el.getAttribute("id"));
                 case "userTask" -> parseUserTask(el, builder);
+                case "serviceTask" -> parseServiceTask(el, builder);
                 case "exclusiveGateway" -> builder.exclusiveGateway(el.getAttribute("id"));
                 case "parallelGateway" -> builder.parallelGateway(el.getAttribute("id"));
                 case "callActivity" -> parseCallActivity(el, builder);
@@ -224,6 +225,39 @@ public final class BpmnImporter {
                 builder.timeout(userTask.getAttribute("id"), millis, policy, target);
             }
         }
+    }
+
+    private static void parseServiceTask(Element el, ProcessBuilder builder) {
+        String id = el.getAttribute("id");
+        String name = el.getAttribute("name");
+
+        // 从 extensionElements 读 wf:delegate key
+        NodeList extList = el.getElementsByTagNameNS(BpmnExporter.BPMN_NS, "extensionElements");
+        if (extList.getLength() == 0) {
+            extList = el.getElementsByTagName("extensionElements");
+        }
+        String delegateKey = null;
+        for (int i = 0; i < extList.getLength(); i++) {
+            Element ext = (Element) extList.item(i);
+            NodeList delegateList = ext.getElementsByTagNameNS(BpmnExporter.WF_NS, "delegate");
+            if (delegateList.getLength() == 0) {
+                delegateList = ext.getElementsByTagName("wf:delegate");
+            }
+            if (delegateList.getLength() > 0) {
+                Element delegate = (Element) delegateList.item(0);
+                delegateKey = delegate.getAttribute("key");
+                break;
+            }
+        }
+
+        if (delegateKey == null || delegateKey.isBlank()) {
+            throw new BpmnException("serviceTask 节点 " + id + " 缺少 delegate key 定义");
+        }
+
+        builder.serviceTask(id, name, delegateKey);
+
+        // 超时配置
+        parseTimeout(el, builder);
     }
 
     private static void parseCallActivity(Element el, ProcessBuilder builder) {
