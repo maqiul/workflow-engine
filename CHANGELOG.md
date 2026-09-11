@@ -2,7 +2,37 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.9.0 已完成** — 循环回边支持（Token 到达代次机制），约 296 用例、全量 0 失败。
+项目状态：**v3.10.0 已完成** — 动态 assignee 支持（运行时从变量取办理人），约 300 用例、全量 0 失败。
+
+---
+
+## [3.10.0] - 2026-09-11
+
+定位：**动态 assignee 支持**——复刻 Flowable 样本里 `flowable:assignee="${xxxApprover}"` 的运行时变量绑定，支持办理人由启动时/运行时变量决定的场景。
+
+### 新增
+- **动态 assignee（`assigneeVariable`）**：`USER_TASK` 加可选字段 `assigneeVariable`（运行时变量名），与静态 `Candidate` **二选一**。运行时从 `instance.getVariable(varName)` 取办理人，动态生成 `Candidate.ofAny(assignee)`。
+- **DSL 语法**：`.userTask(id, name, assigneeVar)` 重载，与 `.userTask(id, name, Candidate)` 互斥。
+- **BPMN 导出/导入兼容**：动态 assignee 导出为 `flowable:assignee="${varName}"`（Flowable 标准格式），导入时自动识别并还原。
+- **互斥校验**：`ProcessBuilder.build()` 时校验 `candidate` 和 `assigneeVariable` 不能同时有值，也不能都没有。
+
+### 变更
+- **`NodeDefinition` 构造器扩展**：新增第 15 个参数 `assigneeVariable`，向后兼容（旧数据默认 null）。
+- **`TokenAdvancer.handleUserTask` 动态取办理人**：若 `hasAssigneeVariable()`，从变量取 String 值生成 Candidate；否则走原静态 Candidate 逻辑。
+
+### 修复
+- **动态 assignee 变量未设/类型非 String → 抛明确异常**：不静默失败，报错信息包含变量名和实际类型。
+
+### 测试
+- **`DynamicAssigneeTest`**（InMemory）：6 个用例（启动时设变量、变量未设抛异常、变量非 String 抛异常、驳回后变量变了、循环回边后变量变了、互斥校验）。
+- **`JpaDynamicAssigneeTest`**（JPA）：3 个用例（启动时设变量、变量未设抛异常、驳回后变量变了）。
+- **`MybatisDynamicAssigneeTest`**（MyBatis）：3 个用例（同上）。
+- **`BpmnDynamicAssigneeRoundTripTest`**：2 个用例（动态 assignee 导出/导入往返、静态 candidate 不受影响）。
+- **全量回归 300/300 通过**：InMemory 268 + JPA 37 + MyBatis 37（含跨库一致性），0 失败。
+- **零回归验证**：静态 Candidate 测试不受影响（向后兼容）。
+
+### 设计文档
+- `docs/DYNAMIC_ASSIGNEE_DESIGN.md`：动态 assignee 设计方案，含正确性论证、改动清单、实施节奏、风险与回退。
 
 ---
 

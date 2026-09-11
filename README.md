@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 > 一个**纯代码 DSL**、**零第三方工作流框架依赖**、**国产基础库 + Java 17** 的轻量级审批流引擎。
-> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）,
+> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）/ **动态 assignee**（运行时从变量取办理人）,
 > 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务,
 > 三仓储实现（InMemory + JPA + MyBatis-Plus）。
 >
@@ -38,6 +38,7 @@
 - [21. 通知服务](#21-通知服务)
 - [22. 性能基准](#22-性能基准)
 - [23. 循环回边支持](#23-循环回边支持)
+- [24. 动态 assignee 支持](#24-动态-assignee-支持)
 
 ---
 
@@ -1258,6 +1259,62 @@ String instanceId = engine.start("loop-flow", Map.of("loopContinue", true));
 ### 23.6 设计文档
 
 详见 `docs/LOOP_SUPPORT_DESIGN.md`。
+
+---
+
+## 24. 动态 assignee 支持
+
+### 24.1 场景
+
+Flowable 样本 `customer_order_flow.bpmn` 里大量 userTask 用 `flowable:assignee="${xxxApprover}"`，运行时从流程变量取办理人。典型用例：
+- 请假审批：申请人 → 直属经理（`managerId` 变量）→ HR（`hrId` 变量）
+- 采购审批：部门经理（`deptManagerId`）→ 财务总监（`cfoId`）
+- 驳回重提：回到原节点，办理人可能变了（`originalAssignee` 变量）
+
+### 24.2 设计：`assigneeVariable` 字段
+
+给 `NodeDefinition` 加可选字段 `assigneeVariable`（运行时变量名），与静态 `Candidate` **二选一**：
+- 若 `assigneeVariable != null`：运行时从 `instance.getVariable(varName)` 取办理人（String），动态生成 `Candidate.ofAny(assignee)`。
+- 若 `assigneeVariable == null`：走原有静态 `Candidate` 逻辑（向后兼容）。
+
+### 24.3 关键实现
+
+- **`ProcessBuilder.userTask(id, name, assigneeVar)`**：DSL 语法，与 `.userTask(id, name, Candidate)` 互斥。
+- **`TokenAdvancer.handleUserTask` 动态取办理人**：若 `hasAssigneeVariable()`，从变量取 String 值生成 Candidate；否则走原静态 Candidate。
+- **互斥校验**：`build()` 时校验 `candidate` 和 `assigneeVariable` 不能同时有值，也不能都没有。
+- **BPMN 兼容**：导出为 `flowable:assignee="${varName}"`，导入时自动识别。
+
+### 24.4 DSL 用法
+
+```java
+ProcessDefinition def = ProcessBuilder.create("leave-flow")
+    .start("start")
+    .userTask("apply", "申请", "applyApprover")      // 动态 assignee
+    .userTask("review", "审核", "reviewApprover")    // 动态 assignee
+    .end("end")
+    .connect("start", "apply")
+    .connect("apply", "review")
+    .connect("review", "end")
+    .build();
+
+// 启动时设变量
+String instanceId = engine.start("leave-flow", Map.of(
+    "applyApprover", "user1",
+    "reviewApprover", "manager1"
+));
+```
+
+### 24.5 测试
+
+- `DynamicAssigneeTest`（InMemory）：6 个用例。
+- `JpaDynamicAssigneeTest`（JPA）：3 个用例。
+- `MybatisDynamicAssigneeTest`（MyBatis）：3 个用例。
+- `BpmnDynamicAssigneeRoundTripTest`：2 个用例（导出/导入往返）。
+- 全量回归 300/300 通过，零回归（静态 Candidate 测试不受影响）。
+
+### 24.6 设计文档
+
+详见 `docs/DYNAMIC_ASSIGNEE_DESIGN.md`。
 
 ---
 

@@ -2,7 +2,7 @@
 
 > 本手册面向**接入方 / 运维**，讲"怎么用"。想了解设计原理与内部机制请看 [README.md](README.md)，版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 >
-> 文中所有类名、方法签名、命令、REST 路径、异常文案均对照当前源码（v3.9.0）核验。
+> 文中所有类名、方法签名、命令、REST 路径、异常文案均对照当前源码（v3.10.0）核验。
 
 ---
 
@@ -24,6 +24,7 @@
 - [14. 常见报错与排查](#14-常见报错与排查)
 - [15. 最佳实践](#15-最佳实践)
 - [16. 循环回边操作](#16-循环回边操作)
+- [17. 动态 assignee 操作](#17-动态-assignee-操作)
 
 ---
 
@@ -589,4 +590,64 @@ engine.completeTask(second.getId(), "u1", true);
 
 ---
 
-*本手册对应 v3.9.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*
+## 17. 动态 assignee 操作
+
+### 17.1 场景
+
+运行时从变量取办理人：`flowable:assignee="${xxxApprover}"`。典型用例：
+- 请假审批：申请人 → 直属经理（`managerId` 变量）→ HR（`hrId` 变量）
+- 采购审批：部门经理（`deptManagerId`）→ 财务总监（`cfoId`）
+- 驳回重提：回到原节点，办理人可能变了（`originalAssignee` 变量）
+
+### 17.2 DSL 定义
+
+```java
+ProcessDefinition def = ProcessBuilder.create("leave-flow")
+    .start("start")
+    .userTask("apply", "申请", "applyApprover")      // 动态 assignee
+    .userTask("review", "审核", "reviewApprover")    // 动态 assignee
+    .end("end")
+    .connect("start", "apply")
+    .connect("apply", "review")
+    .connect("review", "end")
+    .build();
+```
+
+### 17.3 启动与推进
+
+```java
+// 启动时设变量
+String instanceId = engine.start("leave-flow", Map.of(
+    "applyApprover", "user1",
+    "reviewApprover", "manager1"
+));
+
+// 第一次 apply 待办（候选人 = user1）
+List<TaskInstance> tasks = taskRepo.findByInstanceId(instanceId);
+TaskInstance applyTask = tasks.stream()
+    .filter(t -> "apply".equals(t.getNodeId()) && t.getStatus() == TaskStatus.PENDING)
+    .findFirst().orElseThrow();
+
+// 完成 apply → 到 review（候选人 = manager1）
+engine.completeTask(applyTask.getId(), "user1", true);
+
+// 驳回回退到 apply（变量可以变了）
+ProcessInstance instance = instRepo.findById(instanceId);
+instance.setVariable("applyApprover", "user2");  // 换人
+instRepo.save(instance);
+engine.rejectTask(reviewTask.getId(), "manager1", "需要修改");
+
+// 新 apply 待办（候选人 = user2）
+```
+
+### 17.4 注意事项
+
+- **变量必须设**：启动时或运行中必须设变量，否则 `handleUserTask` 抛 `IllegalStateException("动态 assignee 变量 'xxx' 未设置")`。
+- **变量必须是 String**：非 String 类型抛 `IllegalStateException("动态 assignee 变量 'xxx' 必须是 String 类型")`。
+- **与静态 candidate 互斥**：`ProcessBuilder.build()` 时校验，不能同时指定 `candidate` 和 `assigneeVariable`。
+- **驳回/循环回边后变量可变**：每次重入节点都会重新读变量，办理人可以不同。
+- **BPMN 兼容**：导出为 `flowable:assignee="${varName}"`，导入时自动识别。
+
+---
+
+*本手册对应 v3.10.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*

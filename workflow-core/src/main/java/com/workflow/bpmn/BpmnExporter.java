@@ -41,6 +41,8 @@ public final class BpmnExporter {
     public static final String BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
     /** 本项目私有扩展命名空间。 */
     public static final String WF_NS = "https://workflow.engine/bpmn";
+    /** Flowable 兼容命名空间（用于动态 assignee 等 Flowable 标准属性）。 */
+    public static final String FLOWABLE_NS = "http://flowable.org/bpmn";
 
     private BpmnExporter() { }
 
@@ -58,6 +60,7 @@ public final class BpmnExporter {
             var roots = doc.createElementNS(BPMN_NS, "definitions");
             roots.setAttribute("xmlns", BPMN_NS);
             roots.setAttribute("xmlns:wf", WF_NS);
+            roots.setAttribute("xmlns:flowable", FLOWABLE_NS);
             roots.setAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
             doc.appendChild(roots);
 
@@ -137,7 +140,8 @@ public final class BpmnExporter {
     /** 候选人策略与超时挂 wf: 扩展；会签同时补上 BPMN 标准的多实例标记。 */
     private static void appendExtensions(Document doc, org.w3c.dom.Element el, NodeDefinition node) {
         boolean hasStd = node.getCandidate() != null;
-        boolean hasWf = hasStd || node.hasTimeout()
+        boolean hasAssigneeVar = node.hasAssigneeVariable();
+        boolean hasWf = hasStd || hasAssigneeVar || node.hasTimeout()
                 || node.getTimeoutPolicy() != TimeoutPolicy.NONE
                 || node.isMessageEvent() || node.isSignalEvent() || node.isTimerBoundary()
                 || node.isDecision();
@@ -152,6 +156,10 @@ public final class BpmnExporter {
             cand.setAttribute("strategy", c.getStrategy().name());
             cand.setTextContent(String.join(",", c.getUserIds()));
             ext.appendChild(cand);
+        }
+        // 动态 assignee 导出为 flowable:assignee="${varName}" 兼容格式
+        if (hasAssigneeVar) {
+            el.setAttributeNS(FLOWABLE_NS, "flowable:assignee", "${" + node.getAssigneeVariable() + "}");
         }
         if (node.hasTimeout() || node.getTimeoutPolicy() != TimeoutPolicy.NONE) {
             var to = doc.createElementNS(WF_NS, "wf:timeout");

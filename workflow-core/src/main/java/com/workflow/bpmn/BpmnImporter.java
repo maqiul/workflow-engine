@@ -137,8 +137,20 @@ public final class BpmnImporter {
     private static void parseUserTask(Element el, ProcessBuilder builder) {
         String id = el.getAttribute("id");
         String name = el.getAttribute("name");
-        Candidate candidate = parseCandidate(el);
-        builder.userTask(id, name, candidate);
+
+        // 优先检查 flowable:assignee="${varName}" 动态 assignee
+        String flowableAssignee = el.getAttributeNS(BpmnExporter.FLOWABLE_NS, "assignee");
+        if (flowableAssignee.isBlank()) {
+            flowableAssignee = el.getAttribute("flowable:assignee");
+        }
+        if (!flowableAssignee.isBlank() && flowableAssignee.startsWith("${") && flowableAssignee.endsWith("}")) {
+            String varName = flowableAssignee.substring(2, flowableAssignee.length() - 1);
+            builder.userTask(id, name, varName);
+        } else {
+            // 走原 candidate 逻辑
+            Candidate candidate = parseCandidate(el);
+            builder.userTask(id, name, candidate);
+        }
 
         // 超时配置
         parseTimeout(el, builder);
