@@ -202,7 +202,7 @@ class BpmnRoundTripTest {
     }
 
     @Test
-    @DisplayName("userTask 缺少候选人应抛 BpmnException（由 ProcessBuilder.build() 校验）")
+    @DisplayName("userTask 无任何审批人来源应抛 BpmnException，并列出支持的形式")
     void missingCandidate() {
         String xml = """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -218,7 +218,8 @@ class BpmnRoundTripTest {
                 """;
         assertThatThrownBy(() -> BpmnImporter.importFrom(xml))
                 .isInstanceOf(BpmnException.class)
-                .hasMessageContaining("缺少候选人定义");
+                .hasMessageContaining("没有任何可用的审批人定义")
+                .hasMessageContaining("candidateGroups");
     }
 
     @Test

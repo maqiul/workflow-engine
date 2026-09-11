@@ -119,9 +119,7 @@ public final class BpmnExporter {
             case SIGNAL_EVENT -> "intermediateCatchEvent";
             case TIMER_BOUNDARY -> "boundaryEvent";
             case DECISION -> "businessRuleTask";
-            case MULTI_INSTANCE -> throw new UnsupportedOperationException(
-                    "MULTI_INSTANCE 节点暂无 BPMN 标准多实例映射，不支持导出: node=" + node.getId()
-                            + "。需要交换格式请先改造为 USER_TASK，或自行写 multiInstanceLoopCharacteristics 扩展。");
+            case MULTI_INSTANCE -> "userTask";
             case SERVICE_TASK -> "serviceTask";
         };
 
@@ -136,6 +134,7 @@ public final class BpmnExporter {
 
         appendExtensions(doc, el, node);
         appendOutgoing(doc, el, def, node);
+        appendMultiInstanceLoop(doc, el, node);
         return el;
     }
 
@@ -205,20 +204,43 @@ public final class BpmnExporter {
             ext.appendChild(dec);
         }
         el.appendChild(ext);
+    }
 
-        // 标准多实例标记：让外部 BPMN 工具至少能看出这是个人多实例节点
+    /**
+     * BPMN 标准多实例标记 —— 让外部 BPMN 工具（含设计器）能识别会签/或签。
+     *
+     * <p>两种来源写法有意不同，导入端正是靠这个区分（见 BpmnImporter 类 javadoc）：
+     * <ul>
+     *   <li>USER_TASK + candidate → 只写 {@code wf:cardinality}，本项目自有标记</li>
+     *   <li>MULTI_INSTANCE → 写 {@code flowable:collection="${var}"}，Flowable 兼容格式</li>
+     * </ul>
+     */
+    private static void appendMultiInstanceLoop(Document doc, Element el, NodeDefinition node) {
+        if (node.getType() == NodeType.MULTI_INSTANCE) {
+            var mi = doc.createElementNS(BPMN_NS, "multiInstanceLoopCharacteristics");
+            mi.setAttribute("isSequential", "false");
+            mi.setAttributeNS(FLOWABLE_NS, "flowable:collection",
+                    "${" + node.getMultiInstanceCollection() + "}");
+            appendCompletionCondition(doc, mi, node.getMultiInstanceStrategy());
+            el.appendChild(mi);
+            return;
+        }
         if (node.getCandidate() != null) {
             Candidate c = node.getCandidate();
             var mi = doc.createElementNS(BPMN_NS, "multiInstanceLoopCharacteristics");
             mi.setAttribute("isSequential", "false");
             mi.setAttributeNS(WF_NS, "wf:cardinality", String.valueOf(c.getUserIds().size()));
-            if (c.getStrategy() == CandidateStrategy.ANY) {
-                // 或签 = 任一完成即结束，用标准完成条件表达
-                var cc = doc.createElementNS(BPMN_NS, "completionCondition");
-                cc.setTextContent("${nrOfCompletedInstances >= 1}");
-                mi.appendChild(cc);
-            }
+            appendCompletionCondition(doc, mi, c.getStrategy());
             el.appendChild(mi);
+        }
+    }
+
+    /** 或签 = 任一完成即结束，用 BPMN 标准完成条件表达；会签不写条件（默认全部完成）。 */
+    private static void appendCompletionCondition(Document doc, Element mi, CandidateStrategy strategy) {
+        if (strategy == CandidateStrategy.ANY) {
+            var cc = doc.createElementNS(BPMN_NS, "completionCondition");
+            cc.setTextContent("${nrOfCompletedInstances >= 1}");
+            mi.appendChild(cc);
         }
     }
 

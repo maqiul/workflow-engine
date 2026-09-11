@@ -1,7 +1,10 @@
 package com.workflow.tests.engine;
 
+import com.workflow.bpmn.BpmnImportDiagnostics;
 import com.workflow.bpmn.BpmnImporter;
 import com.workflow.definition.ProcessDefinition;
+import com.workflow.enums.CandidateStrategy;
+import com.workflow.enums.NodeType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -27,8 +30,10 @@ class FlowableSampleImportTest {
         assertThat(is).as("样本文件必须存在").isNotNull();
         String bpmn = new String(is.readAllBytes(), StandardCharsets.UTF_8);
 
-        // 导入
-        ProcessDefinition def = BpmnImporter.importFrom(bpmn);
+        // 导入：真实 Flowable 样本必须做到零语义降级
+        BpmnImportDiagnostics diag = new BpmnImportDiagnostics();
+        ProcessDefinition def = BpmnImporter.importFrom(bpmn, diag);
+        assertThat(diag.getWarnings()).as("真实样本不应有语义降级警告").isEmpty();
 
         // 验证流程定义
         assertThat(def.getKey()).isEqualTo("customer_order_flow");
@@ -56,11 +61,17 @@ class FlowableSampleImportTest {
         assertThat(def.getNode("parallelGateway_4")).isNotNull();
         assertThat(def.getNode("loop_node_loop_gw")).isNotNull();
 
-        // 验证动态 assignee（userTask 用 flowable:assignee="${var}"）
+        // edraft_submit 在 Flowable 里是「按集合展开的会签」，不是单人动态指派：
+        // 它同时带 flowable:assignee="${assignee}" 和
+        // multiInstanceLoopCharacteristics flowable:collection="${edraft_submitApprovers}"。
+        // 集合才是真语义（assignee 只是展开后的元素变量名），故必须映射为 MULTI_INSTANCE ——
+        // 早先只认 assignee，会让会签静默退化成单人任务。
         var edraftSubmit = def.getNode("edraft_submit");
-        assertThat(edraftSubmit.hasAssigneeVariable()).isTrue();
-        assertThat(edraftSubmit.getAssigneeVariable()).isEqualTo("assignee");
+        assertThat(edraftSubmit.getType()).isEqualTo(NodeType.MULTI_INSTANCE);
+        assertThat(edraftSubmit.getMultiInstanceCollection()).isEqualTo("edraft_submitApprovers");
+        assertThat(edraftSubmit.getMultiInstanceStrategy()).isEqualTo(CandidateStrategy.ANY);
 
+        // 其余 userTask 才是真正的单人动态指派
         var edraftConfirm = def.getNode("edraft_confirm");
         assertThat(edraftConfirm.hasAssigneeVariable()).isTrue();
         assertThat(edraftConfirm.getAssigneeVariable()).isEqualTo("edraft_confirmApprover");
@@ -81,14 +92,14 @@ class FlowableSampleImportTest {
 
         // 验证排他网关条件
         var gwConfirm = def.getNode("gw_confirm");
-        assertThat(gwConfirm.getType()).isEqualTo(com.workflow.enums.NodeType.EXCLUSIVE_GATEWAY);
+        assertThat(gwConfirm.getType()).isEqualTo(NodeType.EXCLUSIVE_GATEWAY);
 
         // 验证并行网关
         var gwParallelFork = def.getNode("gw_parallel_fork");
-        assertThat(gwParallelFork.getType()).isEqualTo(com.workflow.enums.NodeType.PARALLEL_GATEWAY);
+        assertThat(gwParallelFork.getType()).isEqualTo(NodeType.PARALLEL_GATEWAY);
 
         var gwParallelJoin = def.getNode("gw_parallel_join");
-        assertThat(gwParallelJoin.getType()).isEqualTo(com.workflow.enums.NodeType.PARALLEL_GATEWAY);
+        assertThat(gwParallelJoin.getType()).isEqualTo(NodeType.PARALLEL_GATEWAY);
     }
 
     @Test
