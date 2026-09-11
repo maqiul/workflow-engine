@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import java.time.Instant;
 
@@ -70,6 +71,19 @@ public class WfInstanceEntity {
     @Column(name = "root_instance_id", length = 64)
     private String rootInstanceId;
 
+    /**
+     * 乐观锁版本号，由 Hibernate {@code @Version} 维护（见 V9__optimistic_lock.sql）。
+     *
+     * <p>每次 UPDATE 时 Hibernate 自动带上 {@code WHERE revision = <读取到的值>} 并自增；
+     * 影响 0 行说明该行已被其它事务改过 —— 仓储把它转成
+     * {@code WorkflowConflictException}，引擎重读最新状态后有限次重试。
+     *
+     * <p>插入时由仓储显式写 1，与内存仓储 save 后的版本号对齐。
+     */
+    @Version
+    @Column(name = "revision", nullable = false)
+    private long revision;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getProcessKey() { return processKey; }
@@ -93,6 +107,9 @@ public class WfInstanceEntity {
 
     public String getRootInstanceId() { return rootInstanceId; }
     public void setRootInstanceId(String rootInstanceId) { this.rootInstanceId = rootInstanceId; }
+
+    public long getRevision() { return revision; }
+    public void setRevision(long revision) { this.revision = revision; }
 
     public Instant getCreateTimeAsInstant() {
         return Instant.ofEpochMilli(createTime);

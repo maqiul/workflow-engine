@@ -2,6 +2,7 @@ package com.workflow.persistence.mybatis.repository;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.TypeReference;
+import com.workflow.concurrency.WorkflowConflictException;
 import com.workflow.persistence.mybatis.MybatisPersistence;
 import com.workflow.persistence.mybatis.entity.WfInstanceEntity;
 import com.workflow.persistence.mybatis.entity.WfTaskEntity;
@@ -57,6 +58,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 entity.setParentNodeId(instance.getParentNodeId());
                 // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
                 entity.setRootInstanceId(instance.getRootInstanceId());
+                entity.setRevision(FIRST_REVISION);
                 instanceMapper.insert(entity);
             } else {
                 entity.setProcessKey(instance.getProcessKey());
@@ -70,7 +72,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 entity.setParentNodeId(instance.getParentNodeId());
                 // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
                 entity.setRootInstanceId(instance.getRootInstanceId());
-                instanceMapper.updateById(entity);
+                requireCas(instanceMapper.updateById(entity), instance.getId());
             }
 
             // Token 全量同步:delete-all + insert
@@ -113,6 +115,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
                     entity.setParentTokenId(instance.getParentTokenId());
                     entity.setParentNodeId(instance.getParentNodeId());
                     entity.setRootInstanceId(instance.getRootInstanceId());
+                    entity.setRevision(FIRST_REVISION);
                     instanceMapper.insert(entity);
                 } else {
                     entity.setProcessKey(instance.getProcessKey());
@@ -125,7 +128,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
                     entity.setParentTokenId(instance.getParentTokenId());
                     entity.setParentNodeId(instance.getParentNodeId());
                     entity.setRootInstanceId(instance.getRootInstanceId());
-                    instanceMapper.updateById(entity);
+                    requireCas(instanceMapper.updateById(entity), instance.getId());
                 }
 
                 // Token 批量插入
@@ -261,6 +264,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
         setFinal(instance, "parentNodeId", e.getParentNodeId());
         // 读回流程树根，保持与写入库的值一致
         instance.assignRootInstanceId(e.getRootInstanceId());
+        // 乐观锁版本必须读回：重试路径要靠它判断"本次写入基于哪一版"
+        instance.setRevision(e.getRevision());
         try {
             java.lang.reflect.Field statusField = ProcessInstance.class.getDeclaredField("status");
             statusField.setAccessible(true);
@@ -320,6 +325,22 @@ public class MybatisInstanceRepository implements InstanceRepository {
             f.set(target, value);
         } catch (Exception ex) {
             throw new RuntimeException("反射设置字段失败: " + fieldName, ex);
+        }
+    }
+
+    /** 插入行的初始版本号（与内存仓储 save 后的版本号对齐） */
+    private static final long FIRST_REVISION = 1L;
+
+    /**
+     * 乐观锁 CAS 检查。
+     *
+     * <p>MyBatis-Plus 的乐观锁插件把 {@code updateById} 改写成带版本条件的 UPDATE，
+     * 但**影响 0 行时不抛异常**，只把返回值交出来 —— 不检查就等于没开乐观锁。
+     */
+    private static void requireCas(int affectedRows, String instanceId) {
+        if (affectedRows == 0) {
+            throw new WorkflowConflictException(
+                    "流程实例 " + instanceId + " 已被其它节点修改，本次写入作废", instanceId);
         }
     }
 }

@@ -2,13 +2,13 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.15.0 进行中** — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 / ④ 批量迁移）。
+项目状态：**v3.15.0 进行中** — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移）。
 
 ---
 
 ## [3.15.0] - 2026-09-11
 
-定位：**进生产底盘加固** —— 补齐「进程重启 / 对外暴露 / 多节点部署 / 存量迁移」四类场景下的底盘缺口。本版完成 ① / ② 两项。
+定位：**进生产底盘加固** —— 补齐「进程重启 / 对外暴露 / 多节点部署 / 存量迁移」四类场景下的底盘缺口。本版完成 ① / ② / ③ 三项。
 
 ### ① 超时调度重启恢复
 
@@ -71,6 +71,33 @@
 - **`RestAuthHttpTest`**（5 用例）：**真 HTTP 往返** —— 无凭证 / 错凭证经 socket → 401、带凭证的请求头确实被传输层捞到并放行、被拒的写请求不产生副作用、带凭证的启动请求正常创建实例
   - 特意写在真 socket 上而非直接调 API：头是**传输层**解析的，"我构造的 `RestRequest` 里有这个头"证明不了客户端能把它送到
 - **全量回归（`gradle build --rerun-tasks`）：391 PASSED / 0 FAILED / 35 SKIPPED**（跳过的是跨库 Testcontainers 套件，本机 Docker 未启用）
+
+### ③ 集群乐观锁（CAS）
+
+多节点部署下，两个节点同时改写同一实例行会互相覆盖 —— 会签场景最典型：两个审批人同时点通过，一方的写入凭空消失，另一方永远不知道。本项给运行态表引入版本号 + CAS。
+
+#### 新增
+- **迁移 `V9__optimistic_lock.sql`**：`wf_instance` / `wf_task` 各加 `revision BIGINT NOT NULL DEFAULT 0`
+- **`JpaPersistence.asConflictIfOptimisticLock(ex, conflictId)`**：顺 cause 链把乐观锁冲突统一转成 `WorkflowConflictException`
+
+#### 变更
+- **JPA**：`WfInstanceEntity` / `WfTaskEntity` 加 `@Version`；两仓储 `rebuild` 改为从 `e.getRevision()` 回读（原先硬编码 `0L`）
+- **MyBatis**：两实体加 `@Version`；`MybatisPersistence` 注册 `OptimisticLockerInnerInterceptor`（此前**一个拦截器都没注册**，`@Version` 仅仅是个普通字段）
+- **`JpaPersistence.commitAndUnbind()`**：提交点的冲突同样接住
+- **迁移编号取 V9 而非 V8**：V8 已被 `workflow-persistence-mybatis` 模块自带的 `V8__add_arrival_for_loop_support.sql` 占用
+
+#### 修复
+- **共享事务下的乐观锁冲突逃逸**：CAS 条件在 flush 时判定，而共享事务（引擎 exclusive 段、跨仓储合并事务）的 flush + commit 都发生在调用方手里 —— 不在 `JpaPersistence.commitAndUnbind()` 转换，`conflictRetries` 的重试逻辑**永不触发**，一次寻常的并发冲突会直接冒泡成 500
+  - 且必须**顺 cause 链**找：Hibernate 提交失败抛的是 `RollbackException`，真正的 `OptimisticLockException` / `StaleObjectStateException` 藏在 cause 里；只判最外层会漏掉**全部**提交期冲突
+- **MyBatis 乐观锁插件装载方式**：`OptimisticLockerInnerInterceptor` **不是** MyBatis 原生 `Interceptor`，必须先由 `MybatisPlusInterceptor` 包一层再 `configuration.addInterceptor(...)`；直接挂则编译期即报类型不兼容
+- **V8 迁移号撞号**：两个模块各有一份 `V8__*.sql`，Flyway 扫描合并 classpath 后抛 `Found more than one migration with version 8`，导致 41 个持久化用例集体 `initializationError`
+
+#### 测试
+- **`OptimisticLockTest`**（2 用例，跨三套仓储）：
+  - `revisionAdvancesOnEveryWrite`：三仓储版本号 1→2→3。这条看着平凡，实为分水岭 —— 漏 `@Version`、漏注册插件、漏迁移列，写回都会**静默成功**、版本号纹丝不动
+  - `concurrentWritersOnSameRevisionExactlyOneWins`：`CyclicBarrier` 把两个线程卡在"已读完、尚未写"，JPA 侧用 `bindCurrentEm` 保证读写同事务 —— 否则 `save` 内部会重查库拿到最新版本、条件恒成立、CAS 永不触发，测试将以"两个都成功"的**假绿**通过。实测：恰好 1 成功 + 1 冲突
+- 内存仓储的真实并发**有意不测**：其 CAS 是"检查后写入"两步、非原子，单 JVM 的并发保护在引擎 `LocalInstanceLocks` 那层
+- **全量回归（`gradle build --rerun-tasks`）：393 PASSED / 0 FAILED / 35 SKIPPED**
 
 ---
 

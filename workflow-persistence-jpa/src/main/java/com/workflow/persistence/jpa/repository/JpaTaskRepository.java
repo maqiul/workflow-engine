@@ -33,11 +33,27 @@ public class JpaTaskRepository implements TaskRepository {
 
     @Override
     public void save(TaskInstance task) {
+        try {
+            doSave(task);
+        } catch (RuntimeException ex) {
+            throw JpaPersistence.asConflictIfOptimisticLock(ex, task.getId());
+        }
+    }
+
+    /**
+     * CAS 的实现体。
+     *
+     * <p>版本条件来自实体上的 {@code @Version}：Hibernate 在 UPDATE 时自动补
+     * {@code WHERE revision = <读取到的值>} 并自增。会签场景下两个节点同时写同一行时，
+     * 后到者的 UPDATE 影响 0 行 → 乐观锁异常 → 这里转成引擎认识的并发冲突。
+     */
+    private void doSave(TaskInstance task) {
         runInOrOpenTx(em -> {
             WfTaskEntity entity = em.find(WfTaskEntity.class, task.getId());
             if (entity == null) {
                 entity = new WfTaskEntity();
                 entity.setId(task.getId());
+                entity.setRevision(FIRST_REVISION);
                                     entity.setCreateTime(task.getCreateTime());
                 entity.setInstanceId(task.getInstanceId());
                 entity.setTokenId(task.getTokenId());
@@ -85,6 +101,14 @@ public class JpaTaskRepository implements TaskRepository {
         if (tasks == null || tasks.isEmpty()) {
             return;
         }
+        try {
+            doSaveBatch(tasks);
+        } catch (RuntimeException ex) {
+            throw JpaPersistence.asConflictIfOptimisticLock(ex, tasks.get(0).getId());
+        }
+    }
+
+    private void doSaveBatch(List<TaskInstance> tasks) {
         // 批量优化：单事务内批量插入，减少事务开销
         runInOrOpenTx(em -> {
             for (TaskInstance task : tasks) {
@@ -92,6 +116,7 @@ public class JpaTaskRepository implements TaskRepository {
                 if (entity == null) {
                     entity = new WfTaskEntity();
                     entity.setId(task.getId());
+                    entity.setRevision(FIRST_REVISION);
                                         entity.setCreateTime(task.getCreateTime());
                     entity.setInstanceId(task.getInstanceId());
                     entity.setTokenId(task.getTokenId());
@@ -224,8 +249,12 @@ public class JpaTaskRepository implements TaskRepository {
         // 并且把 create_time 读回来 —— 此前这个字段被丢弃，导致
         // TaskQuery.orderByCreateTime() 只能退化成按 id 排序。
         return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
-                e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime(), e.getTenantId(), e.getArrival());
+                e.getNodeId(), candidate, completed, e.getStatus(),
+                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival());
     }
+
+    /** 插入行的初始版本号（与内存仓储 save 后的版本号对齐） */
+    private static final long FIRST_REVISION = 1L;
 
     @Override
     public long countPending() {

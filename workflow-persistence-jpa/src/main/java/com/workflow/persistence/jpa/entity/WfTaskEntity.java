@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 /**
  * 任务实体
@@ -60,6 +61,16 @@ public class WfTaskEntity {
     @Column(name = "arrival")
     private int arrival;
 
+    /**
+     * 乐观锁版本号，由 Hibernate {@code @Version} 维护（见 V9__optimistic_lock.sql）。
+     *
+     * <p>会签是最需要它的场景：两个节点各持一份 PENDING 任务快照，同时把
+     * 「我批了」写回同一行 —— 没有这列时后者静默覆盖前者，审批人数凭空少一个。
+     */
+    @Version
+    @Column(name = "revision", nullable = false)
+    private long revision;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getInstanceId() { return instanceId; }
@@ -82,4 +93,6 @@ public class WfTaskEntity {
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
     public int getArrival() { return arrival; }
     public void setArrival(int arrival) { this.arrival = arrival; }
+    public long getRevision() { return revision; }
+    public void setRevision(long revision) { this.revision = revision; }
 }

@@ -2,6 +2,8 @@ package com.workflow.persistence.mybatis;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.MybatisSqlSessionFactoryBuilder;
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.workflow.persistence.migrate.FlywayMigrator;
 import com.workflow.persistence.mybatis.mapper.WfAuditLogMapper;
 import com.workflow.persistence.mybatis.mapper.WfProcessDefMapper;
@@ -144,6 +146,14 @@ public final class MybatisPersistence {
         configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfDecisionHistoryMapper.class);
         // 驼峰映射默认开启
         configuration.setMapUnderscoreToCamelCase(true);
+        // 乐观锁插件：把 @Version 实体上的 updateById 改写成
+        //   UPDATE ... SET revision = revision + 1 WHERE id = ? AND revision = ?
+        // 不注册它，@Version 就只是个普普通通的长整型字段，CAS 形同虚设。
+        // 注意 InnerInterceptor 不是 MyBatis 原生 Interceptor，必须由
+        // MybatisPlusInterceptor 包一层才能挂到 Configuration 上。
+        MybatisPlusInterceptor plugins = new MybatisPlusInterceptor();
+        plugins.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
+        configuration.addInterceptor(plugins);
         sqlSessionFactory = new MybatisSqlSessionFactoryBuilder().build(configuration);
     }
 

@@ -1,5 +1,6 @@
 package com.workflow.persistence.jpa;
 
+import com.workflow.concurrency.WorkflowConflictException;
 import com.workflow.persistence.jpa.repository.JpaAuditLogRepository;
 import com.workflow.persistence.jpa.repository.JpaInstanceRepository;
 import com.workflow.persistence.jpa.repository.JpaProcessRepository;
@@ -12,7 +13,9 @@ import com.workflow.repository.TaskRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.EntityTransaction;
+import jakarta.persistence.OptimisticLockException;
 import jakarta.persistence.Persistence;
+import org.hibernate.StaleStateException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -111,7 +114,36 @@ public class JpaPersistence {
         return em;
     }
 
-    /** 提交并解绑当前 EM */
+    /**
+     * 顺 cause 链判断是否乐观锁冲突；是则转成引擎认识的 WorkflowConflictException，否则原样返回。
+     *
+     * <p>必须顺链找而不是只看最外层：Hibernate 提交失败时抛的是
+     * {@code RollbackException}，真正的 {@code OptimisticLockException} /
+     * {@code StaleObjectStateException} 藏在 cause 里。只看最外层会漏掉<b>全部</b>提交期冲突。
+     */
+    public static RuntimeException asConflictIfOptimisticLock(RuntimeException ex, String conflictId) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof OptimisticLockException || t instanceof StaleStateException) {
+                return new WorkflowConflictException(
+                        "检测到并发冲突（版本不匹配），本次写入作废", conflictId, ex);
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return ex;
+    }
+
+    /**
+     * 提交并解绑当前 EM。
+     *
+     * <p>这里是乐观锁冲突的<b>第二现场</b>：CAS 的版本条件在 flush 时生效，而共享事务
+     * （引擎的 exclusive 段、跨仓储合并事务）的 flush + commit 都发生在调用方手里，
+     * 不在任何仓储的 save 内部。若不在此处转换，抛出去的就是 Hibernate 原生的
+     * {@code RollbackException / StaleObjectStateException} —— 引擎只认
+     * {@code WorkflowConflictException}，于是 conflictRetries 的重试逻辑永不触发，
+     * 一次寻常的并发冲突会直接冒泡成 500。
+     */
     public void commitAndUnbind() {
         EntityManager em = currentEm.get();
         if (em != null) {
@@ -119,6 +151,10 @@ public class JpaPersistence {
                 if (em.getTransaction().isActive()) {
                     em.getTransaction().commit();
                 }
+            } catch (RuntimeException ex) {
+                // 必须顺 cause 链找：Hibernate 提交失败时最外层是 RollbackException，
+                // 真正的乐观锁异常藏在 cause 里，只看最外层会漏掉全部提交期冲突。
+                throw asConflictIfOptimisticLock(ex, null);
             } finally {
                 currentEm.remove();
                 em.close();

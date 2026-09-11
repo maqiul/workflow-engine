@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.Version;
 import com.workflow.enums.TaskStatus;
 
 /**
@@ -53,6 +54,16 @@ public class WfTaskEntity {
     @TableField("arrival")
     private int arrival;
 
+    /**
+     * 乐观锁版本号，由 MyBatis-Plus 的乐观锁插件维护（见 V9__optimistic_lock.sql）。
+     *
+     * <p>会签是最需要它的场景：两个节点各持一份 PENDING 任务快照，同时把
+     * 「我批了」写回同一行 —— 没有这列时后者静默覆盖前者，审批人数凭空少一个。
+     */
+    @Version
+    @TableField("revision")
+    private long revision;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getInstanceId() { return instanceId; }
@@ -75,4 +86,6 @@ public class WfTaskEntity {
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
     public int getArrival() { return arrival; }
     public void setArrival(int arrival) { this.arrival = arrival; }
+    public long getRevision() { return revision; }
+    public void setRevision(long revision) { this.revision = revision; }
 }

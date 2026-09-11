@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.Version;
 import com.workflow.enums.InstanceStatus;
 
 /**
@@ -62,6 +63,17 @@ public class WfInstanceEntity {
     @TableField("root_instance_id")
     private String rootInstanceId;
 
+    /**
+     * 乐观锁版本号，由 MyBatis-Plus 的乐观锁插件维护（见 V9__optimistic_lock.sql）。
+     *
+     * <p>{@code updateById} 会被插件改写为
+     * {@code UPDATE ... SET revision = revision + 1 WHERE id = ? AND revision = ?}；
+     * 影响 0 行说明该行已被其它节点改过，仓储据此抛 WorkflowConflictException。
+     */
+    @Version
+    @TableField("revision")
+    private long revision;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getProcessKey() { return processKey; }
@@ -86,4 +98,7 @@ public class WfInstanceEntity {
 
     public void setRootInstanceId(String rootInstanceId) { this.rootInstanceId = rootInstanceId; }
     public void setParentNodeId(String parentNodeId) { this.parentNodeId = parentNodeId; }
+
+    public long getRevision() { return revision; }
+    public void setRevision(long revision) { this.revision = revision; }
 }

@@ -1,0 +1,40 @@
+-- =====================================================================
+-- V9: 跨节点乐观锁 —— 为运行态表加 revision 列
+--
+-- 编号说明：V8 已被 workflow-persistence-mybatis 模块下的
+--   V8__add_arrival_for_loop_support.sql（arrival 列）占用 —— 那份脚本装在该模块
+--   自己的 resources 里，而非本模块。Flyway 会同时扫描 classpath 上所有
+--   db/migration 目录，两个 V8 直接撞号并抛
+--   "Found more than one migration with version 8"，故本脚本顺延为 V9。
+--   TODO(待拍板)：把 mybatis 模块那份迁移挪回本模块统一管理，否则每次新增迁移
+--   都得先全仓搜一遍版本号，极易踩坑。
+--
+-- 动机：引擎的并发防护分两层。
+--   * 进程内：按流程树根 fid 的分段锁（LocalInstanceLocks），单节点足够；
+--   * 跨进程：多节点各自持有一把"本地"锁，谁也拦不住谁 —— 两个节点
+--     同时处理同一实例的会签任务时，后提交者会整行覆盖前者的写入，
+--     丢失更新且无任何报错（README §17.6）。
+--
+-- 本列为 CAS（compare-and-set）提供版本基准：
+--   UPDATE wf_instance SET ..., revision = revision + 1
+--    WHERE id = ? AND revision = <读取时的版本>
+-- 影响 0 行即说明该行已被其它事务改过，仓储抛 WorkflowConflictException，
+-- 引擎在重新读取最新状态的前提下有限次重试（WorkflowConflictException 的
+-- javadoc 已声明该契约，conflictRetries 早就在 builder 上就位，缺的就是这一列）。
+--
+-- 兼容性：三库（H2 / MySQL / PostgreSQL）均支持 ADD COLUMN ... NOT NULL DEFAULT 0。
+-- 存量行默认 0，与新建行的初始值一致，故无需回填。
+--
+-- 为什么不做成可开关：
+--   revision 由 Hibernate @Version / MyBatis-Plus @Version 声明在实体上，
+--   属于编译期映射，无法在运行期关掉；而"数据库层永远开着 CAS"本就是
+--   正确的默认 —— 单节点场景下 CAS 条件恒成立，只有一次额外的 where 比较成本。
+--   （内存仓储 InMemoryInstanceRepository 保留了构造器开关，因为它是
+--     单 JVM 内验证语义用的，没有真实并发窗口。）
+--
+-- 注意：wf_token 不加此列。Token 集合走「差量同步 + 物理删除」而非并发竞争，
+-- 且其写入总是与所属实例同处一个事务，由实例行的版本号统一兜底。
+-- =====================================================================
+
+ALTER TABLE wf_instance ADD COLUMN revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE wf_task     ADD COLUMN revision BIGINT NOT NULL DEFAULT 0;

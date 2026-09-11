@@ -37,11 +37,29 @@ public class JpaInstanceRepository implements InstanceRepository {
 
     @Override
     public void save(ProcessInstance instance) {
+        try {
+            doSave(instance);
+        } catch (RuntimeException ex) {
+            throw JpaPersistence.asConflictIfOptimisticLock(ex, instance.getId());
+        }
+    }
+
+    /**
+     * CAS 的实现体。
+     *
+     * <p>版本条件由实体上的 {@code @Version} 生成：Hibernate 在 UPDATE 时自动补
+     * {@code WHERE revision = <读取到的值>} 并自增。版本不匹配表现为「影响 0 行」，
+     * 由 Hibernate 转成乐观锁异常，通常在 flush 或事务提交时才抛出 ——
+     * 所以必须在调用 {@code runInOrOpenTx} 的外层捕获。
+     */
+    private void doSave(ProcessInstance instance) {
         runInOrOpenTx(em -> {
             WfInstanceEntity entity = em.find(WfInstanceEntity.class, instance.getId());
             if (entity == null) {
                 entity = new WfInstanceEntity();
                 entity.setId(instance.getId());
+                // 插入行从 1 起算，与内存仓储 save 后的版本号对齐
+                entity.setRevision(FIRST_REVISION);
                 // 不要在 set 完所有字段前 persist!Hibernate 会立刻 INSERT 触发 NOT NULL 验证
                 // 先 set 所有字段,再用 merge upsert
             }
@@ -102,6 +120,14 @@ public class JpaInstanceRepository implements InstanceRepository {
         if (instances == null || instances.isEmpty()) {
             return;
         }
+        try {
+            doSaveBatch(instances);
+        } catch (RuntimeException ex) {
+            throw JpaPersistence.asConflictIfOptimisticLock(ex, instances.get(0).getId());
+        }
+    }
+
+    private void doSaveBatch(List<ProcessInstance> instances) {
         // 批量优化：单事务内批量插入，减少事务开销
         runInOrOpenTx(em -> {
             for (ProcessInstance instance : instances) {
@@ -109,6 +135,7 @@ public class JpaInstanceRepository implements InstanceRepository {
                 if (entity == null) {
                     entity = new WfInstanceEntity();
                     entity.setId(instance.getId());
+                    entity.setRevision(FIRST_REVISION);
                 }
                 entity.setProcessKey(instance.getProcessKey());
                 entity.setProcessVersion(instance.getProcessVersion());
@@ -250,6 +277,8 @@ public class JpaInstanceRepository implements InstanceRepository {
         // 流程树根必须原样读回：丢了会让父子各持一把锁，ABBA 防护失效。
         // 该行为由 InstanceRootPersistenceTest 守着，并经变异校验确认抽掉即红。
         instance.assignRootInstanceId(e.getRootInstanceId());
+        // 乐观锁版本必须读回：重试路径要靠它判断"本次写入基于哪一版"
+        instance.setRevision(e.getRevision());
         // status 是非 final 字段,用反射或直接赋值都行
         try {
             java.lang.reflect.Field statusField = ProcessInstance.class.getDeclaredField("status");
@@ -315,6 +344,9 @@ public class JpaInstanceRepository implements InstanceRepository {
             throw new RuntimeException("反射设置字段失败: " + fieldName, ex);
         }
     }
+
+    /** 插入行的初始版本号（与内存仓储 save 后的版本号对齐） */
+    private static final long FIRST_REVISION = 1L;
 
     /** 复用 ThreadLocal EM,否则开新事务(JpaTaskRepository 同款) */
     private <R> R runInOrOpenTx(Function<EntityManager, R> action) {

@@ -2,6 +2,7 @@ package com.workflow.persistence.mybatis.repository;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.TypeReference;
+import com.workflow.concurrency.WorkflowConflictException;
 import com.workflow.definition.Candidate;
 import com.workflow.enums.TaskStatus;
 import com.workflow.persistence.mybatis.MybatisPersistence;
@@ -40,6 +41,7 @@ public class MybatisTaskRepository implements TaskRepository {
             if (entity == null) {
                 entity = new WfTaskEntity();
                 entity.setId(task.getId());
+                entity.setRevision(FIRST_REVISION);
                 entity.setCreateTime(task.getCreateTime());
                 entity.setInstanceId(task.getInstanceId());
                 entity.setTokenId(task.getTokenId());
@@ -76,7 +78,7 @@ public class MybatisTaskRepository implements TaskRepository {
                 entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
                 entity.setStatus(task.getStatus());
-                mapper.updateById(entity);
+                requireCas(mapper.updateById(entity), task.getId());
             }
             return null;
         });
@@ -95,6 +97,7 @@ public class MybatisTaskRepository implements TaskRepository {
                 if (entity == null) {
                     entity = new WfTaskEntity();
                     entity.setId(task.getId());
+                    entity.setRevision(FIRST_REVISION);
                     entity.setCreateTime(task.getCreateTime());
                     entity.setInstanceId(task.getInstanceId());
                     entity.setTokenId(task.getTokenId());
@@ -130,7 +133,7 @@ public class MybatisTaskRepository implements TaskRepository {
                     entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
                 entity.setStatus(task.getStatus());
-                    mapper.updateById(entity);
+                    requireCas(mapper.updateById(entity), task.getId());
                 }
             }
             return null;
@@ -241,6 +244,23 @@ public class MybatisTaskRepository implements TaskRepository {
         // 统一走 TaskInstance.reconstruct：不再反射逐字段写，
         // 并把 create_time 读回来（此前丢弃导致按创建时间排序退化成按 id 排序）。
         return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
-                e.getNodeId(), candidate, completed, e.getStatus(), 0L, e.getCreateTime(), e.getTenantId(), e.getArrival());
+                e.getNodeId(), candidate, completed, e.getStatus(),
+                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival());
+    }
+
+    /** 插入行的初始版本号（与内存仓储 save 后的版本号对齐） */
+    private static final long FIRST_REVISION = 1L;
+
+    /**
+     * 乐观锁 CAS 检查。
+     *
+     * <p>MyBatis-Plus 的乐观锁插件把 {@code updateById} 改写成带版本条件的 UPDATE，
+     * 但**影响 0 行时不抛异常**，只把返回值交出来 —— 不检查就等于没开乐观锁。
+     */
+    private static void requireCas(int affectedRows, String taskId) {
+        if (affectedRows == 0) {
+            throw new WorkflowConflictException(
+                    "任务 " + taskId + " 已被其它节点修改，本次写入作废", taskId);
+        }
     }
 }
