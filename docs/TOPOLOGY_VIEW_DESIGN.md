@@ -1,6 +1,6 @@
 # 设计方案：getBpmnModel 拓扑自省
 
-> 状态：**待评审** · 目标版本 v3.14.0 · 关联：OA 能力对照表 #9、Flowable BpmnModel API
+> 状态：**已实现（v3.14.0）** · 关联：OA 能力对照表 #9、Flowable BpmnModel API
 
 ---
 

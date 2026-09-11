@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 > 一个**纯代码 DSL**、**零第三方工作流框架依赖**、**国产基础库 + Java 17** 的轻量级审批流引擎。
-> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）/ **动态 assignee**（运行时从变量取办理人）/ **serviceTask 自动节点**（自动执行 delegate），
+> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）/ **动态 assignee**（运行时从变量取办理人）/ **serviceTask 自动节点**（自动执行 delegate）/ **拓扑自省**（节点/连线 + 实例 Token 高亮只读视图）/ **实例版本迁移**，
 > 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务,
 > 三仓储实现（InMemory + JPA + MyBatis-Plus）。
 >
@@ -40,6 +40,7 @@
 - [23. 循环回边支持](#23-循环回边支持)
 - [24. 动态 assignee 支持](#24-动态-assignee-支持)
 - [25. serviceTask 自动节点](#25-servicetask-自动节点)
+- [26. 拓扑自省](#26-拓扑自省)
 
 ---
 
@@ -1368,6 +1369,68 @@ ProcessDefinition def = ProcessBuilder.create("leave-flow")
 ### 25.5 设计文档
 
 详见 `docs/SERVICE_TASK_DESIGN.md`。
+
+---
+
+## 26. 拓扑自省
+
+### 26.1 场景
+
+运行时获取流程定义拓扑与实例当前位置，用于：
+
+- 流程图高亮（当前 Token 在哪个节点）
+- 待办列表显示节点名称
+- 审批历史展示流转路径
+- 流程预览 / 模拟
+
+### 26.2 API
+
+```java
+// 流程定义拓扑（version < 0 取最新版）
+TopologyView getTopology(String processKey, int version);
+
+// 运行中实例拓扑（含当前 Token 位置与历史路径）
+InstanceTopologyView getInstanceTopology(String instanceId);
+```
+
+### 26.3 视图结构
+
+- **`TopologyView`**：`processKey` / `version` / `name` / `nodes` / `transitions`
+- **`NodeView`**：`id` / `name` / `type` / `userIds`（审批人列表）/ `assigneeVariable`（动态 assignee）/ `delegateKey`（serviceTask）
+- **`TransitionView`**：`from` / `to` / `condition`（条件表达式，可为 null）
+- **`InstanceTopologyView`**：基础拓扑 + `activeNodeIds`（当前 Token 位置）+ `completedNodeIds`（已完成节点）+ `status`
+
+所有字段 final、集合不可变，可直接序列化为 JSON 供前端渲染。
+
+### 26.4 用法
+
+```java
+// 流程图渲染数据
+TopologyView topo = engine.getTopology("leave-flow", -1);
+for (NodeView n : topo.getNodes()) {
+    System.out.println(n.getId() + " / " + n.getName() + " / " + n.getType());
+}
+
+// 高亮当前节点
+InstanceTopologyView view = engine.getInstanceTopology(instanceId);
+List<String> active = view.getActiveNodeIds();      // 当前 Token 所在节点
+List<String> done = view.getCompletedNodeIds();     // 已完成节点
+```
+
+### 26.5 与 Flowable 对齐
+
+Flowable 用 `repositoryService.getBpmnModel()` 返回完整 `BpmnModel` 对象图；本引擎直接从 `ProcessDefinition` 构建轻量只读视图，不依赖 BPMN XML 解析，语义等价、更轻。
+
+### 26.6 测试
+
+- `TopologyViewTest`（InMemory）：6 个用例。
+- `JpaTopologyViewTest`（JPA）：2 个用例。
+- `MybatisTopologyViewTest`（MyBatis）：2 个用例。
+- 全量回归 339/339 通过，零回归。
+
+### 26.7 设计文档
+
+详见 `docs/TOPOLOGY_VIEW_DESIGN.md`。
 
 ---
 

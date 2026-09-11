@@ -26,6 +26,7 @@
 - [16. 循环回边操作](#16-循环回边操作)
 - [17. 动态 assignee 操作](#17-动态-assignee-操作)
 - [18. serviceTask 自动节点操作](#18-servicetask-自动节点操作)
+- [19. 拓扑自省操作](#19-拓扑自省操作)
 
 ---
 
@@ -702,4 +703,51 @@ ProcessDefinition def = ProcessBuilder.create("leave-flow")
 
 ---
 
-*本手册对应 v3.11.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*
+## 19. 拓扑自省操作
+
+### 19.1 场景
+
+给前端/上层提供流程图渲染与高亮数据：
+
+- 流程图：节点、连线（含条件表达式）
+- 高亮：运行实例当前 Token 所在节点
+- 路径：已完成节点（审批历史）
+
+### 19.2 API 速查
+
+```java
+TopologyView getTopology(String processKey, int version);   // version=-1 取最新版
+InstanceTopologyView getInstanceTopology(String instanceId);
+```
+
+### 19.3 定义拓扑
+
+```java
+TopologyView topo = engine.getTopology("leave-flow", -1);
+topo.getProcessKey();     // "leave-flow"
+topo.getVersion();        // 版本号
+topo.getNodes();          // List<NodeView>
+topo.getTransitions();    // List<TransitionView>
+```
+
+`NodeView` 字段：`id` / `name` / `type` / `userIds` / `assigneeVariable` / `delegateKey`。
+`TransitionView` 字段：`from` / `to` / `condition`（条件表达式，可为 null）。
+
+### 19.4 实例高亮
+
+```java
+InstanceTopologyView view = engine.getInstanceTopology(instanceId);
+view.getActiveNodeIds();     // 当前 Token 所在节点 ID（高亮用）
+view.getCompletedNodeIds();  // 已完成节点 ID（历史路径）
+view.getStatus();            // 实例状态
+```
+
+### 19.5 注意事项
+
+- **只读**：视图不可修改，改流程请走 `ProcessBuilder` / 迁移 API
+- **version=-1** 表示取最新版；指定版本不存在或流程不存在抛 `IllegalArgumentException`
+- **前端友好**：所有视图可 JSON 序列化（字段均有 getter，集合不可变）
+
+---
+
+*本手册对应 v3.14.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*
