@@ -178,6 +178,15 @@ ProcessBuilder.create("exp")
 ```
 `TimeoutPolicy`：`AUTO_APPROVE` / `AUTO_REJECT` / `AUTO_TERMINATE` / `AUTO_TRANSFER`。
 
+> **调度语义（v3.15）**：`TimeoutScheduler.schedule(taskId, instanceId, dueAtMillis)` 的第三个参数是**绝对到期时刻**（epoch millis），不是相对延时。
+>
+> **进程重启后自动恢复**：调度表活在 JVM 内存里，重启即空 —— 重启前建立的待办会**静默地**永不超时。`build()` 默认自动恢复一次：扫描仍 `PENDING` 的任务，用 `createTime + 节点超时配置` 重算到期时刻重新注册（**不新增表/列**，两个输入一个是 `wf_task.create_time`、一个在定义的 `nodes_json` 里，重启后可精确重算）。
+>
+> - 已过期的任务注册为「已过期」，交给调度器立即触发（补偿停机期间到点的待办），异步执行不阻塞启动；
+> - 只恢复 `RUNNING` 实例 —— 挂起的实例不恢复，否则「挂起」会被恢复动作立刻超时；
+> - 多节点同时恢复安全：超时回调幂等，重查任务状态非 `PENDING` 即忽略；
+> - 关掉：`WorkflowEngineBuilder.autoRecoverTimeouts(false)`。
+
 ---
 
 ## 4. 引擎装配（WorkflowEngineBuilder）
@@ -197,6 +206,7 @@ WorkflowEngine engine = WorkflowEngineBuilder
         .carbonCopyRepository(ccRepo)              // 抄送
         .notificationService(new LoggingNotificationService()) // 通知（见 §5.3/§...）
         .timeoutScheduler(customScheduler)         // 不设=默认 ScheduledTimeoutScheduler
+        .autoRecoverTimeouts(true)                 // 默认 true：build() 时恢复重启前建立的超时调度
         .conflictRetries(3)                        // 乐观锁冲突重试次数（0=不重试直接抛）
         .retryBackoffMillis(20)                    // 重试前等待
         .build();
@@ -424,6 +434,34 @@ WorkflowRestApi api = new WorkflowRestApi(engine /*, historyRepo, procRepo*/);
 
 > 流程定义在应用侧 `procRepo.save(def)` 注册后，REST 负责运行期操作。
 
+### 鉴权（v3.15）
+
+`WorkflowRestApi` 的第 4 个构造参数接受 `RequestAuthenticator`（函数式接口）；**不传 = 全部放行**，保持「嵌入式库内调用、不监听端口」的零配置体验。
+
+```java
+// 方式一：X-API-Key 头（默认头名）
+WorkflowRestApi api = new WorkflowRestApi(engine, histRepo, procRepo,
+        ApiKeyAuthenticator.of("key-a", "key-b"));
+
+// 方式二：自定义头名
+ApiKeyAuthenticator.ofHeader("X-Token", "key-a")
+
+// 方式三：标准 Authorization: Bearer <token>
+ApiKeyAuthenticator.bearer("token-1")
+```
+
+| 点 | 行为 |
+|---|---|
+| 拒绝语义 | 401 = 没带凭证 / 凭证无效（去换凭证）；403 = 身份已知但无权限（找管理员）。自定义鉴权器返回 `AuthResult.forbidden(...)` 即得 403 |
+| fail-closed | 鉴权器自身抛异常 → 500，**绝不「异常即放行」**；返回 `null` 视为放行（容忍懒实现） |
+| 头名大小写 | 不敏感（符合 HTTP 语义，`x-api-key` 与 `X-API-Key` 等价） |
+| 常量时间比较 | 内部用 `MessageDigest.isEqual`，且多密钥**不短路**、全部比完再下结论 —— 防时序侧信道探测 |
+| 健康检查不豁免 | `/api/health` 同样走鉴权；要匿名探针请在网关放行，本层不做特例 |
+| 构造即校验 | 空密钥白名单在**构造期**抛 `IllegalArgumentException`，不留「运行时全放行」的后门 |
+| 写请求同样受保护 | 401 之后引擎**不被触碰**（不存在"鉴权失败但副作用已发生"） |
+
+> **生产部署须知**：REST 端口一旦对外可达，不配置鉴权就等于把「启动 / 终止 / 改派任意流程实例」的能力敞开。本层只做**凭证校验**，不做授权、限流、JWT 解析 —— 那些交给网关或自定义 `RequestAuthenticator` 实现。
+
 ### 端点总表
 
 | 方法 路径 | 作用 | 请求体 / 查询 | 成功码 |
@@ -467,9 +505,12 @@ curl -XPOST localhost:8080/api/instances/<id>/jump \
 | 码 | 含义 | 典型场景 |
 |---|---|---|
 | 400 | 参数错误 | 缺字段、`topN` 非整数、`page/size` 越界、body 非法 JSON |
+| **401** | 未认证（**鉴权**） | 缺凭证、密钥不在白名单、`Bearer` 缺前缀 —— 调用方应去取/换凭证 |
+| **403** | 无权限（**鉴权**） | 自定义鉴权器返回 `AuthResult.forbidden(...)` —— 换凭证也没用，应找管理员 |
 | 404 | 资源不存在 | 实例/任务/流程定义/端点不存在 |
 | **409** | 状态冲突（**并发**） | 任务非 PENDING（"这条待办已被他人处理"）——审批最高频交互，务必与 400 区分 |
-| 501 | 不支持的操作 | 如对子实例调 `withdraw` |
+| 500 | 服务内部错误 | 鉴权器自身抛异常（fail-closed，不外泄异常细节） |
+| 501 | 不支持的操作 | 如对子实例调 `withdraw`、未启用历史仓储却查 `/history` |
 
 ---
 
