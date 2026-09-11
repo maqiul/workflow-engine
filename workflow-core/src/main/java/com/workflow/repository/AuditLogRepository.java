@@ -34,5 +34,5 @@ public interface AuditLogRepository {
      * @param prefix 事件类型前缀（如 "TIMEOUT_"）
      * @return 匹配的事件类型及其计数
      */
-    java.util.List<EventTypeCount> countGroupByEventTypePrefix(String prefix);
+    List<EventTypeCount> countGroupByEventTypePrefix(String prefix);
 }

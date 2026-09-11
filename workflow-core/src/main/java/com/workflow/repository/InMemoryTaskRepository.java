@@ -63,7 +63,7 @@ public class InMemoryTaskRepository implements TaskRepository {
     }
 
     /** 恢复动作：旧值存在则放回，不存在（本次为新增）则删除。 */
-    private java.lang.Runnable restoreAction(String id, TaskInstance before) {
+    private Runnable restoreAction(String id, TaskInstance before) {
         return () -> {
             if (before == null) {
                 byId.remove(id);

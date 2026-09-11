@@ -6,6 +6,11 @@ import com.workflow.definition.ProcessDefinition;
 import com.workflow.definition.Transition;
 import com.workflow.delegate.DelegateExecution;
 import com.workflow.delegate.ServiceTaskDelegate;
+import com.workflow.dmn.DecisionHistory;
+import com.workflow.dmn.DecisionHistoryRepository;
+import com.workflow.dmn.DecisionRepository;
+import com.workflow.dmn.DecisionTable;
+import com.workflow.dmn.DecisionTableExecutor;
 import com.workflow.enums.CandidateStrategy;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.NodeType;
@@ -24,10 +29,12 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -54,9 +61,9 @@ public class TokenAdvancer {
     private final EventRepository eventRepo;
     private final HistoryRepository historyRepo;
     private final TimeoutScheduler scheduler;
-    private final com.workflow.dmn.DecisionRepository decisionRepo;
-    private final com.workflow.dmn.DecisionTableExecutor decisionExecutor;
-    private final com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo;
+    private final DecisionRepository decisionRepo;
+    private final DecisionTableExecutor decisionExecutor;
+    private final DecisionHistoryRepository decisionHistoryRepo;
     
     private final Consumer<TaskInstance> onTaskCreated;
     private final SubProcessStarter subProcessStarter;
@@ -97,9 +104,9 @@ public class TokenAdvancer {
             Consumer<ProcessInstance> onSubProcessCompleted,
             Consumer<Runnable> afterCommitSchedule,
             Consumer<ProcessInstance> onProcessCompleted,
-            com.workflow.dmn.DecisionRepository decisionRepo,
-            com.workflow.dmn.DecisionTableExecutor decisionExecutor,
-            com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo) {
+            DecisionRepository decisionRepo,
+            DecisionTableExecutor decisionExecutor,
+            DecisionHistoryRepository decisionHistoryRepo) {
         this(taskRepo, instanceRepo, eventRepo, historyRepo, scheduler, onTaskCreated,
              subProcessStarter, onSubProcessCompleted, afterCommitSchedule, onProcessCompleted,
              decisionRepo, decisionExecutor, decisionHistoryRepo, null);
@@ -116,9 +123,9 @@ public class TokenAdvancer {
             Consumer<ProcessInstance> onSubProcessCompleted,
             Consumer<Runnable> afterCommitSchedule,
             Consumer<ProcessInstance> onProcessCompleted,
-            com.workflow.dmn.DecisionRepository decisionRepo,
-            com.workflow.dmn.DecisionTableExecutor decisionExecutor,
-            com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo,
+            DecisionRepository decisionRepo,
+            DecisionTableExecutor decisionExecutor,
+            DecisionHistoryRepository decisionHistoryRepo,
             Function<String, ServiceTaskDelegate> delegateProvider) {
         this.taskRepo = taskRepo;
         this.instanceRepo = instanceRepo;
@@ -534,25 +541,25 @@ public class TokenAdvancer {
         }
         
         // 查找决策表
-        com.workflow.dmn.DecisionTable decisionTable = decisionRepo.findById(decisionTableId);
+        DecisionTable decisionTable = decisionRepo.findById(decisionTableId);
         if (decisionTable == null) {
             throw new IllegalStateException("Decision table not found: " + decisionTableId);
         }
         
         // 执行决策表
         Map<String, Object> context = instance.getVariables();
-        com.workflow.dmn.DecisionTableExecutor.DecisionResult result = decisionExecutor.execute(decisionTable, context);
+        DecisionTableExecutor.DecisionResult result = decisionExecutor.execute(decisionTable, context);
         
         // 记录决策历史
         if (decisionHistoryRepo != null) {
             Map<String, Object> outputs = result.isMatched() ? result.getSingleOutput() : null;
-            com.workflow.dmn.DecisionHistory history = new com.workflow.dmn.DecisionHistory(
-                    java.util.UUID.randomUUID().toString(),
+            DecisionHistory history = new DecisionHistory(
+                    UUID.randomUUID().toString(),
                     instance.getId(),
                     tokenId,
                     current.getId(),
                     decisionTableId,
-                    new java.util.HashMap<>(context),
+                    new HashMap<>(context),
                     outputs,
                     result.getMatchedRuleId(),
                     System.currentTimeMillis()
@@ -736,7 +743,7 @@ public class TokenAdvancer {
                 .toList();
     }
 
-    private java.util.List<String> toStringList(Object v) {
+    private List<String> toStringList(Object v) {
         List<String> out = new ArrayList<>();
         if (v instanceof List<?> list) {
             for (Object o : list) {
@@ -774,7 +781,7 @@ public class TokenAdvancer {
         Token token = instance.getActiveTokens().get(tokenId);
 
         if (expanded == null) {
-            java.util.List<String> assignees = toStringList(instance.getVariable(current.getMultiInstanceCollection()));
+            List<String> assignees = toStringList(instance.getVariable(current.getMultiInstanceCollection()));
             if (assignees.isEmpty()) {
                 log.info("[TokenAdvancer] MULTI_INSTANCE 节点 {} 集合为空,直接推进", current.getId());
                 instance.setVariable(markKey, "expanded");

@@ -2,8 +2,10 @@ package com.workflow.runtime;
 
 import com.workflow.enums.NodeType;
 
+import java.lang.reflect.Field;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 历史活动实例 —— 流程图中某个节点的一次执行。
@@ -47,8 +49,8 @@ public final class HistoricActivityInstance {
     /** 完成该活动的操作者（UserTask 用审批人；瞬时活动记触发者）。 */
     private volatile String performer;
 
-    private static final java.util.concurrent.atomic.AtomicLong SEQ_GEN =
-            new java.util.concurrent.atomic.AtomicLong();
+    private static final AtomicLong SEQ_GEN =
+            new AtomicLong();
 
     public HistoricActivityInstance(String instanceId, String processKey, int processVersion,
                                     String activityId, NodeType activityType,
@@ -89,7 +91,7 @@ public final class HistoricActivityInstance {
 
     private void setIdViaReflection(String value) {
         try {
-            java.lang.reflect.Field f = HistoricActivityInstance.class.getDeclaredField("id");
+            Field f = HistoricActivityInstance.class.getDeclaredField("id");
             f.setAccessible(true);
             f.set(this, value);
         } catch (ReflectiveOperationException ex) {

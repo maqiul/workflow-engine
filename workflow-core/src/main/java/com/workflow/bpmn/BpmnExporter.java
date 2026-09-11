@@ -10,6 +10,7 @@ import com.workflow.enums.CandidateStrategy;
 import com.workflow.enums.NodeType;
 import com.workflow.enums.TimeoutPolicy;
 import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.transform.OutputKeys;
@@ -73,7 +74,7 @@ public final class BpmnExporter {
         }
     }
 
-    private static org.w3c.dom.Element exportProcess(Document doc, ProcessDefinition def) {
+    private static Element exportProcess(Document doc, ProcessDefinition def) {
         var process = doc.createElementNS(BPMN_NS, "process");
         process.setAttribute("id", def.getKey());
         process.setAttribute("name", def.getName());
@@ -102,7 +103,7 @@ public final class BpmnExporter {
         return process;
     }
 
-    private static org.w3c.dom.Element exportNode(Document doc, ProcessDefinition def,
+    private static Element exportNode(Document doc, ProcessDefinition def,
                                                   NodeDefinition node) {
         String tag = switch (node.getType()) {
             case START -> "startEvent";
@@ -139,7 +140,7 @@ public final class BpmnExporter {
     }
 
     /** 候选人策略与超时挂 wf: 扩展；会签同时补上 BPMN 标准的多实例标记。 */
-    private static void appendExtensions(Document doc, org.w3c.dom.Element el, NodeDefinition node) {
+    private static void appendExtensions(Document doc, Element el, NodeDefinition node) {
         boolean hasStd = node.getCandidate() != null;
         boolean hasAssigneeVar = node.hasAssigneeVariable();
         boolean hasDelegate = node.isServiceTask();
@@ -221,7 +222,7 @@ public final class BpmnExporter {
         }
     }
 
-    private static void appendOutgoing(Document doc, org.w3c.dom.Element el,
+    private static void appendOutgoing(Document doc, Element el,
                                        ProcessDefinition def, NodeDefinition node) {
         int i = 0;
         for (Transition t : def.getOutgoing(node.getId())) {
@@ -231,7 +232,7 @@ public final class BpmnExporter {
         }
     }
 
-    private static org.w3c.dom.Element exportFlow(Document doc, Transition t, String id) {
+    private static Element exportFlow(Document doc, Transition t, String id) {
         var flow = doc.createElementNS(BPMN_NS, "sequenceFlow");
         flow.setAttribute("id", id);
         flow.setAttribute("sourceRef", t.getFrom());

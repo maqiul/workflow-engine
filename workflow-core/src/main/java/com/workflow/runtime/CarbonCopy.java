@@ -1,6 +1,7 @@
 package com.workflow.runtime;
 
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * 抄送记录 - 流程节点完成后知会相关人员（不需要审批）
@@ -26,7 +27,7 @@ public final class CarbonCopy {
 
     public CarbonCopy(String instanceId, String taskId, String nodeId,
                       String recipient, String operator, String message) {
-        this.id = java.util.UUID.randomUUID().toString();
+        this.id = UUID.randomUUID().toString();
         this.instanceId = Objects.requireNonNull(instanceId);
         this.taskId = taskId;
         this.nodeId = nodeId;

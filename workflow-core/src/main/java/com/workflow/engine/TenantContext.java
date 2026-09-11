@@ -1,5 +1,7 @@
 package com.workflow.engine;
 
+import java.util.function.Supplier;
+
 /**
  * 租户上下文 - 管理当前线程的租户 ID
  *
@@ -54,7 +56,7 @@ public final class TenantContext {
      * @param <T> 返回值类型
      * @return 操作结果
      */
-    public static <T> T withTenant(String tenantId, java.util.function.Supplier<T> action) {
+    public static <T> T withTenant(String tenantId, Supplier<T> action) {
         String previous = getTenantId();
         try {
             setTenantId(tenantId);

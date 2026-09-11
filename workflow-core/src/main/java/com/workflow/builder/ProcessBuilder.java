@@ -1,8 +1,11 @@
 package com.workflow.builder;
 
 import com.workflow.definition.Candidate;
+import com.workflow.definition.MessageEvent;
 import com.workflow.definition.NodeDefinition;
 import com.workflow.definition.ProcessDefinition;
+import com.workflow.definition.SignalEvent;
+import com.workflow.definition.TimerBoundaryEvent;
 import com.workflow.definition.Transition;
 import com.workflow.definition.VariableDefinition;
 import com.workflow.definition.VariableType;
@@ -168,7 +171,7 @@ public class ProcessBuilder {
     public ProcessBuilder messageEvent(String id, String displayName, String messageName, String correlationKeyExpression) {
         checkDuplicate(id);
         nodes.put(id, NodeDefinition.messageEvent(id, displayName, 
-            new com.workflow.definition.MessageEvent(id, messageName, correlationKeyExpression)));
+            new MessageEvent(id, messageName, correlationKeyExpression)));
         return this;
     }
 
@@ -182,7 +185,7 @@ public class ProcessBuilder {
     public ProcessBuilder signalEvent(String id, String displayName, String signalName) {
         checkDuplicate(id);
         nodes.put(id, NodeDefinition.signalEvent(id, displayName, 
-            new com.workflow.definition.SignalEvent(id, signalName)));
+            new SignalEvent(id, signalName)));
         return this;
     }
 
@@ -198,7 +201,7 @@ public class ProcessBuilder {
     public ProcessBuilder timerBoundary(String id, String displayName, String attachedToNodeId, long durationMillis, boolean interrupting) {
         checkDuplicate(id);
         nodes.put(id, NodeDefinition.timerBoundary(id, displayName, 
-            new com.workflow.definition.TimerBoundaryEvent(id, attachedToNodeId, durationMillis, interrupting)));
+            new TimerBoundaryEvent(id, attachedToNodeId, durationMillis, interrupting)));
         return this;
     }
 

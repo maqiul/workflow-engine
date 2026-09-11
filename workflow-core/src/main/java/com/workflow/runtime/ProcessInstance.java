@@ -1,7 +1,9 @@
 package com.workflow.runtime;
 
 import com.workflow.enums.InstanceStatus;
+import com.workflow.enums.TokenStatus;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -170,7 +172,7 @@ public final class ProcessInstance {
     /** 内部反射写 final 字段 - 用 VarHandle 友好的 setAccessible(true) 即可 */
     private static void setFinal(Object target, String fieldName, Object value) {
         try {
-            java.lang.reflect.Field f = target.getClass().getDeclaredField(fieldName);
+            Field f = target.getClass().getDeclaredField(fieldName);
             f.setAccessible(true);
             f.set(target, value);
         } catch (Exception ex) {
@@ -249,7 +251,7 @@ public final class ProcessInstance {
         if (t == null) {
             throw new IllegalStateException("Token 不存在或已消耗: " + tokenId);
         }
-        t.setStatus(com.workflow.enums.TokenStatus.CONSUMED);
+        t.setStatus(TokenStatus.CONSUMED);
         activeTokens.remove(tokenId);
     }
 

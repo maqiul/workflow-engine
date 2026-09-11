@@ -54,14 +54,14 @@ public interface InstanceRepository {
      * 监控仪表盘用它替代 {@code findAll()} —— 后者会为每个实例重建 Token/Task/变量，
      * 分布统计只需 {@code GROUP BY process_key, status} 的轻量结果。
      */
-    java.util.List<ProcessStatusCount> countGroupByProcessAndStatus();
+    List<ProcessStatusCount> countGroupByProcessAndStatus();
 
     /**
      * 按「流程 key + 状态 + 租户」分组计数（多租户隔离）。
      *
      * <p>tenantId 为 null 时不过滤租户（兼容老数据）。
      */
-    default java.util.List<ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
+    default List<ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
         // 默认实现：忽略租户，退化为无租户版本（向后兼容）
         return countGroupByProcessAndStatus();
     }

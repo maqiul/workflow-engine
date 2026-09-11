@@ -2,8 +2,10 @@ package com.workflow.monitor;
 
 import com.workflow.enums.TaskStatus;
 import com.workflow.repository.AuditLogRepository;
+import com.workflow.repository.EventTypeCount;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
+import com.workflow.repository.ProcessStatusCount;
 import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.AuditLog;
 import com.workflow.runtime.ProcessInstance;
@@ -65,13 +67,13 @@ public class MonitoringService {
      */
     public DashboardMetrics snapshot(int bottleneckTopN, String tenantId) {
         // 实例分布:走 GROUP BY 聚合，避免 findAll 逐实例重建 Token/Task/变量(JPA 下 N 次子查询+反射)
-        List<com.workflow.repository.ProcessStatusCount> groups =
+        List<ProcessStatusCount> groups =
                 instanceRepo.countGroupByProcessAndStatus(tenantId);
         long totalInstances = 0;
         Map<String, Long> byStatus = new LinkedHashMap<>();
         Map<String, Map<String, Long>> byProcessStatus = new LinkedHashMap<>();
         Map<String, Long> byProcessTotal = new LinkedHashMap<>();
-        for (com.workflow.repository.ProcessStatusCount g : groups) {
+        for (ProcessStatusCount g : groups) {
             totalInstances += g.count();
             String status = g.status() == null ? "UNKNOWN" : g.status().name();
             byStatus.merge(status, g.count(), Long::sum);
@@ -131,7 +133,7 @@ public class MonitoringService {
         // 超时自动处理事件统计(审计里以 TIMEOUT_ 开头的事件)
         Map<String, Long> timeoutEvents = new LinkedHashMap<>();
         if (auditLogRepo != null) {
-            for (com.workflow.repository.EventTypeCount c :
+            for (EventTypeCount c :
                     auditLogRepo.countGroupByEventTypePrefix("TIMEOUT_")) {
                 timeoutEvents.put(c.eventType().name(), c.count());
             }

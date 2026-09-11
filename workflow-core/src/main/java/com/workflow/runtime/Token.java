@@ -2,6 +2,7 @@ package com.workflow.runtime;
 
 import com.workflow.enums.TokenStatus;
 
+import java.lang.reflect.Field;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -70,10 +71,10 @@ public final class Token {
     public Token copy() {
         Token t = new Token(instanceId, currentNodeId);
         try {
-            java.lang.reflect.Field fid = Token.class.getDeclaredField("id");
+            Field fid = Token.class.getDeclaredField("id");
             fid.setAccessible(true);
             fid.set(t, id);
-            java.lang.reflect.Field fa = Token.class.getDeclaredField("arrival");
+            Field fa = Token.class.getDeclaredField("arrival");
             fa.setAccessible(true);
             fa.set(t, arrival);
         } catch (ReflectiveOperationException ex) {

@@ -29,7 +29,7 @@ final class PathNavigator {
      * 找当前节点之前的最近一个 USER_TASK 节点
      * @return userTaskNodeId,若找不到返回 null
      */
-    static String findPreviousUserTask(com.workflow.definition.ProcessDefinition def, String fromNodeId) {
+    static String findPreviousUserTask(ProcessDefinition def, String fromNodeId) {
         Set<String> visited = new HashSet<>();
         Deque<String> queue = new ArrayDeque<>();
         // 入参节点的反向入口(谁连到 fromNodeId)

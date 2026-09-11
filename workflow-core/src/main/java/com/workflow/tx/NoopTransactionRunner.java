@@ -1,5 +1,7 @@
 package com.workflow.tx;
 
+import java.util.function.Supplier;
+
 /**
  * 空事务实现：不开事务，直接执行。
  *
@@ -12,7 +14,7 @@ enum NoopTransactionRunner implements TransactionRunner {
     INSTANCE;
 
     @Override
-    public <T> T execute(java.util.function.Supplier<T> work) {
+    public <T> T execute(Supplier<T> work) {
         return work.get();
     }
 

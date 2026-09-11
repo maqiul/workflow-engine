@@ -5,7 +5,11 @@ import com.workflow.enums.InstanceStatus;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.tx.TransactionContext;
 
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -113,22 +117,22 @@ public class InMemoryInstanceRepository implements InstanceRepository {
     }
 
     @Override
-    public java.util.List<ProcessStatusCount> countGroupByProcessAndStatus() {
+    public List<ProcessStatusCount> countGroupByProcessAndStatus() {
         return countGroupByProcessAndStatus(null);
     }
 
     @Override
-    public java.util.List<ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
-        java.util.Map<String, java.util.Map<InstanceStatus, Long>> g = new java.util.LinkedHashMap<>();
+    public List<ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
+        Map<String, Map<InstanceStatus, Long>> g = new LinkedHashMap<>();
         for (ProcessInstance i : store.values()) {
             // 租户过滤：tenantId 为 null 时不过滤
             if (tenantId != null && !tenantId.equals(i.getTenantId())) {
                 continue;
             }
-            g.computeIfAbsent(i.getProcessKey(), k -> new java.util.EnumMap<>(InstanceStatus.class))
+            g.computeIfAbsent(i.getProcessKey(), k -> new EnumMap<>(InstanceStatus.class))
              .merge(i.getStatus(), 1L, Long::sum);
         }
-        java.util.List<ProcessStatusCount> out = new java.util.ArrayList<>();
+        List<ProcessStatusCount> out = new ArrayList<>();
         g.forEach((k, m) -> m.forEach((s, c) -> out.add(new ProcessStatusCount(k, s, c))));
         return out;
     }

@@ -1,6 +1,7 @@
 package com.workflow.history;
 
 import com.workflow.repository.HistoryRepository;
+import com.workflow.tx.TransactionRunner;
 
 import java.util.Objects;
 
@@ -36,7 +37,7 @@ public final class HistoryRetention {
      * 删除早于 {@code cutoffMillis} 的历史。
      *
      * <p><b>务必用 {@link #purgeBefore(HistoryRepository,
-     * com.workflow.tx.TransactionRunner, long)} 那个带事务的重载</b>：
+     * TransactionRunner, long)} 那个带事务的重载</b>：
      * 不带事务时两类删除各自提交，中途失败会留下"任务清了、活动还在"的半截归档，
      * 报表会出现凭空少一半的实例。本重载仅为兼容与测试便利保留。
      *
@@ -58,7 +59,7 @@ public final class HistoryRetention {
      * EntityManager / SqlSession，语义一致。
      */
     public static CleanupResult purgeBefore(HistoryRepository repo,
-                                            com.workflow.tx.TransactionRunner tx,
+                                            TransactionRunner tx,
                                             long cutoffMillis) {
         if (tx == null) {
             return purgeBefore(repo, cutoffMillis);
@@ -68,7 +69,7 @@ public final class HistoryRetention {
 
     /** 保留最近 {@code days} 天，更早的删掉（单事务）。 */
     public static CleanupResult purgeOlderThanDays(HistoryRepository repo,
-                                                   com.workflow.tx.TransactionRunner tx,
+                                                   TransactionRunner tx,
                                                    int days) {
         return purgeBefore(repo, tx, cutoffForDays(days));
     }

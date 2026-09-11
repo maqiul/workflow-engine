@@ -8,6 +8,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 /**
  * InMemory 审计日志仓储 - 基于内存存储
@@ -66,14 +67,14 @@ public class InMemoryAuditLogRepository implements AuditLogRepository {
     }
 
     @Override
-    public java.util.List<EventTypeCount> countGroupByEventTypePrefix(String prefix) {
+    public List<EventTypeCount> countGroupByEventTypePrefix(String prefix) {
         return logs.stream()
                 .filter(log -> log.getEventType().name().startsWith(prefix))
-                .collect(java.util.stream.Collectors.groupingBy(
+                .collect(Collectors.groupingBy(
                         AuditLog::getEventType,
-                        java.util.stream.Collectors.counting()))
+                        Collectors.counting()))
                 .entrySet().stream()
                 .map(e -> new EventTypeCount(e.getKey(), e.getValue()))
-                .collect(java.util.stream.Collectors.toList());
+                .collect(Collectors.toList());
     }
 }

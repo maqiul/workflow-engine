@@ -4,6 +4,7 @@ import com.workflow.definition.Candidate;
 import com.workflow.enums.CandidateStrategy;
 import com.workflow.enums.TaskStatus;
 
+import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -122,7 +123,7 @@ public final class TaskInstance {
 
     private void setIdViaReflection(String value) {
         try {
-            java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("id");
+            Field f = TaskInstance.class.getDeclaredField("id");
             f.setAccessible(true);
             f.set(this, value);
         } catch (ReflectiveOperationException ex) {

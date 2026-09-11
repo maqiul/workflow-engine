@@ -5,6 +5,7 @@ import com.workflow.enums.TaskStatus;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 历史任务实例 —— 一张待办从产生到落定的完整记录。
@@ -35,8 +36,8 @@ public final class HistoricTaskInstance {
      * 连续快速完成的两个任务会落在同一毫秒，此时用 taskId（随机 UUID）定序
      * 等于把审批链顺序交给运气 —— 实测会让 manager 排到 apply 前面。
      */
-    private static final java.util.concurrent.atomic.AtomicLong SEQ_GEN =
-            new java.util.concurrent.atomic.AtomicLong();
+    private static final AtomicLong SEQ_GEN =
+            new AtomicLong();
 
     private final String taskId;
     private final String instanceId;

@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 /**
@@ -90,8 +91,8 @@ public class LocalInstanceLocks implements InstanceLockProvider {
     }
 
     private static final class LockEntry {
-        final java.util.concurrent.locks.ReentrantLock lock =
-                new java.util.concurrent.locks.ReentrantLock(true);
+        final ReentrantLock lock =
+                new ReentrantLock(true);
         /** 仅在 {@code locks.compute} 内读写，由 CHM 的 bin 锁保护。 */
         int refCount;
     }

@@ -5,7 +5,9 @@ import com.workflow.enums.TaskStatus;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
 
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -98,7 +100,7 @@ public final class TaskQuery {
     /** 按流程变量过滤（精确匹配；数值类型按数值相等比较） */
     public TaskQuery processVariable(String key, Object value) {
         if (this.processVariables == null) {
-            this.processVariables = new java.util.LinkedHashMap<>();
+            this.processVariables = new LinkedHashMap<>();
         }
         this.processVariables.put(key, value);
         return this;
@@ -267,8 +269,8 @@ public final class TaskQuery {
         if (!"createTime".equals(orderByField)) {
             return source;
         }
-        java.util.Comparator<TaskInstance> cmp =
-                java.util.Comparator.comparingLong(TaskInstance::getCreateTime)
+        Comparator<TaskInstance> cmp =
+                Comparator.comparingLong(TaskInstance::getCreateTime)
                         // 同一毫秒内用 id 兜底，保证结果稳定可复现
                         .thenComparing(TaskInstance::getId);
         return source.sorted(ascending ? cmp : cmp.reversed());

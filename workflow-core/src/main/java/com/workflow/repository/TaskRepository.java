@@ -1,5 +1,6 @@
 package com.workflow.repository;
 
+import com.workflow.enums.TaskStatus;
 import com.workflow.runtime.TaskInstance;
 
 import java.util.List;
@@ -39,7 +40,7 @@ public interface TaskRepository {
     }
 
     /** 按状态查找任务 */
-    default List<TaskInstance> findByStatus(com.workflow.enums.TaskStatus status) {
+    default List<TaskInstance> findByStatus(TaskStatus status) {
         throw new UnsupportedOperationException("findByStatus not implemented");
     }
 

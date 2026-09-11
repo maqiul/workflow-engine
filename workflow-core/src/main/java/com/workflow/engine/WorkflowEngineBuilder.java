@@ -2,6 +2,9 @@ package com.workflow.engine;
 
 import com.workflow.concurrency.InstanceLockProvider;
 import com.workflow.concurrency.LocalInstanceLocks;
+import com.workflow.dmn.DecisionHistoryRepository;
+import com.workflow.dmn.DecisionRepository;
+import com.workflow.enums.HistoryKind;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.CarbonCopyRepository;
 import com.workflow.repository.DelegationRepository;
@@ -53,10 +56,10 @@ public final class WorkflowEngineBuilder {
     private NotificationService notificationService;
     private CarbonCopyRepository carbonCopyRepository;
     private HistoryRepository historyRepository;
-    private EnumSet<com.workflow.enums.HistoryKind> historyKinds = EnumSet.allOf(com.workflow.enums.HistoryKind.class);
+    private EnumSet<HistoryKind> historyKinds = EnumSet.allOf(HistoryKind.class);
     private EventRepository eventRepository;
-    private com.workflow.dmn.DecisionRepository decisionRepository;
-    private com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepository;
+    private DecisionRepository decisionRepository;
+    private DecisionHistoryRepository decisionHistoryRepository;
     private InstanceLockProvider lockProvider;
     private TransactionRunner transactionRunner;
     private int conflictRetries = 3;
@@ -120,7 +123,7 @@ public final class WorkflowEngineBuilder {
     }
 
     /** 历史类别；null 或空集表示不写任何历史 */
-    public WorkflowEngineBuilder historyKinds(EnumSet<com.workflow.enums.HistoryKind> historyKinds) {
+    public WorkflowEngineBuilder historyKinds(EnumSet<HistoryKind> historyKinds) {
         this.historyKinds = historyKinds;
         return this;
     }
@@ -132,13 +135,13 @@ public final class WorkflowEngineBuilder {
     }
 
     /** 决策仓储；不设置时不启用决策网关 */
-    public WorkflowEngineBuilder decisionRepository(com.workflow.dmn.DecisionRepository decisionRepository) {
+    public WorkflowEngineBuilder decisionRepository(DecisionRepository decisionRepository) {
         this.decisionRepository = decisionRepository;
         return this;
     }
 
     /** 决策历史仓储；不设置时不记录决策历史 */
-    public WorkflowEngineBuilder decisionHistoryRepository(com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepository) {
+    public WorkflowEngineBuilder decisionHistoryRepository(DecisionHistoryRepository decisionHistoryRepository) {
         this.decisionHistoryRepository = decisionHistoryRepository;
         return this;
     }

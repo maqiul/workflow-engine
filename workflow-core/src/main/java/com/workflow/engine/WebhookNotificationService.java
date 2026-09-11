@@ -5,10 +5,12 @@ import com.workflow.runtime.TaskInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 /**
@@ -75,11 +77,11 @@ public class WebhookNotificationService implements NotificationService {
         HttpRequest req = HttpRequest.newBuilder(URI.create(url))
                 .timeout(timeout)
                 .header("Content-Type", "application/json; charset=UTF-8")
-                .POST(HttpRequest.BodyPublishers.ofString(payload, java.nio.charset.StandardCharsets.UTF_8))
+                .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
                 .build();
         HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() >= 400) {
-            throw new java.io.IOException("webhook 返回状态 " + resp.statusCode());
+            throw new IOException("webhook 返回状态 " + resp.statusCode());
         }
     }
 }
