@@ -4,6 +4,8 @@ import com.workflow.definition.Candidate;
 import com.workflow.definition.NodeDefinition;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.definition.Transition;
+import com.workflow.delegate.DelegateExecution;
+import com.workflow.delegate.ServiceTaskDelegate;
 import com.workflow.enums.CandidateStrategy;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.NodeType;
@@ -27,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Token 推进器 - 负责流程实例中 Token 的路由与状态转换
@@ -60,6 +63,7 @@ public class TokenAdvancer {
     private final Consumer<ProcessInstance> onSubProcessCompleted;
     private final Consumer<Runnable> afterCommitSchedule;
     private final Consumer<ProcessInstance> onProcessCompleted;
+    private final Function<String, ServiceTaskDelegate> delegateProvider;
     
     public interface SubProcessStarter {
         void startSubProcess(ProcessInstance parent, ProcessDefinition parentDef, 
@@ -79,7 +83,7 @@ public class TokenAdvancer {
             Consumer<ProcessInstance> onProcessCompleted) {
         this(taskRepo, instanceRepo, eventRepo, historyRepo, scheduler, onTaskCreated,
              subProcessStarter, onSubProcessCompleted, afterCommitSchedule, onProcessCompleted,
-             null, null, null);
+             null, null, null, null);
     }
     
     public TokenAdvancer(
@@ -96,6 +100,26 @@ public class TokenAdvancer {
             com.workflow.dmn.DecisionRepository decisionRepo,
             com.workflow.dmn.DecisionTableExecutor decisionExecutor,
             com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo) {
+        this(taskRepo, instanceRepo, eventRepo, historyRepo, scheduler, onTaskCreated,
+             subProcessStarter, onSubProcessCompleted, afterCommitSchedule, onProcessCompleted,
+             decisionRepo, decisionExecutor, decisionHistoryRepo, null);
+    }
+    
+    public TokenAdvancer(
+            TaskRepository taskRepo,
+            InstanceRepository instanceRepo,
+            EventRepository eventRepo,
+            HistoryRepository historyRepo,
+            TimeoutScheduler scheduler,
+            Consumer<TaskInstance> onTaskCreated,
+            SubProcessStarter subProcessStarter,
+            Consumer<ProcessInstance> onSubProcessCompleted,
+            Consumer<Runnable> afterCommitSchedule,
+            Consumer<ProcessInstance> onProcessCompleted,
+            com.workflow.dmn.DecisionRepository decisionRepo,
+            com.workflow.dmn.DecisionTableExecutor decisionExecutor,
+            com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo,
+            Function<String, ServiceTaskDelegate> delegateProvider) {
         this.taskRepo = taskRepo;
         this.instanceRepo = instanceRepo;
         this.eventRepo = eventRepo;
@@ -109,6 +133,7 @@ public class TokenAdvancer {
         this.decisionRepo = decisionRepo;
         this.decisionExecutor = decisionExecutor;
         this.decisionHistoryRepo = decisionHistoryRepo;
+        this.delegateProvider = delegateProvider != null ? delegateProvider : key -> null;
     }
     
     public void advanceToken(ProcessInstance instance, ProcessDefinition def, String tokenId,
@@ -176,6 +201,9 @@ public class TokenAdvancer {
             }
             case MULTI_INSTANCE -> {
                 handleMultiInstance(instance, def, tokenId, current, recordsActivity);
+            }
+            case SERVICE_TASK -> {
+                handleServiceTask(instance, def, tokenId, current, recordsActivity);
             }
         }
 
@@ -792,6 +820,55 @@ public class TokenAdvancer {
                 log.info("[TokenAdvancer] MULTI_INSTANCE 节点 {} 或签任一完成,取消其余,推进", current.getId());
                 advanceMultiInstanceToken(instance, def, token, current, tokenId, recordsActivity);
             }
+        }
+    }
+
+    /**
+     * 处理服务任务节点 - 执行 delegate 后自动推进
+     */
+    private void handleServiceTask(ProcessInstance instance, ProcessDefinition def,
+                                   String tokenId, NodeDefinition current, boolean recordsActivity) {
+        String delegateKey = current.getDelegateKey();
+        if (delegateKey == null || delegateKey.isBlank()) {
+            throw new IllegalStateException("SERVICE_TASK 节点 " + current.getId() + " 未指定 delegateKey");
+        }
+
+        ServiceTaskDelegate delegate = delegateProvider.apply(delegateKey);
+        if (delegate == null) {
+            log.error("SERVICE_TASK 节点 {} 的 delegate '{}' 未注册", current.getId(), delegateKey);
+            instance.suspend();
+            instanceRepo.save(instance);
+            throw new IllegalStateException("delegate '" + delegateKey + "' 未注册，流程已挂起");
+        }
+
+        DelegateExecution execution = new DelegateExecution(
+                instance.getId(),
+                current.getId(),
+                instance.getVariables(),
+                def
+        );
+
+        try {
+            log.info("[TokenAdvancer] 执行 SERVICE_TASK 节点 {} delegate={}", current.getId(), delegateKey);
+            delegate.execute(execution);
+            log.info("[TokenAdvancer] SERVICE_TASK 节点 {} 执行成功，自动推进", current.getId());
+
+            List<Transition> outs = def.getOutgoing(current.getId());
+            if (outs.isEmpty()) {
+                throw new IllegalStateException("SERVICE_TASK 节点 " + current.getId() + " 没有出口转移");
+            }
+            if (outs.size() > 1) {
+                throw new IllegalStateException("SERVICE_TASK 节点 " + current.getId() + " 有多个出口转移（暂不支持）");
+            }
+            Token token = instance.getActiveTokens().get(tokenId);
+            token.moveTo(outs.get(0).getTo());
+            instanceRepo.save(instance);
+            advanceToken(instance, def, tokenId, recordsActivity);
+        } catch (Exception e) {
+            log.error("SERVICE_TASK 节点 {} delegate 执行失败: {}", current.getId(), e.getMessage(), e);
+            instance.suspend();
+            instanceRepo.save(instance);
+            throw new RuntimeException("SERVICE_TASK delegate 执行失败，流程已挂起", e);
         }
     }
 }

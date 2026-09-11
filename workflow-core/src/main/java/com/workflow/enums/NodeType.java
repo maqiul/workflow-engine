@@ -27,5 +27,7 @@ public enum NodeType {
     /** 决策节点 - 基于 DMN 决策表进行业务规则决策 */
     DECISION,
     /** 多实例任务节点 - 运行时按集合变量展开为「每人一个独立任务」，ALL/ANY 完成判定（OA 会签/或签） */
-    MULTI_INSTANCE
+    MULTI_INSTANCE,
+    /** 服务任务节点 - 自动执行 delegate，执行完自动推进（不创建 TaskInstance） */
+    SERVICE_TASK
 }

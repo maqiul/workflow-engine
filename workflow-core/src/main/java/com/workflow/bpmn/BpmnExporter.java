@@ -121,6 +121,7 @@ public final class BpmnExporter {
             case MULTI_INSTANCE -> throw new UnsupportedOperationException(
                     "MULTI_INSTANCE 节点暂无 BPMN 标准多实例映射，不支持导出: node=" + node.getId()
                             + "。需要交换格式请先改造为 USER_TASK，或自行写 multiInstanceLoopCharacteristics 扩展。");
+            case SERVICE_TASK -> "serviceTask";
         };
 
         var el = doc.createElementNS(BPMN_NS, tag);

@@ -3,21 +3,30 @@ package com.workflow.engine;
 import com.workflow.concurrency.InstanceLockProvider;
 import com.workflow.concurrency.LocalInstanceLocks;
 import com.workflow.concurrency.WorkflowConflictException;
+import com.workflow.delegate.DelegateExecution;
+import com.workflow.delegate.ServiceTaskDelegate;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.NodeDefinition;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.definition.Transition;
+import com.workflow.dmn.DecisionHistoryRepository;
+import com.workflow.dmn.DecisionRepository;
+import com.workflow.dmn.DecisionTableExecutor;
 import com.workflow.enums.AuditEventType;
 import com.workflow.enums.CandidateStrategy;
+import com.workflow.enums.HistoryKind;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.NodeType;
 import com.workflow.enums.TaskStatus;
 import com.workflow.enums.TimeoutPolicy;
 import com.workflow.listener.ExecutionListener;
 import com.workflow.listener.TaskListener;
+import com.workflow.monitor.MonitoringService;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.CarbonCopyRepository;
 import com.workflow.repository.DelegationRepository;
+import com.workflow.repository.EventRepository;
+import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
@@ -33,11 +42,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 引擎核心实现
@@ -69,18 +80,18 @@ public class WorkflowEngine implements IWorkflowEngine {
     private final NotificationService notificationService;  // 可为 null（不启用通知）
     private final CarbonCopyRepository carbonCopyRepo;  // 可为 null（不启用抄送）
     /** 历史活动仓储，可为 null（不记录历史）。埋点须在同一事务内写入，见 closeHistoryIfSettled。 */
-    private final com.workflow.repository.HistoryRepository historyRepo;
+    private final HistoryRepository historyRepo;
     /**
      * 记录哪些类别的历史。空集或 null 仓储等价于关闭历史。
      * 活动与任务之间没有递进关系，故用集合而非"级别"枚举。
      */
-    private final java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds;
+    private final EnumSet<HistoryKind> historyKinds;
     /** 事件仓储，可为 null（不启用事件网关）。 */
-    private final com.workflow.repository.EventRepository eventRepo;
+    private final EventRepository eventRepo;
     /** 决策仓储，可为 null（不启用决策网关）。 */
-    private final com.workflow.dmn.DecisionRepository decisionRepo;
+    private final DecisionRepository decisionRepo;
     /** 决策历史仓储，可为 null（不记录决策历史）。 */
-    private final com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo;
+    private final DecisionHistoryRepository decisionHistoryRepo;
 
     /**
      * 并发控制：同一棵流程树的引擎动作串行化。
@@ -122,7 +133,10 @@ public class WorkflowEngine implements IWorkflowEngine {
     private final TimeoutHandler timeoutHandler;
 
     /** 监控服务 - 只读聚合引擎各仓储数据为仪表盘快照 */
-    private final com.workflow.monitor.MonitoringService monitoring;
+    private final MonitoringService monitoring;
+
+    /** 服务任务委托注册表 - 运行时注册的 delegate */
+    private final ConcurrentHashMap<String, ServiceTaskDelegate> delegates = new ConcurrentHashMap<>();
 
     /**
      * 最简构造器 - 仅注入三个必填仓储
@@ -147,11 +161,11 @@ public class WorkflowEngine implements IWorkflowEngine {
                    DelegationRepository delegationRepo,
                    NotificationService notificationService,
                    CarbonCopyRepository carbonCopyRepo,
-                   com.workflow.repository.HistoryRepository historyRepo,
-                   java.util.EnumSet<com.workflow.enums.HistoryKind> historyKinds,
-                   com.workflow.repository.EventRepository eventRepo,
-                   com.workflow.dmn.DecisionRepository decisionRepo,
-                   com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo,
+                   HistoryRepository historyRepo,
+                   EnumSet<HistoryKind> historyKinds,
+                   EventRepository eventRepo,
+                   DecisionRepository decisionRepo,
+                   DecisionHistoryRepository decisionHistoryRepo,
                    InstanceLockProvider locks,
                    TransactionRunner tx,
                    int conflictRetries,
@@ -210,8 +224,9 @@ public class WorkflowEngine implements IWorkflowEngine {
             this::afterCommitScheduleInternal,
             listenerSupport::fireExecutionCompleted,
             decisionRepo,
-            decisionRepo != null ? new com.workflow.dmn.DecisionTableExecutor() : null,
-            decisionHistoryRepo
+            decisionRepo != null ? new DecisionTableExecutor() : null,
+            decisionHistoryRepo,
+            this::getDelegate  // 传入 delegate provider
         );
         
         // 初始化子流程处理器
@@ -225,6 +240,29 @@ public class WorkflowEngine implements IWorkflowEngine {
         // 初始化监控服务(只读聚合)
         this.monitoring = new com.workflow.monitor.MonitoringService(
             instanceRepo, taskRepo, historyRepo, auditLogRepo);
+    }
+
+    /**
+     * 注册服务任务委托
+     * 
+     * @param key delegate 的唯一标识
+     * @param delegate 要注册的 delegate
+     */
+    public void registerDelegate(String key, com.workflow.delegate.ServiceTaskDelegate delegate) {
+        Objects.requireNonNull(key, "delegate key 不能为空");
+        Objects.requireNonNull(delegate, "delegate 不能为空");
+        delegates.put(key, delegate);
+        log.info("注册服务任务委托: key={}", key);
+    }
+
+    /**
+     * 获取已注册的 delegate
+     * 
+     * @param key delegate 的唯一标识
+     * @return delegate 实例，未注册返回 null
+     */
+    public com.workflow.delegate.ServiceTaskDelegate getDelegate(String key) {
+        return delegates.get(key);
     }
 
     /**

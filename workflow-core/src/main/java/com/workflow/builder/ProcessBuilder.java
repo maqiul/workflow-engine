@@ -101,6 +101,13 @@ public class ProcessBuilder {
         return this;
     }
 
+    /** 注册服务任务节点（自动执行 delegate，执行完自动推进） */
+    public ProcessBuilder serviceTask(String id, String displayName, String delegateKey) {
+        checkDuplicate(id);
+        nodes.put(id, NodeDefinition.serviceTask(id, displayName, delegateKey));
+        return this;
+    }
+
     /** 注册排他网关 */
     public ProcessBuilder exclusiveGateway(String id) {
         checkDuplicate(id);

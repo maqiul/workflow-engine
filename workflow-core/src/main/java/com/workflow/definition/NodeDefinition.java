@@ -40,22 +40,24 @@ public final class NodeDefinition {
     private final String decisionTableId;
     /** 仅 USER_TASK 节点有值 - 运行时从该变量获取办理人(与 candidate 互斥) */
     private final String assigneeVariable;
+    /** 仅 SERVICE_TASK 节点有值 - 注册的 delegate key */
+    private final String delegateKey;
 
     /** 构造器 - 普通节点(无子流程引用、无超时、无动态多实例) */
     private NodeDefinition(String id, String name, NodeType type, Candidate candidate) {
-        this(id, name, type, candidate, null, 0, TimeoutPolicy.NONE, null, null, null, null, null, null, null, null);
+        this(id, name, type, candidate, null, 0, TimeoutPolicy.NONE, null, null, null, null, null, null, null, null, null);
     }
 
     /** 构造器 - 含子流程引用,无超时(兼容旧序列化数据) */
     private NodeDefinition(String id, String name, NodeType type, Candidate candidate, String subProcessKey) {
-        this(id, name, type, candidate, subProcessKey, 0, TimeoutPolicy.NONE, null, null, null, null, null, null, null, null);
+        this(id, name, type, candidate, subProcessKey, 0, TimeoutPolicy.NONE, null, null, null, null, null, null, null, null, null);
     }
 
     /** 构造器 - 含超时,无动态多实例(兼容旧序列化数据) */
     private NodeDefinition(String id, String name, NodeType type, Candidate candidate,
                            String subProcessKey, long timeoutMillis,
                            TimeoutPolicy timeoutPolicy, String timeoutTargetUserId) {
-        this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId, null, null, null, null, null, null, null);
+        this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId, null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -66,7 +68,7 @@ public final class NodeDefinition {
                            TimeoutPolicy timeoutPolicy, String timeoutTargetUserId,
                            String dynamicParallelVariable, CandidateStrategy dynamicParallelStrategy) {
         this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId, 
-             dynamicParallelVariable, dynamicParallelStrategy, null, null, null, null, null);
+             dynamicParallelVariable, dynamicParallelStrategy, null, null, null, null, null, null);
     }
 
     /**
@@ -78,7 +80,7 @@ public final class NodeDefinition {
                            String dynamicParallelVariable, CandidateStrategy dynamicParallelStrategy,
                            MessageEvent messageEvent, SignalEvent signalEvent, TimerBoundaryEvent timerBoundaryEvent) {
         this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId,
-             dynamicParallelVariable, dynamicParallelStrategy, messageEvent, signalEvent, timerBoundaryEvent, null, null);
+             dynamicParallelVariable, dynamicParallelStrategy, messageEvent, signalEvent, timerBoundaryEvent, null, null, null);
     }
 
     /**
@@ -91,7 +93,20 @@ public final class NodeDefinition {
                            MessageEvent messageEvent, SignalEvent signalEvent, TimerBoundaryEvent timerBoundaryEvent,
                            String decisionTableId) {
         this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId,
-             dynamicParallelVariable, dynamicParallelStrategy, messageEvent, signalEvent, timerBoundaryEvent, decisionTableId, null);
+             dynamicParallelVariable, dynamicParallelStrategy, messageEvent, signalEvent, timerBoundaryEvent, decisionTableId, null, null);
+    }
+
+    /**
+     * 构造器 - 含动态 assignee(兼容旧序列化数据)
+     */
+    private NodeDefinition(String id, String name, NodeType type, Candidate candidate,
+                           String subProcessKey, long timeoutMillis,
+                           TimeoutPolicy timeoutPolicy, String timeoutTargetUserId,
+                           String dynamicParallelVariable, CandidateStrategy dynamicParallelStrategy,
+                           MessageEvent messageEvent, SignalEvent signalEvent, TimerBoundaryEvent timerBoundaryEvent,
+                           String decisionTableId, String assigneeVariable) {
+        this(id, name, type, candidate, subProcessKey, timeoutMillis, timeoutPolicy, timeoutTargetUserId,
+             dynamicParallelVariable, dynamicParallelStrategy, messageEvent, signalEvent, timerBoundaryEvent, decisionTableId, assigneeVariable, null);
     }
 
     /**
@@ -105,7 +120,7 @@ public final class NodeDefinition {
                            TimeoutPolicy timeoutPolicy, String timeoutTargetUserId,
                            String dynamicParallelVariable, CandidateStrategy dynamicParallelStrategy,
                            MessageEvent messageEvent, SignalEvent signalEvent, TimerBoundaryEvent timerBoundaryEvent,
-                           String decisionTableId, String assigneeVariable) {
+                           String decisionTableId, String assigneeVariable, String delegateKey) {
         this.id = Objects.requireNonNull(id, "id 不能为空");
         this.name = name != null ? name : id;
         this.type = Objects.requireNonNull(type, "type 不能为空");
@@ -121,6 +136,7 @@ public final class NodeDefinition {
         this.timerBoundaryEvent = timerBoundaryEvent;
         this.decisionTableId = decisionTableId;
         this.assigneeVariable = assigneeVariable;
+        this.delegateKey = delegateKey;
     }
 
     public static NodeDefinition start(String id) {
@@ -138,7 +154,14 @@ public final class NodeDefinition {
     /** 动态 assignee：运行时从变量取办理人 */
     public static NodeDefinition userTask(String id, String name, String assigneeVariable) {
         return new NodeDefinition(id, name, NodeType.USER_TASK, null, null, 0, TimeoutPolicy.NONE, null,
-                null, null, null, null, null, null, assigneeVariable);
+                null, null, null, null, null, null, assigneeVariable, null);
+    }
+
+    /** 服务任务：自动执行 delegate，执行完自动推进 */
+    public static NodeDefinition serviceTask(String id, String name, String delegateKey) {
+        Objects.requireNonNull(delegateKey, "delegateKey 不能为空");
+        return new NodeDefinition(id, name, NodeType.SERVICE_TASK, null, null, 0, TimeoutPolicy.NONE, null,
+                null, null, null, null, null, null, null, delegateKey);
     }
 
     public static NodeDefinition exclusiveGateway(String id) {
@@ -302,6 +325,14 @@ public final class NodeDefinition {
     /** 是否为动态 assignee 节点(运行时从变量取办理人) */
     public boolean hasAssigneeVariable() {
         return type == NodeType.USER_TASK && assigneeVariable != null;
+    }
+
+    /** delegate key - 仅 SERVICE_TASK 节点有值 */
+    public String getDelegateKey() { return delegateKey; }
+
+    /** 是否为服务任务节点 */
+    public boolean isServiceTask() {
+        return type == NodeType.SERVICE_TASK && delegateKey != null;
     }
 
     /** 是否为消息事件节点 */
