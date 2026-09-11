@@ -255,6 +255,23 @@ public interface IWorkflowEngine {
     void migrateInstance(String instanceId, String targetProcessKey,
                          int targetVersion, Map<String, String> nodeMapping, String operator);
 
+    /**
+     * 获取流程定义的拓扑只读视图
+     *
+     * @param processKey 流程定义 key
+     * @param version 版本号（-1 表示最新版）
+     * @return 拓扑视图
+     */
+    com.workflow.topology.TopologyView getTopology(String processKey, int version);
+
+    /**
+     * 获取运行中实例的拓扑视图（含当前 Token 位置）
+     *
+     * @param instanceId 实例 ID
+     * @return 实例拓扑视图（含高亮节点）
+     */
+    com.workflow.topology.InstanceTopologyView getInstanceTopology(String instanceId);
+
     // ========== 监控 ==========
 
     /**

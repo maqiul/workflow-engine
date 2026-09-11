@@ -1574,4 +1574,91 @@ public class WorkflowEngine implements IWorkflowEngine {
     public com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN, String tenantId) {
         return monitoring.snapshot(bottleneckTopN, tenantId);
     }
+
+    // ========== 拓扑自省 ==========
+
+    @Override
+    public com.workflow.topology.TopologyView getTopology(String processKey, int version) {
+        ProcessDefinition def;
+        if (version < 0) {
+            def = processRepo.findByKey(processKey);
+        } else {
+            def = processRepo.findByKeyAndVersion(processKey, version);
+        }
+        if (def == null) {
+            throw new IllegalArgumentException("流程定义不存在：" + processKey + " v" + version);
+        }
+
+        // 构建节点视图
+        List<com.workflow.topology.NodeView> nodes = new ArrayList<>();
+        for (com.workflow.definition.NodeDefinition nodeDef : def.getNodes().values()) {
+            List<String> userIds = nodeDef.getCandidate() != null ? 
+                    new ArrayList<>(nodeDef.getCandidate().getUserIds()) : null;
+            nodes.add(new com.workflow.topology.NodeView(
+                    nodeDef.getId(),
+                    nodeDef.getName(),
+                    nodeDef.getType(),
+                    userIds,
+                    nodeDef.getAssigneeVariable(),
+                    nodeDef.getDelegateKey()
+            ));
+        }
+
+        // 构建连线视图
+        List<com.workflow.topology.TransitionView> transitions = new ArrayList<>();
+        for (com.workflow.definition.NodeDefinition nodeDef : def.getNodes().values()) {
+            List<com.workflow.definition.Transition> outs = def.getOutgoing(nodeDef.getId());
+            if (outs != null) {
+                for (com.workflow.definition.Transition t : outs) {
+                    transitions.add(new com.workflow.topology.TransitionView(
+                            nodeDef.getId(),
+                            t.getTo(),
+                            t.getCondition()
+                    ));
+                }
+            }
+        }
+
+        return new com.workflow.topology.TopologyView(
+                def.getKey(),
+                def.getVersion(),
+                def.getName(),
+                nodes,
+                transitions
+        );
+    }
+
+    @Override
+    public com.workflow.topology.InstanceTopologyView getInstanceTopology(String instanceId) {
+        ProcessInstance instance = instanceRepo.findById(instanceId);
+        if (instance == null) {
+            throw new IllegalArgumentException("实例不存在：" + instanceId);
+        }
+
+        // 获取基础拓扑
+        com.workflow.topology.TopologyView topology = getTopology(instance.getProcessKey(), instance.getProcessVersion());
+
+        // 收集当前 Token 所在节点
+        List<String> activeNodeIds = new ArrayList<>();
+        for (com.workflow.runtime.Token token : instance.getActiveTokens().values()) {
+            activeNodeIds.add(token.getCurrentNodeId());
+        }
+
+        // 收集已完成节点（从历史任务中提取）
+        List<String> completedNodeIds = new ArrayList<>();
+        for (com.workflow.runtime.TaskInstance task : instance.getTasks()) {
+            if (task.getStatus() == com.workflow.enums.TaskStatus.COMPLETED) {
+                if (!completedNodeIds.contains(task.getNodeId())) {
+                    completedNodeIds.add(task.getNodeId());
+                }
+            }
+        }
+
+        return new com.workflow.topology.InstanceTopologyView(
+                topology,
+                activeNodeIds,
+                completedNodeIds,
+                instance.getStatus()
+        );
+    }
 }
