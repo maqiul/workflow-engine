@@ -1491,6 +1491,81 @@ public class WorkflowEngine implements IWorkflowEngine {
     }
 
     @Override
+    public void migrateInstance(String instanceId, String targetProcessKey,
+                                int targetVersion, Map<String, String> nodeMapping, String operator) {
+        exclusiveVoid(instanceId, "migrateInstance", () -> {
+            // 1. 校验实例状态
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            if (instance.getStatus() != InstanceStatus.RUNNING) {
+                throw new IllegalStateException("仅 RUNNING 实例可迁移，当前状态：" + instance.getStatus());
+            }
+
+            // 2. 获取目标流程定义
+            ProcessDefinition targetDef;
+            if (targetVersion < 0) {
+                targetDef = processRepo.findByKey(targetProcessKey);
+            } else {
+                targetDef = processRepo.findByKeyAndVersion(targetProcessKey, targetVersion);
+            }
+            if (targetDef == null) {
+                throw new IllegalStateException("目标流程定义不存在：" + targetProcessKey + " v" + targetVersion);
+            }
+
+            // 3. 校验节点映射
+            Map<String, String> effectiveMapping = nodeMapping != null ? nodeMapping : Map.of();
+            for (Token token : instance.getActiveTokens().values()) {
+                String oldNodeId = token.getCurrentNodeId();
+                String newNodeId = effectiveMapping.getOrDefault(oldNodeId, oldNodeId);
+                NodeDefinition newNode = targetDef.getNode(newNodeId);
+                if (newNode == null) {
+                    throw new IllegalStateException("目标节点不存在：" + newNodeId);
+                }
+                // 类型兼容性校验
+                NodeDefinition oldNode = defOf(instance).getNode(oldNodeId);
+                if (oldNode != null && oldNode.getType() != newNode.getType()) {
+                    throw new IllegalStateException("节点类型不兼容：" + oldNodeId + "(" + oldNode.getType() + ") → " + newNodeId + "(" + newNode.getType() + ")");
+                }
+            }
+
+            // 4. 执行迁移
+            setFinal(instance, "processKey", targetProcessKey);
+            setFinal(instance, "processVersion", targetDef.getVersion());
+            for (Token token : instance.getActiveTokens().values()) {
+                String oldNodeId = token.getCurrentNodeId();
+                String newNodeId = effectiveMapping.getOrDefault(oldNodeId, oldNodeId);
+                if (!oldNodeId.equals(newNodeId)) {
+                    setFinal(token, "currentNodeId", newNodeId);
+                }
+            }
+            instanceRepo.save(instance);
+
+            // 5. 记录审计
+            if (auditLogRepo != null) {
+                auditLogRepo.save(new AuditLog(
+                        instanceId,
+                        null,
+                        AuditEventType.INSTANCE_MIGRATED,
+                        operator != null ? operator : SYSTEM_USER,
+                        "迁移到 " + targetProcessKey + " v" + targetDef.getVersion() +
+                                (effectiveMapping.isEmpty() ? "" : " 节点映射：" + effectiveMapping)
+                ));
+            }
+            log.info("[引擎] 实例 {} 迁移到 {} v{}，节点映射：{}", instanceId, targetProcessKey, targetDef.getVersion(), effectiveMapping);
+        });
+    }
+
+    /** 反射设置 final 字段（用于迁移等场景） */
+    private static void setFinal(Object target, String fieldName, Object value) {
+        try {
+            java.lang.reflect.Field f = target.getClass().getDeclaredField(fieldName);
+            f.setAccessible(true);
+            f.set(target, value);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("设置字段失败：" + fieldName, ex);
+        }
+    }
+
+    @Override
     public com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN) {
         return monitoring.snapshot(bottleneckTopN);
     }

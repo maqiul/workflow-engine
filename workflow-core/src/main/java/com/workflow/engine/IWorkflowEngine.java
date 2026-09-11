@@ -239,6 +239,22 @@ public interface IWorkflowEngine {
      */
     BatchResult batchTerminateInstances(List<String> instanceIds, String operator, String reason);
 
+    /**
+     * 迁移运行中实例到新版本流程定义
+     *
+     * <p>迁移后实例的 processKey/processVersion 更新为目标版本，
+     * 所有活跃 Token 的 currentNodeId 按 nodeMapping 更新。
+     *
+     * @param instanceId       要迁移的实例 ID
+     * @param targetProcessKey 目标流程定义 key（通常与原实例相同）
+     * @param targetVersion    目标版本号（-1 表示最新版）
+     * @param nodeMapping      节点映射：旧节点 ID → 新节点 ID
+     *                         未映射的节点必须在新版中仍存在且 ID 相同
+     * @param operator         操作人（用于审计）
+     */
+    void migrateInstance(String instanceId, String targetProcessKey,
+                         int targetVersion, Map<String, String> nodeMapping, String operator);
+
     // ========== 监控 ==========
 
     /**

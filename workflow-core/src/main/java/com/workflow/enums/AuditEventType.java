@@ -33,5 +33,7 @@ public enum AuditEventType {
     /** 加签 - 多实例会签节点新增审批人 */
     SIGN_ADDED,
     /** 减签 - 多实例会签节点移除审批人 */
-    SIGN_REMOVED
+    SIGN_REMOVED,
+    /** 实例迁移 - 运行中实例迁移到新版本流程定义 */
+    INSTANCE_MIGRATED
 }
