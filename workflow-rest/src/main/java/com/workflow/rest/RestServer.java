@@ -11,6 +11,7 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
@@ -74,7 +75,7 @@ public class RestServer implements AutoCloseable {
             String body = readBody(exchange);
 
             RestResponse resp = api.handle(new RestRequest(
-                    exchange.getRequestMethod(), path, query, body));
+                    exchange.getRequestMethod(), path, query, body, readHeaders(exchange)));
 
             byte[] payload = resp.jsonBody() == null
                     ? new byte[0]
@@ -105,6 +106,23 @@ public class RestServer implements AutoCloseable {
             return null;
         }
         return new String(raw, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 收集请求头。
+     *
+     * <p>凭证只能从请求头拿，所以传输层必须把它传上去 —— 漏了这一步，
+     * {@link RequestAuthenticator} 拿到的请求永远没有密钥，表现为"配了鉴权但全被拒"。
+     */
+    private static Map<String, String> readHeaders(HttpExchange exchange) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : exchange.getRequestHeaders().entrySet()) {
+            List<String> values = entry.getValue();
+            // 同名多值按 HTTP 语义用逗号连接；本场景只有单值，但传输层不该丢信息
+            out.put(entry.getKey(),
+                    values == null || values.isEmpty() ? "" : String.join(",", values));
+        }
+        return out;
     }
 
     private static Map<String, String> parseQuery(String rawQuery) {

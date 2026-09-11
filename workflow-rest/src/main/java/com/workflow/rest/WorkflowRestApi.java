@@ -29,6 +29,9 @@ import java.util.Objects;
  * 因此绝大多数行为可以用直接方法调用来断言，不必监听端口、不必序列化往返。
  * 真 HTTP 往返只在 {@code RestServerTest} 里验一次传输层。
  *
+ * <p><b>鉴权是可选的先置步骤</b>：{@link #handle} 会先把请求交给
+ * {@link RequestAuthenticator}，默认实现放行一切。本模块不引入安全框架，只留钩子。
+ *
  * <p><b>为什么 409 是这一层最重要的设计</b>：引擎在 v3.7 之后有了确定的并发语义 ——
  * 同棵流程树串行、后到的操作会被前置校验正当拒绝（"任务非 PENDING 状态"）。
  * 如果 REST 层把它压成 500 或 400，客户端就分不清"我请求写错了"和
@@ -44,6 +47,7 @@ public class WorkflowRestApi {
     private final IWorkflowEngine engine;
     private final HistoryRepository historyRepo;   // 可为 null：该部署未启用历史
     private final ProcessRepository processRepo;   // 可为 null：跳过定义存在性预检
+    private final RequestAuthenticator authenticator;
 
     public WorkflowRestApi(IWorkflowEngine engine) {
         this(engine, null, null);
@@ -51,15 +55,26 @@ public class WorkflowRestApi {
 
     public WorkflowRestApi(IWorkflowEngine engine, HistoryRepository historyRepo,
                            ProcessRepository processRepo) {
+        this(engine, historyRepo, processRepo, RequestAuthenticator.NONE);
+    }
+
+    /** @param authenticator 请求鉴权器；传 {@code null} 等价于放行 */
+    public WorkflowRestApi(IWorkflowEngine engine, HistoryRepository historyRepo,
+                           ProcessRepository processRepo, RequestAuthenticator authenticator) {
         this.engine = Objects.requireNonNull(engine);
         this.historyRepo = historyRepo;
         this.processRepo = processRepo;
+        this.authenticator = authenticator == null ? RequestAuthenticator.NONE : authenticator;
     }
 
     // ========== 入口 ==========
 
     public RestResponse handle(RestRequest req) {
         try {
+            RestResponse denied = authorize(req);
+            if (denied != null) {
+                return denied;
+            }
             return route(req);
         } catch (ResourceNotFound nf) {
             return RestResponse.error(404, nf.getMessage());
@@ -86,6 +101,28 @@ public class WorkflowRestApi {
             log.error("[REST] 未预期错误 {} {}", req.method(), req.path(), unexpected);
             return RestResponse.error(500, "服务内部错误");
         }
+    }
+
+    /**
+     * 鉴权前置检查：放行返回 {@code null}，拒绝返回对应状态码的响应。
+     *
+     * <p>鉴权器自己抛异常时<b>按拒绝处理</b>（fail closed）—— 一个坏掉的鉴权器
+     * 绝不能退化成「全部放行」。这条比它看起来重要：配置错误、外部鉴权服务超时，
+     * 都属于"鉴权器不可用"，此时正确的行为是拒绝服务而不是敞开门。
+     */
+    private RestResponse authorize(RestRequest req) {
+        AuthResult result;
+        try {
+            result = authenticator.authenticate(req);
+        } catch (RuntimeException broken) {
+            log.error("[REST] 鉴权器异常，按拒绝处理 {} {}", req.method(), req.path(), broken);
+            return RestResponse.error(500, "服务内部错误");
+        }
+        if (result == null || result.granted()) {
+            return null;
+        }
+        log.warn("[REST] 鉴权拒绝 {} {} -> {}", req.method(), req.path(), result.status());
+        return RestResponse.error(result.status(), result.message());
     }
 
     private RestResponse route(RestRequest req) {
