@@ -191,15 +191,30 @@ public class TokenAdvancer {
 
         if (existing == null) {
             Token token = instance.getActiveTokens().get(tokenId);
+            // 动态 assignee：运行时从变量取办理人
+            Candidate candidate;
+            if (current.hasAssigneeVariable()) {
+                String varName = current.getAssigneeVariable();
+                Object varValue = instance.getVariable(varName);
+                if (varValue == null) {
+                    throw new IllegalStateException("动态 assignee 变量 '" + varName + "' 未设置");
+                }
+                if (!(varValue instanceof String)) {
+                    throw new IllegalStateException("动态 assignee 变量 '" + varName + "' 必须是 String 类型，实际为 " + varValue.getClass().getSimpleName());
+                }
+                candidate = Candidate.ofAny((String) varValue);
+            } else {
+                candidate = current.getCandidate();
+            }
             TaskInstance task = new TaskInstance(instance.getId(), tokenId,
-                    current.getId(), current.getCandidate());
+                    current.getId(), candidate);
             task.setTenantId(instance.getTenantId());  // 任务继承实例租户
             task.setArrival(token.getArrival());  // 记录到达代次，支持循环回边
             taskRepo.save(task);
             syncTaskInInstance(instance, task);
             attachHistoryTask(instance, current.getId(), tokenId, task.getId(), recordsActivity);
             log.info("[TokenAdvancer] Created task node={} candidate={} taskId={}", 
-                current.getId(), current.getCandidate(), task.getId());
+                current.getId(), candidate, task.getId());
             if (onTaskCreated != null) {
                 onTaskCreated.accept(task);
             }

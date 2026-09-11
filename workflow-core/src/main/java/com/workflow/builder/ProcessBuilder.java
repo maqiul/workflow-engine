@@ -94,6 +94,13 @@ public class ProcessBuilder {
         return this;
     }
 
+    /** 注册用户任务节点（动态 assignee：运行时从变量取办理人） */
+    public ProcessBuilder userTask(String id, String displayName, String assigneeVariable) {
+        checkDuplicate(id);
+        nodes.put(id, NodeDefinition.userTask(id, displayName, assigneeVariable));
+        return this;
+    }
+
     /** 注册排他网关 */
     public ProcessBuilder exclusiveGateway(String id) {
         checkDuplicate(id);
@@ -319,6 +326,19 @@ public class ProcessBuilder {
                     && (n.getTimeoutTargetUserId() == null || n.getTimeoutTargetUserId().isBlank())) {
                 throw new IllegalStateException(
                         "流程 [" + key + "] AUTO_TRANSFER 超时策略必须指定目标用户: " + n.getId());
+            }
+            // USER_TASK 互斥校验：candidate 和 assigneeVariable 不能同时有值
+            if (n.getType() == NodeType.USER_TASK) {
+                boolean hasCandidate = n.getCandidate() != null;
+                boolean hasAssigneeVar = n.getAssigneeVariable() != null;
+                if (hasCandidate && hasAssigneeVar) {
+                    throw new IllegalStateException(
+                            "流程 [" + key + "] USER_TASK 节点 " + n.getId() + " 不能同时指定 candidate 和 assigneeVariable");
+                }
+                if (!hasCandidate && !hasAssigneeVar) {
+                    throw new IllegalStateException(
+                            "流程 [" + key + "] USER_TASK 节点 " + n.getId() + " 必须指定 candidate 或 assigneeVariable");
+                }
             }
         }
 
