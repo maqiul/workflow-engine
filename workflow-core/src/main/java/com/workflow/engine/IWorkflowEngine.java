@@ -1,8 +1,11 @@
 package com.workflow.engine;
 
+import com.workflow.monitor.DashboardMetrics;
 import com.workflow.runtime.CarbonCopy;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
+import com.workflow.topology.InstanceTopologyView;
+import com.workflow.topology.TopologyView;
 
 import java.util.List;
 import java.util.Map;
@@ -262,7 +265,7 @@ public interface IWorkflowEngine {
      * @param version 版本号（-1 表示最新版）
      * @return 拓扑视图
      */
-    com.workflow.topology.TopologyView getTopology(String processKey, int version);
+    TopologyView getTopology(String processKey, int version);
 
     /**
      * 获取运行中实例的拓扑视图（含当前 Token 位置）
@@ -270,7 +273,7 @@ public interface IWorkflowEngine {
      * @param instanceId 实例 ID
      * @return 实例拓扑视图（含高亮节点）
      */
-    com.workflow.topology.InstanceTopologyView getInstanceTopology(String instanceId);
+    InstanceTopologyView getInstanceTopology(String instanceId);
 
     // ========== 监控 ==========
 
@@ -279,7 +282,7 @@ public interface IWorkflowEngine {
      *
      * @param bottleneckTopN 瓶颈节点取前 N 个(按平均耗时降序);传 &lt;0 表示不截断
      */
-    com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN);
+    DashboardMetrics dashboard(int bottleneckTopN);
 
     /**
      * 生成指定租户的监控仪表盘快照(多租户隔离)。
@@ -287,7 +290,7 @@ public interface IWorkflowEngine {
      * @param bottleneckTopN 瓶颈节点取前 N 个
      * @param tenantId 租户 ID；null 表示统计全部
      */
-    default com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN, String tenantId) {
+    default DashboardMetrics dashboard(int bottleneckTopN, String tenantId) {
         // 默认忽略租户(向后兼容)；WorkflowEngine 覆写为真正的租户过滤
         return dashboard(bottleneckTopN);
     }

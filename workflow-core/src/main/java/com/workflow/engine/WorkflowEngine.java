@@ -21,6 +21,7 @@ import com.workflow.enums.TaskStatus;
 import com.workflow.enums.TimeoutPolicy;
 import com.workflow.listener.ExecutionListener;
 import com.workflow.listener.TaskListener;
+import com.workflow.monitor.DashboardMetrics;
 import com.workflow.monitor.MonitoringService;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.CarbonCopyRepository;
@@ -33,14 +34,22 @@ import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.AuditLog;
 import com.workflow.runtime.CarbonCopy;
 import com.workflow.runtime.Delegation;
+import com.workflow.runtime.HistoricTaskInstance;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
 import com.workflow.runtime.Token;
+import com.workflow.topology.InstanceTopologyView;
+import com.workflow.topology.NodeView;
+import com.workflow.topology.TopologyView;
+import com.workflow.topology.TransitionView;
+import com.workflow.tx.TransactionContext;
 import com.workflow.tx.TransactionRunner;
 import com.workflow.tx.UndoLogTransactionRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Field;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -49,6 +58,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 /**
  * 引擎核心实现
@@ -179,8 +190,8 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.carbonCopyRepo = carbonCopyRepo;
         this.historyRepo = historyRepo;
         this.historyKinds = (historyKinds == null || historyKinds.isEmpty())
-                ? java.util.EnumSet.noneOf(com.workflow.enums.HistoryKind.class)
-                : java.util.EnumSet.copyOf(historyKinds);
+                ? EnumSet.noneOf(HistoryKind.class)
+                : EnumSet.copyOf(historyKinds);
         this.eventRepo = eventRepo;
         this.decisionRepo = decisionRepo;
         this.decisionHistoryRepo = decisionHistoryRepo;
@@ -238,7 +249,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         );
 
         // 初始化监控服务(只读聚合)
-        this.monitoring = new com.workflow.monitor.MonitoringService(
+        this.monitoring = new MonitoringService(
             instanceRepo, taskRepo, historyRepo, auditLogRepo);
     }
 
@@ -248,7 +259,7 @@ public class WorkflowEngine implements IWorkflowEngine {
      * @param key delegate 的唯一标识
      * @param delegate 要注册的 delegate
      */
-    public void registerDelegate(String key, com.workflow.delegate.ServiceTaskDelegate delegate) {
+    public void registerDelegate(String key, ServiceTaskDelegate delegate) {
         Objects.requireNonNull(key, "delegate key 不能为空");
         Objects.requireNonNull(delegate, "delegate 不能为空");
         delegates.put(key, delegate);
@@ -261,7 +272,7 @@ public class WorkflowEngine implements IWorkflowEngine {
      * @param key delegate 的唯一标识
      * @return delegate 实例，未注册返回 null
      */
-    public com.workflow.delegate.ServiceTaskDelegate getDelegate(String key) {
+    public ServiceTaskDelegate getDelegate(String key) {
         return delegates.get(key);
     }
 
@@ -283,7 +294,7 @@ public class WorkflowEngine implements IWorkflowEngine {
      * 传空集等于彻底关闭历史写入。
      */
     public WorkflowEngine withHistoryKinds(
-            java.util.EnumSet<com.workflow.enums.HistoryKind> kinds) {
+            EnumSet<HistoryKind> kinds) {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
                 auditLogRepo, delegationRepo, notificationService, carbonCopyRepo,
                 historyRepo, kinds, eventRepo, decisionRepo, decisionHistoryRepo, locks, tx, conflictRetries, retryBackoffMillis);
@@ -292,19 +303,19 @@ public class WorkflowEngine implements IWorkflowEngine {
     /** 是否该写活动历史。 */
     private boolean recordsActivity() {
         return historyRepo != null
-                && historyKinds.contains(com.workflow.enums.HistoryKind.ACTIVITY);
+                && historyKinds.contains(HistoryKind.ACTIVITY);
     }
 
     /** 是否该写任务历史。 */
     private boolean recordsTask() {
         return historyRepo != null
-                && historyKinds.contains(com.workflow.enums.HistoryKind.TASK);
+                && historyKinds.contains(HistoryKind.TASK);
     }
 
     private static InstanceLockProvider passthroughLocks() {
         return new InstanceLockProvider() {
             @Override
-            public <T> T executeLocked(String rootInstanceId, java.util.function.Supplier<T> action) {
+            public <T> T executeLocked(String rootInstanceId, Supplier<T> action) {
                 return action.get();
             }
         };
@@ -336,7 +347,7 @@ public class WorkflowEngine implements IWorkflowEngine {
      * @param op         操作名，仅用于日志与异常定位
      * @param body       业务体
      */
-    private <T> T exclusive(String instanceId, String op, java.util.function.Supplier<T> body) {
+    private <T> T exclusive(String instanceId, String op, Supplier<T> body) {
         WorkflowConflictException last = null;
         for (int attempt = 0; attempt <= conflictRetries; attempt++) {
             try {
@@ -410,7 +421,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         if (st == null || st == TaskStatus.PENDING) {
             return;
         }
-        historyRepo.saveTask(com.workflow.runtime.HistoricTaskInstance.of(
+        historyRepo.saveTask(HistoricTaskInstance.of(
                 task, instance, System.currentTimeMillis()));
     }
 
@@ -803,7 +814,7 @@ public class WorkflowEngine implements IWorkflowEngine {
 
     /** 把调度器等不受事务保护的副作用推迟到事务提交后执行。 */
     private void afterCommitSchedule(Runnable action) {
-        com.workflow.tx.TransactionContext.afterCommit(action);
+        TransactionContext.afterCommit(action);
     }
 
     // ========== 实例级操作 ==========
@@ -1273,8 +1284,8 @@ public class WorkflowEngine implements IWorkflowEngine {
             return;
         }
         
-        List<com.workflow.repository.EventRepository.TimerEvent> expiredTimers = 
-                eventRepo.getExpiredTimers(java.time.Instant.now());
+        List<EventRepository.TimerEvent> expiredTimers = 
+                eventRepo.getExpiredTimers(Instant.now());
         log.info("[引擎] checkAndTriggerTimers 发现 {} 个到期定时器", expiredTimers.size());
         
         for (var timer : expiredTimers) {
@@ -1282,7 +1293,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                 ProcessInstance instance = instanceRepo.findById(timer.instanceId());
                 
                 // 实例可能已经完成或终止，跳过
-                if (instance.getStatus() != com.workflow.enums.InstanceStatus.RUNNING) {
+                if (instance.getStatus() != InstanceStatus.RUNNING) {
                     return;
                 }
                 
@@ -1430,7 +1441,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
 
         List<BatchResult.FailureDetail> failures = new ArrayList<>();
-        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        AtomicInteger successCount = new AtomicInteger(0);
 
         // 使用事务保证原子性
         tx.execute(() -> {
@@ -1462,7 +1473,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
 
         List<BatchResult.FailureDetail> failures = new ArrayList<>();
-        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        AtomicInteger successCount = new AtomicInteger(0);
 
         // 使用事务保证原子性
         tx.execute(() -> {
@@ -1557,7 +1568,7 @@ public class WorkflowEngine implements IWorkflowEngine {
     /** 反射设置 final 字段（用于迁移等场景） */
     private static void setFinal(Object target, String fieldName, Object value) {
         try {
-            java.lang.reflect.Field f = target.getClass().getDeclaredField(fieldName);
+            Field f = target.getClass().getDeclaredField(fieldName);
             f.setAccessible(true);
             f.set(target, value);
         } catch (ReflectiveOperationException ex) {
@@ -1566,19 +1577,19 @@ public class WorkflowEngine implements IWorkflowEngine {
     }
 
     @Override
-    public com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN) {
+    public DashboardMetrics dashboard(int bottleneckTopN) {
         return monitoring.snapshot(bottleneckTopN);
     }
 
     @Override
-    public com.workflow.monitor.DashboardMetrics dashboard(int bottleneckTopN, String tenantId) {
+    public DashboardMetrics dashboard(int bottleneckTopN, String tenantId) {
         return monitoring.snapshot(bottleneckTopN, tenantId);
     }
 
     // ========== 拓扑自省 ==========
 
     @Override
-    public com.workflow.topology.TopologyView getTopology(String processKey, int version) {
+    public TopologyView getTopology(String processKey, int version) {
         ProcessDefinition def;
         if (version < 0) {
             def = processRepo.findByKey(processKey);
@@ -1590,11 +1601,11 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
 
         // 构建节点视图
-        List<com.workflow.topology.NodeView> nodes = new ArrayList<>();
-        for (com.workflow.definition.NodeDefinition nodeDef : def.getNodes().values()) {
+        List<NodeView> nodes = new ArrayList<>();
+        for (NodeDefinition nodeDef : def.getNodes().values()) {
             List<String> userIds = nodeDef.getCandidate() != null ? 
                     new ArrayList<>(nodeDef.getCandidate().getUserIds()) : null;
-            nodes.add(new com.workflow.topology.NodeView(
+            nodes.add(new NodeView(
                     nodeDef.getId(),
                     nodeDef.getName(),
                     nodeDef.getType(),
@@ -1605,12 +1616,12 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
 
         // 构建连线视图
-        List<com.workflow.topology.TransitionView> transitions = new ArrayList<>();
-        for (com.workflow.definition.NodeDefinition nodeDef : def.getNodes().values()) {
-            List<com.workflow.definition.Transition> outs = def.getOutgoing(nodeDef.getId());
+        List<TransitionView> transitions = new ArrayList<>();
+        for (NodeDefinition nodeDef : def.getNodes().values()) {
+            List<Transition> outs = def.getOutgoing(nodeDef.getId());
             if (outs != null) {
-                for (com.workflow.definition.Transition t : outs) {
-                    transitions.add(new com.workflow.topology.TransitionView(
+                for (Transition t : outs) {
+                    transitions.add(new TransitionView(
                             nodeDef.getId(),
                             t.getTo(),
                             t.getCondition()
@@ -1619,7 +1630,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             }
         }
 
-        return new com.workflow.topology.TopologyView(
+        return new TopologyView(
                 def.getKey(),
                 def.getVersion(),
                 def.getName(),
@@ -1629,32 +1640,32 @@ public class WorkflowEngine implements IWorkflowEngine {
     }
 
     @Override
-    public com.workflow.topology.InstanceTopologyView getInstanceTopology(String instanceId) {
+    public InstanceTopologyView getInstanceTopology(String instanceId) {
         ProcessInstance instance = instanceRepo.findById(instanceId);
         if (instance == null) {
             throw new IllegalArgumentException("实例不存在：" + instanceId);
         }
 
         // 获取基础拓扑
-        com.workflow.topology.TopologyView topology = getTopology(instance.getProcessKey(), instance.getProcessVersion());
+        TopologyView topology = getTopology(instance.getProcessKey(), instance.getProcessVersion());
 
         // 收集当前 Token 所在节点
         List<String> activeNodeIds = new ArrayList<>();
-        for (com.workflow.runtime.Token token : instance.getActiveTokens().values()) {
+        for (Token token : instance.getActiveTokens().values()) {
             activeNodeIds.add(token.getCurrentNodeId());
         }
 
         // 收集已完成节点（从历史任务中提取）
         List<String> completedNodeIds = new ArrayList<>();
-        for (com.workflow.runtime.TaskInstance task : instance.getTasks()) {
-            if (task.getStatus() == com.workflow.enums.TaskStatus.COMPLETED) {
+        for (TaskInstance task : instance.getTasks()) {
+            if (task.getStatus() == TaskStatus.COMPLETED) {
                 if (!completedNodeIds.contains(task.getNodeId())) {
                     completedNodeIds.add(task.getNodeId());
                 }
             }
         }
 
-        return new com.workflow.topology.InstanceTopologyView(
+        return new InstanceTopologyView(
                 topology,
                 activeNodeIds,
                 completedNodeIds,
