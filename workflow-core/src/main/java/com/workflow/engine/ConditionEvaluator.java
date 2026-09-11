@@ -51,7 +51,12 @@ public final class ConditionEvaluator {
         if (isEmpty(expr)) {
             return true;
         }
-        Tokenizer t = new Tokenizer(expr);
+        // 兼容 JSP/Flowable 风格 ${...} 包裹：先剥壳再解析(裸表达式不受影响)
+        String e = expr.trim();
+        if (e.startsWith("${") && e.endsWith("}")) {
+            e = e.substring(2, e.length() - 1).trim();
+        }
+        Tokenizer t = new Tokenizer(e);
         Object result = new Parser(t, vars).parseExpr();
         t.expectEnd();
         return truthy(result);
