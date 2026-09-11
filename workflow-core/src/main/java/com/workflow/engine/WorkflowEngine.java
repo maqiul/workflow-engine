@@ -741,6 +741,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         Candidate newCand = Candidate.ofAny(toUserId);
         TaskInstance newTask = new TaskInstance(instance.getId(), task.getTokenId(),
                 nodeDef.getId(), newCand);
+        newTask.setArrival(task.getArrival());  // 转办继承原任务的到达代次
         instance.addTask(newTask);
         taskRepo.save(newTask);
         // 实例视图与任务列表必须落库：仓储采用拷贝语义后，不再存在「改引用即改库」的便利
@@ -957,7 +958,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                     syncTaskInInstance(instance, t);
                 }
             }
-            token.setCurrentNodeId(targetNodeId);
+            token.moveTo(targetNodeId);
             instanceRepo.save(instance);
             advanceToken(instance, def, tokenId);  // 目标是 USER_TASK 会新建该支待办
             log.info("[引擎] 逐支跳转 instance={} token={} -> {} by={} reason={}",
@@ -982,6 +983,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                     .orElseThrow(() -> new IllegalArgumentException("节点无进行中任务,无法加签: " + nodeId));
             TaskInstance t = new TaskInstance(instanceId, token.getId(), nodeId, Candidate.ofAny(assignee));
             t.setTenantId(instance.getTenantId());
+            t.setArrival(token.getArrival());  // 加签继承当前任务的到达代次
             taskRepo.save(t);
             syncTaskInInstance(instance, t);
             instanceRepo.save(instance);

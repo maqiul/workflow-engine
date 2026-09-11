@@ -31,6 +31,9 @@ public class WfTokenEntity {
     @Column(name = "current_node_id", length = 64, nullable = false)
     private String currentNodeId;
 
+    @Column(name = "arrival")
+    private int arrival;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 16, nullable = false)
     private com.workflow.enums.TokenStatus status;
@@ -41,6 +44,8 @@ public class WfTokenEntity {
     public void setInstanceId(String instanceId) { this.instanceId = instanceId; }
     public String getCurrentNodeId() { return currentNodeId; }
     public void setCurrentNodeId(String currentNodeId) { this.currentNodeId = currentNodeId; }
+    public int getArrival() { return arrival; }
+    public void setArrival(int arrival) { this.arrival = arrival; }
     public com.workflow.enums.TokenStatus getStatus() { return status; }
     public void setStatus(com.workflow.enums.TokenStatus status) { this.status = status; }
 }

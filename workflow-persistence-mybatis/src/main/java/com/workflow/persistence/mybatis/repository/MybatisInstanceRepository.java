@@ -80,6 +80,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 te.setId(t.getId());
                 te.setInstanceId(instance.getId());
                 te.setCurrentNodeId(t.getCurrentNodeId());
+                te.setArrival(t.getArrival());
                 te.setStatus(t.getStatus());
                 tokenMapper.insert(te);
             }
@@ -274,6 +275,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
             Token token = new Token(e.getId(), te.getCurrentNodeId());
             setFinal(token, "id", te.getId());
             token.setStatus(te.getStatus());
+            token.setArrival(te.getArrival());
             tokenMap.put(token.getId(), token);
         }
         setFinal(instance, "activeTokens", tokenMap);

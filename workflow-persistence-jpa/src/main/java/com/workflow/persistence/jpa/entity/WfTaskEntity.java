@@ -57,6 +57,9 @@ public class WfTaskEntity {
     @Column(name = "tenant_id", length = 64)
     private String tenantId;
 
+    @Column(name = "arrival")
+    private int arrival;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getInstanceId() { return instanceId; }
@@ -77,4 +80,6 @@ public class WfTaskEntity {
     public void setCreateTime(long createTime) { this.createTime = createTime; }
     public String getTenantId() { return tenantId; }
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
+    public int getArrival() { return arrival; }
+    public void setArrival(int arrival) { this.arrival = arrival; }
 }

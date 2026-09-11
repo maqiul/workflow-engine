@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 > 一个**纯代码 DSL**、**零第三方工作流框架依赖**、**国产基础库 + Java 17** 的轻量级审批流引擎。
-> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点,
+> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）,
 > 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务,
 > 三仓储实现（InMemory + JPA + MyBatis-Plus）。
 >
@@ -37,6 +37,7 @@
 - [20. 批处理与批量启动](#20-批处理与批量启动)
 - [21. 通知服务](#21-通知服务)
 - [22. 性能基准](#22-性能基准)
+- [23. 循环回边支持](#23-循环回边支持)
 
 ---
 
@@ -1200,6 +1201,63 @@ val postgresDriverVersion = "42.7.4"                    // workflow-tests(跨库
 - 命名空间根：`com.workflow`
 - 测试基类包：`com.workflow.tests`（InMemory）+ `com.workflow.tests.jpa`（JPA）+ `com.workflow.tests.mybatis`（MyBatis-Plus）+ `com.workflow.tests.crossdb`（跨库）
 - 所有公开类均有 Javadoc
+
+---
+
+## 23. 循环回边支持
+
+### 23.1 场景
+
+Flowable 用「排他网关 + 回边」实现循环：`tpl → gw →(loopContinue==true)→ tpl`。典型用例：
+- 驳回后重新提交（申请人修改后重新走审批）
+- 审批流中的循环网关（条件不满足时回到前序节点补充材料）
+- 模板填写 → 审核 → 不通过则回到模板填写
+
+### 23.2 设计：Token 到达代次（arrival）
+
+给每个 Token 一个单调递增的**到达计数 `arrival`**：Token 每"移动到一个节点"就 `arrival++`。每个 TaskInstance 记录**创建时所属 token 的 arrival**。引擎仅处理「arrival == 当前 token.arrival」的任务。
+
+| 场景 | arrival 变化 | handleUserTask 行为 | 结果 |
+|---|---|---|---|
+| 首次到 tpl | token.arrival=N | 无 arrival==N 任务 | 建 T1(arrival=N) |
+| T1 完成→推进 | setCurrentNodeId(gw)→arrival=N+1 | (在 gw 不查) | 前进 |
+| gw 回边到 tpl | setCurrentNodeId(tpl)→arrival=N+2 | 无 arrival==N+2 任务 | 建 T2(arrival=N+2) ✅ 不再死循环 |
+| reject | consume 旧 token，**新建 token**(arrival=0) | prev 无 arrival==0 任务 | 建 prev 任务（新 token 天然干净）|
+| transfer | token **不移动**、arrival 不变；建的新任务记 arrival=当前 | 命中该 PENDING 新任务 | 停等，不重复建 ✅ |
+
+### 23.3 关键实现
+
+- **`Token.moveTo(newNodeId)`**：运行时移动的唯一入口，`setCurrentNodeId + arrival++`。
+- **`Token.setCurrentNodeId` 私有化**：编译期强制所有移动走 `moveTo`，杜绝"漏设标记"导致的回归。
+- **`currentTaskOf` 按 arrival 过滤**：只匹配「arrival == token.arrival 且非 TERMINATED/TRANSFERRED」的任务。
+- **V8 迁移**：`wf_token`/`wf_task` 加 `arrival INT DEFAULT 0`，老数据向后兼容。
+
+### 23.4 DSL 用法
+
+```java
+ProcessDefinition def = ProcessBuilder.create("loop-flow")
+    .start("start")
+    .userTask("tpl", "模板填写", Candidate.ofAny("u1"))
+    .exclusiveGateway("gw")
+    .end("end")
+    .connect("start", "tpl")
+    .connect("tpl", "gw")
+    .connect("gw", "tpl", "${loopContinue == true}")    // 回边：继续循环
+    .connect("gw", "end", "${loopContinue == false}")   // 退出
+    .build();
+
+String instanceId = engine.start("loop-flow", Map.of("loopContinue", true));
+// 第一次 tpl 待办 → 完成 → 到 gw → 条件为真 → 回边到 tpl → 第二次 tpl 待办（新任务）
+```
+
+### 23.5 测试
+
+- `LoopBackEdgeTest`：回边生效（条件为真时重建待办）、退出分支（条件为假时正常完成）。
+- 全量回归 296/296 通过，零回归（reject/transfer/timeout/多实例/动态并行不受影响）。
+
+### 23.6 设计文档
+
+详见 `docs/LOOP_SUPPORT_DESIGN.md`。
 
 ---
 

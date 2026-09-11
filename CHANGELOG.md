@@ -2,7 +2,35 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.8.0 已完成** — 纯基础引擎能力补齐（监控仪表盘 · 多租户隔离 · 批处理/批量启动 · 通知实现 · 性能基准 · 退回到任意节点 · DMN 持久化），约 270 用例、全量 0 失败（跨库需 Docker）。
+项目状态：**v3.9.0 已完成** — 循环回边支持（Token 到达代次机制），约 296 用例、全量 0 失败。
+
+---
+
+## [3.9.0] - 2026-09-11
+
+定位：**循环回边支持**——复刻 Flowable 样本里排他网关回边式循环（`loop_temple_node ↔ gw`），支持驳回后重新提交、审批流中的循环网关等场景。
+
+### 新增
+- **Token 到达代次（arrival）机制**：Token 每移动到一个节点 `arrival++`；TaskInstance 记录创建时的 arrival；引擎仅处理「arrival == 当前 token.arrival」的任务，从而隔离不同轮次的执行上下文。
+- **循环回边支持**：排他网关回边（条件为真时 token 回到前序节点）会新建任务而非误判上一轮已完成任务，彻底解决 StackOverflowError。
+- **V8 迁移脚本** `V8__add_arrival_for_loop_support.sql`：`wf_token`/`wf_task` 加 `arrival INT DEFAULT 0`，老数据向后兼容。
+
+### 变更
+- **`Token.setCurrentNodeId` 私有化**：运行时移动只能走 `moveTo()`（自增 arrival），重建/快照走构造 + 反射设值（不自增）。编译期强制所有移动走 moveTo，杜绝"漏设标记"导致的回归。
+- **`TaskInstance.reconstruct` 新增含 arrival 的重载**：持久化层 rebuild 时传入 arrival，domain 对象重建后 arrival 与落库一致。
+- **`currentTaskOf` 按 arrival 过滤**：只匹配「arrival == token.arrival 且非 TERMINATED/TRANSFERRED」的任务，回边重入时上一轮 COMPLETED 任务不再命中。
+
+### 修复
+- **循环回边 StackOverflowError**：引擎处理 BPMN 循环回边时，若 token 回到已处理过的节点，`handleUserTask` 误判任务状态导致无限递归。引入 arrival 机制后，回边重入 arrival 变化→建新任务，彻底解决。
+- **`checkAndFinalize` 缺失**：`handleUserTask` 的 `outs.isEmpty()` 分支和 `advanceTokenInternal` 的 `END` 分支未调 `checkAndFinalize`，导致实例无法标记完成。已补。
+
+### 测试
+- **启用 `LoopBackEdgeTest`**（原 `@Disabled`）：回边生效（条件为真时重建待办）、退出分支（条件为假时正常完成）2 个用例。
+- **全量回归 296/296 通过**：InMemory 262 + JPA 34 + MyBatis 34（含跨库一致性），0 失败。
+- **零回归验证**：reject/transfer/timeout/多实例/动态并行等核心流程逻辑不受影响（上次"到达标记"方案导致 5 个回归，本次 arrival 方案天然兼容）。
+
+### 设计文档
+- `docs/LOOP_SUPPORT_DESIGN.md`：循环回边设计方案（Token 到达代次），含正确性论证、改动清单、实施节奏、风险与回退。
 
 ---
 

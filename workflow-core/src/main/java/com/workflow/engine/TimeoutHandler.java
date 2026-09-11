@@ -202,6 +202,7 @@ public class TimeoutHandler {
                 Candidate newCand = Candidate.ofAny(targetUserId);
                 TaskInstance newTask = new TaskInstance(instance.getId(), task.getTokenId(),
                         nodeDef.getId(), newCand);
+                newTask.setArrival(task.getArrival());  // 超时转办继承原任务的到达代次
                 taskRepo.save(newTask);
                 taskSyncer.accept(instance, newTask);
                 // 新任务继承原节点超时配置 - 提交后才登记

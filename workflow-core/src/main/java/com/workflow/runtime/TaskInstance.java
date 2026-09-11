@@ -41,6 +41,8 @@ public final class TaskInstance {
     private final long createTime;
     /** 租户 ID（多租户隔离，可为 null 表示全局） */
     private String tenantId;
+    /** 所属 Token 的到达代次：区分同一节点多轮到达（循环回边支持） */
+    private int arrival;
 
     public TaskInstance(String instanceId, String tokenId, String nodeId, Candidate candidate) {
         this(instanceId, tokenId, nodeId, candidate, System.currentTimeMillis());
@@ -58,6 +60,7 @@ public final class TaskInstance {
         this.revision = 0L;
         this.createTime = createTime;
         this.tenantId = null;  // 默认无租户
+        this.arrival = 0;
     }
 
     /**
@@ -68,17 +71,17 @@ public final class TaskInstance {
                                            Set<String> completedApprovers,
                                            TaskStatus status, long revision, long createTime) {
         return reconstruct(id, instanceId, tokenId, nodeId, candidate,
-                completedApprovers, status, revision, createTime, null);
+                completedApprovers, status, revision, createTime, null, 0);
     }
 
     /**
-     * 持久化层专用 - 完整版（含租户 ID）。
+     * 持久化层专用 - 完整版（含租户 ID + 到达代次）。
      */
     public static TaskInstance reconstruct(String id, String instanceId, String tokenId,
                                            String nodeId, Candidate candidate,
                                            Set<String> completedApprovers,
                                            TaskStatus status, long revision, long createTime,
-                                           String tenantId) {
+                                           String tenantId, int arrival) {
         TaskInstance t = new TaskInstance(instanceId, tokenId, nodeId, candidate, createTime);
         t.setIdViaReflection(id);
         t.completedApprovers.clear();
@@ -88,6 +91,7 @@ public final class TaskInstance {
         t.status = Objects.requireNonNull(status);
         t.revision = revision;
         t.tenantId = tenantId;
+        t.arrival = arrival;
         return t;
     }
 
@@ -113,7 +117,7 @@ public final class TaskInstance {
      */
     public TaskInstance copy() {
         return reconstruct(id, instanceId, tokenId, nodeId, candidate,
-                new HashSet<>(completedApprovers), status, revision, createTime, tenantId);
+                new HashSet<>(completedApprovers), status, revision, createTime, tenantId, arrival);
     }
 
     private void setIdViaReflection(String value) {
@@ -143,6 +147,10 @@ public final class TaskInstance {
     /** 租户 ID（多租户隔离） */
     public String getTenantId() { return tenantId; }
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
+
+    /** 所属 Token 的到达代次 */
+    public int getArrival() { return arrival; }
+    public void setArrival(int arrival) { this.arrival = arrival; }
 
     /**
      * 记录一个审批人的完成操作

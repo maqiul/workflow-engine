@@ -79,11 +79,13 @@ public class JpaInstanceRepository implements InstanceRepository {
                     te.setId(t.getId());
                     te.setInstanceId(instance.getId());
                     te.setCurrentNodeId(t.getCurrentNodeId());
+                    te.setArrival(t.getArrival());
                     te.setStatus(t.getStatus());
                     em.persist(te);
                 } else {
                     // 查询结果本就是托管实体，直接改字段即可，无需 merge
                     te.setCurrentNodeId(t.getCurrentNodeId());
+                    te.setArrival(t.getArrival());
                     te.setStatus(t.getStatus());
                 }
             }
@@ -263,6 +265,7 @@ public class JpaInstanceRepository implements InstanceRepository {
             Token token = new Token(e.getId(), te.getCurrentNodeId());
             setFinal(token, "id", te.getId());
             token.setStatus(te.getStatus());
+            token.setArrival(te.getArrival());
             tokenMap.put(token.getId(), token);
         }
         // 覆盖 activeTokens(用反射)

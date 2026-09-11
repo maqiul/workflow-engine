@@ -142,6 +142,7 @@ public class TokenAdvancer {
             case END -> {
                 instance.consumeToken(tokenId);
                 log.info("[TokenAdvancer] Token {} reached END", tokenId);
+                checkAndFinalize(instance);
             }
             case USER_TASK -> {
                 handleUserTask(instance, def, tokenId, current, recordsActivity);
@@ -189,9 +190,11 @@ public class TokenAdvancer {
                 existing == null ? "null" : ("taskId=" + existing.getId() + " status=" + existing.getStatus()));
 
         if (existing == null) {
+            Token token = instance.getActiveTokens().get(tokenId);
             TaskInstance task = new TaskInstance(instance.getId(), tokenId,
                     current.getId(), current.getCandidate());
             task.setTenantId(instance.getTenantId());  // 任务继承实例租户
+            task.setArrival(token.getArrival());  // 记录到达代次，支持循环回边
             taskRepo.save(task);
             syncTaskInInstance(instance, task);
             attachHistoryTask(instance, current.getId(), tokenId, task.getId(), recordsActivity);
@@ -220,9 +223,10 @@ public class TokenAdvancer {
             if (outs.isEmpty()) {
                 instance.consumeToken(tokenId);
                 instanceRepo.save(instance);
+                checkAndFinalize(instance);
             } else if (outs.size() == 1) {
                 Token tk = instance.getActiveTokens().get(tokenId);
-                tk.setCurrentNodeId(outs.get(0).getTo());
+                tk.moveTo(outs.get(0).getTo());
                 instanceRepo.save(instance);
                 advanceToken(instance, def, tokenId, recordsActivity);
             } else {
@@ -255,7 +259,7 @@ public class TokenAdvancer {
         }
         log.info("[TokenAdvancer] ExclusiveGateway {} selected outgoing {}", current.getId(), chosen.getTo());
         Token token = instance.getActiveTokens().get(tokenId);
-        token.setCurrentNodeId(chosen.getTo());
+        token.moveTo(chosen.getTo());
         instanceRepo.save(instance);
         advanceToken(instance, def, tokenId, recordsActivity);
     }
@@ -302,7 +306,7 @@ public class TokenAdvancer {
             throw new IllegalStateException("START node " + current.getId() + " has no outgoing");
         }
         Token token = instance.getActiveTokens().get(tokenId);
-        token.setCurrentNodeId(outs.get(0).getTo());
+        token.moveTo(outs.get(0).getTo());
         instanceRepo.save(instance);
         advanceToken(instance, def, tokenId, recordsActivity);
     }
@@ -327,7 +331,7 @@ public class TokenAdvancer {
                     instance.consumeToken(tokenId);
                     instanceRepo.save(instance);
                 } else if (outs.size() == 1) {
-                    token.setCurrentNodeId(outs.get(0).getTo());
+                    token.moveTo(outs.get(0).getTo());
                     instanceRepo.save(instance);
                     advanceToken(instance, def, tokenId, recordsActivity);
                 } else {
@@ -379,7 +383,7 @@ public class TokenAdvancer {
                     instance.consumeToken(tokenId);
                     instanceRepo.save(instance);
                 } else if (outs.size() == 1) {
-                    token.setCurrentNodeId(outs.get(0).getTo());
+                    token.moveTo(outs.get(0).getTo());
                     instanceRepo.save(instance);
                     advanceToken(instance, def, tokenId, recordsActivity);
                 } else {
@@ -393,6 +397,7 @@ public class TokenAdvancer {
                 TaskInstance task = new TaskInstance(instance.getId(), tokenId,
                         current.getId(), candidate);
                 task.setTenantId(instance.getTenantId());  // 任务继承实例租户
+                task.setArrival(token.getArrival());  // 记录到达代次
                 instance.addTask(task);
                 instance.setVariable(markKey, "created");
                 log.info("[TokenAdvancer] DYNAMIC_PARALLEL node {} created dynamic task, candidates={}, strategy={}, taskId={}", 
@@ -411,7 +416,7 @@ public class TokenAdvancer {
                     instance.consumeToken(tokenId);
                     instanceRepo.save(instance);
                 } else if (outs.size() == 1) {
-                    token.setCurrentNodeId(outs.get(0).getTo());
+                    token.moveTo(outs.get(0).getTo());
                     instanceRepo.save(instance);
                     advanceToken(instance, def, tokenId, recordsActivity);
                 } else {
@@ -540,7 +545,7 @@ public class TokenAdvancer {
             instanceRepo.save(instance);
         } else if (outs.size() == 1) {
             Token token = instance.getActiveTokens().get(tokenId);
-            token.setCurrentNodeId(outs.get(0).getTo());
+            token.moveTo(outs.get(0).getTo());
             instanceRepo.save(instance);
             advanceToken(instance, def, tokenId, recordsActivity);
         } else {
@@ -665,8 +670,11 @@ public class TokenAdvancer {
     }
     
     private TaskInstance currentTaskOf(ProcessInstance instance, String tokenId, String nodeId) {
+        Token token = instance.getActiveTokens().get(tokenId);
+        int arrival = token == null ? 0 : token.getArrival();
         return taskRepo.findByInstanceId(instance.getId()).stream()
                 .filter(t -> t.getTokenId().equals(tokenId) && t.getNodeId().equals(nodeId))
+                .filter(t -> t.getArrival() == arrival)
                 .filter(t -> t.getStatus() != TaskStatus.TERMINATED && t.getStatus() != TaskStatus.TRANSFERRED)
                 .findFirst()
                 .orElse(null);
@@ -704,7 +712,7 @@ public class TokenAdvancer {
             instance.consumeToken(tokenId);
             instanceRepo.save(instance);
         } else if (outs.size() == 1) {
-            token.setCurrentNodeId(outs.get(0).getTo());
+            token.moveTo(outs.get(0).getTo());
             instanceRepo.save(instance);
             advanceToken(instance, def, tokenId, recordsActivity);
         } else {
@@ -734,6 +742,7 @@ public class TokenAdvancer {
             for (String a : assignees) {
                 TaskInstance t = new TaskInstance(instance.getId(), tokenId, current.getId(), Candidate.ofAny(a));
                 t.setTenantId(instance.getTenantId());  // 继承实例租户
+                t.setArrival(token.getArrival());  // 记录到达代次
                 taskRepo.save(t);
                 syncTaskInInstance(instance, t);
             }

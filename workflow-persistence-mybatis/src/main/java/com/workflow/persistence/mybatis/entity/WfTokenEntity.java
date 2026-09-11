@@ -28,6 +28,9 @@ public class WfTokenEntity {
     @TableField("current_node_id")
     private String currentNodeId;
 
+    @TableField("arrival")
+    private int arrival;
+
     @TableField("status")
     private TokenStatus status;
 
@@ -37,6 +40,8 @@ public class WfTokenEntity {
     public void setInstanceId(String instanceId) { this.instanceId = instanceId; }
     public String getCurrentNodeId() { return currentNodeId; }
     public void setCurrentNodeId(String currentNodeId) { this.currentNodeId = currentNodeId; }
+    public int getArrival() { return arrival; }
+    public void setArrival(int arrival) { this.arrival = arrival; }
     public TokenStatus getStatus() { return status; }
     public void setStatus(TokenStatus status) { this.status = status; }
 }

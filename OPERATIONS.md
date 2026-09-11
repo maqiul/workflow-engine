@@ -2,7 +2,7 @@
 
 > 本手册面向**接入方 / 运维**，讲"怎么用"。想了解设计原理与内部机制请看 [README.md](README.md)，版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 >
-> 文中所有类名、方法签名、命令、REST 路径、异常文案均对照当前源码（v3.8.0）核验。
+> 文中所有类名、方法签名、命令、REST 路径、异常文案均对照当前源码（v3.9.0）核验。
 
 ---
 
@@ -23,6 +23,7 @@
 - [13. 构建与测试命令](#13-构建与测试命令)
 - [14. 常见报错与排查](#14-常见报错与排查)
 - [15. 最佳实践](#15-最佳实践)
+- [16. 循环回边操作](#16-循环回边操作)
 
 ---
 
@@ -530,4 +531,62 @@ gradlew.bat :workflow-tests:test --no-daemon --tests "com.workflow.tests.perf.*"
 
 ---
 
-*本手册对应 v3.8.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*
+## 16. 循环回边操作
+
+### 16.1 场景
+
+排他网关回边式循环：`tpl → gw →(条件)→ tpl`。典型用例：
+- 驳回后重新提交（申请人修改后重新走审批）
+- 审批流中的循环网关（条件不满足时回到前序节点补充材料）
+
+### 16.2 DSL 定义
+
+```java
+ProcessDefinition def = ProcessBuilder.create("loop-flow")
+    .start("start")
+    .userTask("tpl", "模板填写", Candidate.ofAny("u1"))
+    .exclusiveGateway("gw")
+    .end("end")
+    .connect("start", "tpl")
+    .connect("tpl", "gw")
+    .connect("gw", "tpl", "${loopContinue == true}")    // 回边：继续循环
+    .connect("gw", "end", "${loopContinue == false}")   // 退出
+    .build();
+```
+
+### 16.3 启动与推进
+
+```java
+// 启动时设置循环条件
+String instanceId = engine.start("loop-flow", Map.of("loopContinue", true));
+
+// 第一次 tpl 待办
+List<TaskInstance> tasks = taskRepo.findByInstanceId(instanceId);
+TaskInstance first = tasks.stream()
+    .filter(t -> "tpl".equals(t.getNodeId()) && t.getStatus() == TaskStatus.PENDING)
+    .findFirst().orElseThrow();
+
+// 完成第一次 tpl → 到 gw → 条件为真 → 回边到 tpl → 第二次 tpl 待办（新任务）
+engine.completeTask(first.getId(), "u1", true);
+
+// 第二次 tpl 待办（arrival 不同，是新任务）
+List<TaskInstance> tasks2 = taskRepo.findByInstanceId(instanceId);
+TaskInstance second = tasks2.stream()
+    .filter(t -> "tpl".equals(t.getNodeId()) && t.getStatus() == TaskStatus.PENDING)
+    .findFirst().orElseThrow();
+
+// 设置退出条件 → 完成 → 流程结束
+engine.setVariable(instanceId, "loopContinue", false);
+engine.completeTask(second.getId(), "u1", true);
+```
+
+### 16.4 注意事项
+
+- **Token 到达代次（arrival）自动管理**：引擎内部通过 `Token.moveTo()` 自增 arrival，无需业务代码干预。
+- **回边重入会新建任务**：同一节点多轮到达时，每轮的任务 arrival 不同，互不干扰。
+- **与 reject/transfer 兼容**：reject 用新 token（arrival=0），transfer 不移动 token（arrival 不变），均不会误判。
+- **V8 迁移必须执行**：`wf_token`/`wf_task` 加 `arrival INT DEFAULT 0`，老数据向后兼容。
+
+---
+
+*本手册对应 v3.9.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*

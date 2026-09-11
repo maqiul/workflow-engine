@@ -12,7 +12,6 @@ import com.workflow.repository.InMemoryProcessRepository;
 import com.workflow.repository.InMemoryTaskRepository;
 import com.workflow.runtime.TaskInstance;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -59,7 +58,6 @@ class LoopBackEdgeTest {
     }
 
     @Test
-    @Disabled("未修缺口 #4：回边重入需专门设计'节点重入语义'(区分本轮活跃任务vs历史完成),简单到达标记会与reject/transfer冲突致回归;暂禁用,后续单独攻坚")
     @DisplayName("回边生效：条件为真时 token 回到前序节点并重建待办")
     void backEdgeRecreatesTask() {
         procRepo.save(loopDef());
