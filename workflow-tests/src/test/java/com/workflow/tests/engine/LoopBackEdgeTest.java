@@ -59,7 +59,7 @@ class LoopBackEdgeTest {
     }
 
     @Test
-    @Disabled("已知缺口 #4：引擎暂不支持回边循环——token 重入已完成节点会误判'已完成→推进'致无限递归栈溢出；需改 TokenAdvancer 节点重入语义")
+    @Disabled("未修缺口 #4：回边重入需专门设计'节点重入语义'(区分本轮活跃任务vs历史完成),简单到达标记会与reject/transfer冲突致回归;暂禁用,后续单独攻坚")
     @DisplayName("回边生效：条件为真时 token 回到前序节点并重建待办")
     void backEdgeRecreatesTask() {
         procRepo.save(loopDef());
