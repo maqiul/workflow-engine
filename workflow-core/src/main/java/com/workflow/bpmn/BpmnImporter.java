@@ -66,11 +66,32 @@ public final class BpmnImporter {
     }
 
     private static Element findProcess(Document doc) {
+        // 先尝试标准 BPMN 命名空间
         NodeList list = doc.getElementsByTagNameNS(BpmnExporter.BPMN_NS, "process");
         if (list.getLength() == 0) {
+            // 再尝试无前缀
             list = doc.getElementsByTagName("process");
         }
-        return list.getLength() > 0 ? (Element) list.item(0) : null;
+        if (list.getLength() == 0) {
+            // 最后尝试带 bpmn: 前缀的标签名
+            list = doc.getElementsByTagName("bpmn:process");
+        }
+        if (list.getLength() > 0) {
+            return (Element) list.item(0);
+        }
+        // 兜底：遍历所有元素找 process
+        NodeList all = doc.getElementsByTagName("*");
+        for (int i = 0; i < all.getLength(); i++) {
+            Element el = (Element) all.item(i);
+            String tag = el.getLocalName() != null ? el.getLocalName() : el.getTagName();
+            if (tag.contains(":")) {
+                tag = tag.substring(tag.indexOf(':') + 1);
+            }
+            if ("process".equals(tag)) {
+                return el;
+            }
+        }
+        return null;
     }
 
     private static ProcessDefinition parseProcess(Element process) {
@@ -94,7 +115,11 @@ public final class BpmnImporter {
             if (!(children.item(i) instanceof Element el)) {
                 continue;
             }
+            // 处理带前缀的标签名（如 bpmn:startEvent → startEvent）
             String tag = el.getLocalName() != null ? el.getLocalName() : el.getTagName();
+            if (tag.contains(":")) {
+                tag = tag.substring(tag.indexOf(':') + 1);
+            }
             switch (tag) {
                 case "startEvent" -> builder.start(el.getAttribute("id"));
                 case "endEvent" -> builder.end(el.getAttribute("id"));
@@ -231,22 +256,33 @@ public final class BpmnImporter {
         String id = el.getAttribute("id");
         String name = el.getAttribute("name");
 
-        // 从 extensionElements 读 wf:delegate key
-        NodeList extList = el.getElementsByTagNameNS(BpmnExporter.BPMN_NS, "extensionElements");
-        if (extList.getLength() == 0) {
-            extList = el.getElementsByTagName("extensionElements");
+        // 优先读 flowable:delegateExpression="${varName}"（Flowable 标准）
+        String delegateExpr = el.getAttributeNS(BpmnExporter.FLOWABLE_NS, "delegateExpression");
+        if (delegateExpr.isBlank()) {
+            delegateExpr = el.getAttribute("flowable:delegateExpression");
         }
         String delegateKey = null;
-        for (int i = 0; i < extList.getLength(); i++) {
-            Element ext = (Element) extList.item(i);
-            NodeList delegateList = ext.getElementsByTagNameNS(BpmnExporter.WF_NS, "delegate");
-            if (delegateList.getLength() == 0) {
-                delegateList = ext.getElementsByTagName("wf:delegate");
+        if (!delegateExpr.isBlank() && delegateExpr.startsWith("${") && delegateExpr.endsWith("}")) {
+            delegateKey = delegateExpr.substring(2, delegateExpr.length() - 1);
+        }
+
+        // 兜底：从 extensionElements 读 wf:delegate key（自有格式）
+        if (delegateKey == null || delegateKey.isBlank()) {
+            NodeList extList = el.getElementsByTagNameNS(BpmnExporter.BPMN_NS, "extensionElements");
+            if (extList.getLength() == 0) {
+                extList = el.getElementsByTagName("extensionElements");
             }
-            if (delegateList.getLength() > 0) {
-                Element delegate = (Element) delegateList.item(0);
-                delegateKey = delegate.getAttribute("key");
-                break;
+            for (int i = 0; i < extList.getLength(); i++) {
+                Element ext = (Element) extList.item(i);
+                NodeList delegateList = ext.getElementsByTagNameNS(BpmnExporter.WF_NS, "delegate");
+                if (delegateList.getLength() == 0) {
+                    delegateList = ext.getElementsByTagName("wf:delegate");
+                }
+                if (delegateList.getLength() > 0) {
+                    Element delegate = (Element) delegateList.item(0);
+                    delegateKey = delegate.getAttribute("key");
+                    break;
+                }
             }
         }
 

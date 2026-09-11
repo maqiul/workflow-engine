@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                 xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                 xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                 xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                 xmlns:flowable="http://flowable.org/bpmn"
+                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 targetNamespace="http://flowable.org/bpmn">
+  <bpmn:process id="customer_order_flow" name="规格书完整流程" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="开始" />
+    <bpmn:userTask id="edraft_submit" name="提交电子稿信息" flowable:assignee="${assignee}">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false" flowable:collection="${edraft_submitApprovers}" flowable:elementVariable="assignee">
+        <bpmn:completionCondition xsi:type="bpmn:tFormalExpression"><![CDATA[${nrOfCompletedInstances >= 1}]]>        </bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:userTask>
+    <bpmn:userTask id="edraft_confirm" name="客户确认电子稿" flowable:assignee="${edraft_confirmApprover}" />
+    <bpmn:userTask id="spec_no_fill" name="填写规格书编号" flowable:assignee="${spec_no_fillApprover}" />
+    <bpmn:userTask id="design_review" name="设计审核" flowable:assignee="${design_reviewApprover}" />
+    <bpmn:userTask id="biz_review" name="业务审核" flowable:assignee="${biz_reviewApprover}" />
+    <bpmn:userTask id="final_review" name="生产审核" flowable:assignee="${final_reviewApprover}" />
+    <bpmn:serviceTask id="cc_node" name="抄送" flowable:delegateExpression="${ccNotificationDelegate}" />
+    <bpmn:userTask id="write_epc" name="写码信息" flowable:assignee="${write_epcApprover}" />
+    <bpmn:userTask id="resubmit_1" name="退回修改" flowable:assignee="${resubmit_1Approver}" />
+    <bpmn:userTask id="userTask_7" name="包装信息" flowable:assignee="${userTask_7Approver}" />
+    <bpmn:exclusiveGateway id="gw_confirm" name="客户确认结果" />
+    <bpmn:parallelGateway id="gw_parallel_fork" name="并行网关" />
+    <bpmn:parallelGateway id="gw_parallel_join" name="并行网关" />
+    <bpmn:parallelGateway id="parallelGateway_3" />
+    <bpmn:parallelGateway id="parallelGateway_4" name="写码信息和包装信息出口" />
+    <bpmn:endEvent id="endEvent_approve" name="结束" />
+    <bpmn:userTask id="loop_temple_node" name="模板名称填写" flowable:assignee="${loop_temple_nodeApprover}" />
+    <bpmn:serviceTask id="loop_cc_node" name="循环内抄送" flowable:delegateExpression="${ccNotificationDelegate}" />
+    <bpmn:exclusiveGateway id="loop_node_loop_gw" name="循环判断" />
+    <bpmn:sequenceFlow id="loop_temple_node_to_loop_node_loop_gw" sourceRef="loop_temple_node" targetRef="loop_node_loop_gw" />
+    <bpmn:sequenceFlow id="loop_node_loop_gw_to_loop_temple_node" sourceRef="loop_node_loop_gw" targetRef="loop_temple_node" name="继续循环">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression"><![CDATA[${loopContinue == true}]]>      </bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="loop_node_loop_gw_exit" sourceRef="loop_node_loop_gw" targetRef="endEvent_approve" name="退出循环">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression"><![CDATA[${loopContinue == false}]]>      </bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="parallelGateway_4_to_loop_temple_node" sourceRef="parallelGateway_4" targetRef="loop_temple_node" />
+    <bpmn:sequenceFlow id="e1" sourceRef="startEvent" targetRef="edraft_submit" />
+    <bpmn:sequenceFlow id="e2" sourceRef="edraft_submit" targetRef="edraft_confirm" />
+    <bpmn:sequenceFlow id="e3" sourceRef="edraft_confirm" targetRef="gw_confirm" />
+    <bpmn:sequenceFlow id="e4" sourceRef="gw_confirm" targetRef="spec_no_fill">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression"><![CDATA[${approved == true}]]>      </bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="e5" sourceRef="gw_confirm" targetRef="edraft_submit">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression"><![CDATA[${approved == false&& resubmitRequired == false}]]>      </bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="e_mtjncyka_lpcha2" sourceRef="gw_confirm" targetRef="resubmit_1">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression"><![CDATA[${approved == false && resubmitRequired == true}]]>      </bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="e_mtjnd09z_j3zdke" sourceRef="resubmit_1" targetRef="edraft_submit" />
+    <bpmn:sequenceFlow id="e_mtts0y0u_fumrss" sourceRef="cc_node" targetRef="parallelGateway_3" />
+    <bpmn:sequenceFlow id="e_mtts118o_mfzp7s" sourceRef="parallelGateway_3" targetRef="write_epc" />
+    <bpmn:sequenceFlow id="e_mtts1c1m_eb6faj" sourceRef="parallelGateway_3" targetRef="userTask_7" />
+    <bpmn:sequenceFlow id="e_mtts1rod_pjj17s" sourceRef="write_epc" targetRef="parallelGateway_4" />
+    <bpmn:sequenceFlow id="e_mtts1x7d_joy92d" sourceRef="userTask_7" targetRef="parallelGateway_4" />
+    <bpmn:sequenceFlow id="e_spec_fork" sourceRef="spec_no_fill" targetRef="gw_parallel_fork" />
+    <bpmn:sequenceFlow id="e_fork_design" sourceRef="gw_parallel_fork" targetRef="design_review" />
+    <bpmn:sequenceFlow id="e_fork_biz" sourceRef="gw_parallel_fork" targetRef="biz_review" />
+    <bpmn:sequenceFlow id="e_fork_final" sourceRef="gw_parallel_fork" targetRef="final_review" />
+    <bpmn:sequenceFlow id="e_design_join" sourceRef="design_review" targetRef="gw_parallel_join" />
+    <bpmn:sequenceFlow id="e_biz_join" sourceRef="biz_review" targetRef="gw_parallel_join" />
+    <bpmn:sequenceFlow id="e_final_join" sourceRef="final_review" targetRef="gw_parallel_join" />
+    <bpmn:sequenceFlow id="e_join_cc" sourceRef="gw_parallel_join" targetRef="cc_node" />
+    <bpmn:sequenceFlow id="e_mt2al5so_l5yhg3" sourceRef="loop_temple_node" targetRef="loop_cc_node" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_customer_order_flow" bpmnElement="customer_order_flow">
+      <bpmndi:BPMNShape id="spec_no_fill_di" bpmnElement="spec_no_fill">
+        <dc:Bounds x="240" y="500" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="edraft_submit_di" bpmnElement="edraft_submit">
+        <dc:Bounds x="240" y="140" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="edraft_confirm_di" bpmnElement="edraft_confirm">
+        <dc:Bounds x="400" y="290" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="parallelGateway_4_di" bpmnElement="parallelGateway_4">
+        <dc:Bounds x="280" y="1354" width="60" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="cc_node_di" bpmnElement="cc_node">
+        <dc:Bounds x="226" y="1060" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_parallel_join_di" bpmnElement="gw_parallel_join">
+        <dc:Bounds x="290" y="930" width="60" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="parallelGateway_3_di" bpmnElement="parallelGateway_3">
+        <dc:Bounds x="276" y="1155" width="60" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="userTask_7_di" bpmnElement="userTask_7">
+        <dc:Bounds x="410" y="1250" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="write_epc_di" bpmnElement="write_epc">
+        <dc:Bounds x="46" y="1262" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_confirm_di" bpmnElement="gw_confirm">
+        <dc:Bounds x="290" y="370" width="60" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endEvent_approve_di" bpmnElement="endEvent_approve">
+        <dc:Bounds x="280" y="1770" width="52" height="52" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="final_review_di" bpmnElement="final_review">
+        <dc:Bounds x="490" y="780" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="design_review_di" bpmnElement="design_review">
+        <dc:Bounds x="20" y="780" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="startEvent_di" bpmnElement="startEvent">
+        <dc:Bounds x="280" y="40" width="52" height="52" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_parallel_fork_di" bpmnElement="gw_parallel_fork">
+        <dc:Bounds x="290" y="620" width="60" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="biz_review_di" bpmnElement="biz_review">
+        <dc:Bounds x="240" y="780" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="resubmit_1_di" bpmnElement="resubmit_1">
+        <dc:Bounds x="714" y="314" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="loop_temple_node_di" bpmnElement="loop_temple_node">
+        <dc:Bounds x="230" y="1554" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="loop_cc_node_di" bpmnElement="loop_cc_node">
+        <dc:Bounds x="230" y="1630" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="loop_node_loop_gw_di" bpmnElement="loop_node_loop_gw">
+        <dc:Bounds x="280" y="1766" width="60" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="e1_di" bpmnElement="e1">
+        <di:waypoint x="306" y="66" />
+        <di:waypoint x="320" y="168" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e2_di" bpmnElement="e2">
+        <di:waypoint x="320" y="168" />
+        <di:waypoint x="480" y="318" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e3_di" bpmnElement="e3">
+        <di:waypoint x="480" y="318" />
+        <di:waypoint x="320" y="400" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e4_di" bpmnElement="e4">
+        <di:waypoint x="320" y="400" />
+        <di:waypoint x="320" y="528" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e5_di" bpmnElement="e5">
+        <di:waypoint x="320" y="400" />
+        <di:waypoint x="320" y="168" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_mtjncyka_lpcha2_di" bpmnElement="e_mtjncyka_lpcha2">
+        <di:waypoint x="320" y="400" />
+        <di:waypoint x="794" y="342" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_mtjnd09z_j3zdke_di" bpmnElement="e_mtjnd09z_j3zdke">
+        <di:waypoint x="794" y="342" />
+        <di:waypoint x="320" y="168" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_mtts0y0u_fumrss_di" bpmnElement="e_mtts0y0u_fumrss">
+        <di:waypoint x="306" y="1088" />
+        <di:waypoint x="306" y="1185" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_mtts118o_mfzp7s_di" bpmnElement="e_mtts118o_mfzp7s">
+        <di:waypoint x="306" y="1185" />
+        <di:waypoint x="126" y="1290" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_mtts1c1m_eb6faj_di" bpmnElement="e_mtts1c1m_eb6faj">
+        <di:waypoint x="306" y="1185" />
+        <di:waypoint x="490" y="1278" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_mtts1rod_pjj17s_di" bpmnElement="e_mtts1rod_pjj17s">
+        <di:waypoint x="126" y="1290" />
+        <di:waypoint x="310" y="1384" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_mtts1x7d_joy92d_di" bpmnElement="e_mtts1x7d_joy92d">
+        <di:waypoint x="490" y="1278" />
+        <di:waypoint x="310" y="1384" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_spec_fork_di" bpmnElement="e_spec_fork">
+        <di:waypoint x="320" y="528" />
+        <di:waypoint x="320" y="650" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_fork_design_di" bpmnElement="e_fork_design">
+        <di:waypoint x="320" y="650" />
+        <di:waypoint x="100" y="808" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_fork_biz_di" bpmnElement="e_fork_biz">
+        <di:waypoint x="320" y="650" />
+        <di:waypoint x="320" y="808" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_fork_final_di" bpmnElement="e_fork_final">
+        <di:waypoint x="320" y="650" />
+        <di:waypoint x="570" y="808" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_design_join_di" bpmnElement="e_design_join">
+        <di:waypoint x="100" y="808" />
+        <di:waypoint x="320" y="960" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_biz_join_di" bpmnElement="e_biz_join">
+        <di:waypoint x="320" y="808" />
+        <di:waypoint x="320" y="960" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_final_join_di" bpmnElement="e_final_join">
+        <di:waypoint x="570" y="808" />
+        <di:waypoint x="320" y="960" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_join_cc_di" bpmnElement="e_join_cc">
+        <di:waypoint x="320" y="960" />
+        <di:waypoint x="306" y="1088" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="e_mt2al5so_l5yhg3_di" bpmnElement="e_mt2al5so_l5yhg3">
+        <di:waypoint x="310" y="1582" />
+        <di:waypoint x="310" y="1658" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="loop_temple_node_to_loop_node_loop_gw_di" bpmnElement="loop_temple_node_to_loop_node_loop_gw">
+        <di:waypoint x="310" y="1582" />
+        <di:waypoint x="310" y="1796" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="loop_node_loop_gw_to_loop_temple_node_di" bpmnElement="loop_node_loop_gw_to_loop_temple_node">
+        <di:waypoint x="310" y="1796" />
+        <di:waypoint x="210" y="1796" />
+        <di:waypoint x="210" y="1582" />
+        <di:waypoint x="310" y="1582" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="loop_node_loop_gw_exit_di" bpmnElement="loop_node_loop_gw_exit">
+        <di:waypoint x="310" y="1796" />
+        <di:waypoint x="410" y="1796" />
+        <di:waypoint x="410" y="1796" />
+        <di:waypoint x="306" y="1796" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="parallelGateway_4_to_loop_temple_node_di" bpmnElement="parallelGateway_4_to_loop_temple_node">
+        <di:waypoint x="310" y="1384" />
+        <di:waypoint x="310" y="1582" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
