@@ -1,13 +1,12 @@
 -- =====================================================================
 -- V9: 跨节点乐观锁 —— 为运行态表加 revision 列
 --
--- 编号说明：V8 已被 workflow-persistence-mybatis 模块下的
---   V8__add_arrival_for_loop_support.sql（arrival 列）占用 —— 那份脚本装在该模块
---   自己的 resources 里，而非本模块。Flyway 会同时扫描 classpath 上所有
---   db/migration 目录，两个 V8 直接撞号并抛
---   "Found more than one migration with version 8"，故本脚本顺延为 V9。
---   TODO(待拍板)：把 mybatis 模块那份迁移挪回本模块统一管理，否则每次新增迁移
---   都得先全仓搜一遍版本号，极易踩坑。
+-- 编号说明：V8 已被 V8__add_arrival_for_loop_support.sql（arrival 列）占用 ——
+--   该脚本原先错放在 workflow-persistence-mybatis 模块自己的 resources 下，
+--   现已挪回本模块统一管理。Flyway 扫的是**合并后的** classpath，两处各有一份
+--   V8 时会直接抛 "Found more than one migration with version 8"，
+--   曾导致 41 个持久化用例集体 initializationError。故本脚本顺延为 V9。
+--   教训：迁移脚本只能有一个家，版本号才靠得住。
 --
 -- 动机：引擎的并发防护分两层。
 --   * 进程内：按流程树根 fid 的分段锁（LocalInstanceLocks），单节点足够；

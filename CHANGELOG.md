@@ -99,6 +99,33 @@
 - 内存仓储的真实并发**有意不测**：其 CAS 是"检查后写入"两步、非原子，单 JVM 的并发保护在引擎 `LocalInstanceLocks` 那层
 - **全量回归（`gradle build --rerun-tasks`）：393 PASSED / 0 FAILED / 35 SKIPPED**
 
+### ④ 批量迁移
+
+#### 新增
+- **`IWorkflowEngine#migrateInstances(instanceIds, targetProcessKey, targetVersion, nodeMapping, operator)`**
+  —— **逐实例独立事务**：每个实例各自提交，某个失败不回滚已成功的那些，失败仅记入返回结果的 `failures`
+- 复用既有 `BatchResult` / `BatchResult.FailureDetail`（与 `batchTerminateInstances` 同一套结果类型）
+
+#### 语义差异（有意为之）
+- `batchTerminateInstances`：**全或无** —— 有失败即抛 `BatchPartialFailureException` 让整个事务回滚
+- `migrateInstances`：**逐个提交、部分成功保留** —— 批量迁移的诉求是"尽量多迁成功"，
+  运维要的是"哪几个没成、各自为什么"，而非拿到第一个异常、剩下的动没动全靠猜
+
+#### 测试
+- **`BatchMigrationTest`**（4 用例）从两侧夹住"独立事务"这条语义：失败实例**之前**的成果必须保住（防连坐回滚）、
+  失败实例**之后**的照常处理（防一处失败就中断整批）—— 顺序 `[成功, 失败, 成功]`，
+  终结中间那个实例使其非 RUNNING，从而必然迁移失败
+- 另覆盖：全部成功、未知实例 id 单独记失败、空列表
+- **全量回归（`gradle build --rerun-tasks`）：397 PASSED / 0 FAILED / 35 SKIPPED**
+
+### 迁移脚本归一
+
+- `V8__add_arrival_for_loop_support.sql` 原先错放在 `workflow-persistence-mybatis` 模块自己的 `resources` 下，
+  已**原样**挪回 `workflow-persistence-flyway`（mybatis 的 `src/main/resources/db` 整个删除，build 残留同步清理）
+- **一个字节都没改**：Flyway 的 checksum 只认内容，改注释会让存量库校验失败；而 `script` 路径
+  （`db/migration/xxx.sql`）不含模块名，故移动本身不影响已应用的记录
+- 至此迁移脚本只有一个家 —— 版本号才靠得住，不会再出现两处各一份 V8 的撞号
+
 ---
 
 ## [3.14.0] - 2026-09-11

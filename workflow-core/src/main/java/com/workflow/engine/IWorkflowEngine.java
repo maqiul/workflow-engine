@@ -259,6 +259,24 @@ public interface IWorkflowEngine {
                          int targetVersion, Map<String, String> nodeMapping, String operator);
 
     /**
+     * 批量迁移运行中实例到新版本流程定义
+     *
+     * <p><b>逐实例独立事务</b>：每个实例各自提交，某个实例失败<b>不会</b>回滚已经成功的那些。
+     * 失败的实例仅记录在返回结果的 failures 中，不抛异常中断整批 ——
+     * 批量迁移的语义是"尽量多迁成功"，而非"要么全成、要么全不成"。
+     * 重试时直接把 failures 里的 id 再传一次即可。
+     *
+     * @param instanceIds      要迁移的实例 ID 列表（按给定顺序处理）
+     * @param targetProcessKey 目标流程定义 key（通常与原实例相同）
+     * @param targetVersion    目标版本号（-1 表示最新版）
+     * @param nodeMapping      节点映射：旧节点 ID → 新节点 ID
+     * @param operator         操作人（用于审计）
+     * @return 批处理结果（成功数 + 逐条失败明细）
+     */
+    BatchResult migrateInstances(List<String> instanceIds, String targetProcessKey,
+                                 int targetVersion, Map<String, String> nodeMapping, String operator);
+
+    /**
      * 获取流程定义的拓扑只读视图
      *
      * @param processKey 流程定义 key

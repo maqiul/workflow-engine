@@ -274,7 +274,7 @@ WorkflowEngine engine = new WorkflowEngine(mb.processRepo(), mb.instanceRepo(), 
 
 ## 6. 核心 API
 
-`com.workflow.engine.IWorkflowEngine` 暴露 9 个方法：
+`com.workflow.engine.IWorkflowEngine` —— 以下是**最常用的 9 个入口**（完整接口另含批处理 §20、拓扑自省 §26、实例迁移 `migrateInstance` / `migrateInstances`、超时调度、监控 `dashboard` 等）：
 
 | 方法 | 说明 |
 |---|---|
@@ -680,6 +680,22 @@ CREATE TABLE wf_audit_log (
 - 版本表 `flyway_schema_history` 保证幂等：已迁移的库直接跳过，不会重复建表
 - 切换数据库只需改 JDBC 连接参数（JPA 额外覆盖方言），无需改任何建表代码
 
+#### 迁移脚本只有一个家（v3.15 归一）
+
+> **新增迁移前，先 `dir workflow-persistence-flyway\src\main\resources\db\migration` 看一眼现有版本号。**
+
+- 迁移脚本**全部**收在 `workflow-persistence-flyway/src/main/resources/db/migration`，其余模块的 `resources` 下不再存放 `.sql`。
+- 曾踩过的坑：`V8__add_arrival_for_loop_support.sql` 一度错放在 `workflow-persistence-mybatis` 模块自己的 `resources` 下。
+  Flyway 扫的是**合并后的 classpath**（`locations("classpath:db/migration")` 会命中所有 jar 的同名目录），
+  两处各有一份 V8 时直接抛 `Found more than one migration with version 8`，
+  导致 **41 个持久化用例集体 `initializationError`** —— 迁移号撞一次，半套测试直接起不来。
+- v3.15 已把那份 V8 **原样**挪回 flyway 模块（`git` 识别为 rename），mybatis 模块的 `src/main/resources/db` 整个删除，
+  `build/resources` 残留也一并清掉 —— 残留不删的话，`processResources` 的增量判断可能把旧文件重新打进 jar。
+- **移动时一个字节都不要改**：Flyway 的 checksum 只认**文件内容**，顺手"改个注释"就会让存量库校验失败；
+  而记在 `flyway_schema_history.script` 里的路径是 `db/migration/xxx.sql`（**不含模块名**），
+  所以纯移动不影响已应用的库。
+- 编号顺延先例：V8 被占用时，乐观锁脚本顺延为 **V9**（而非 V10）。
+
 ### 12.1 表结构（两路线共用）
 
 | 表 | 关键列 |
@@ -752,7 +768,7 @@ mb.inSession(session -> {
 > `EventGatewayTest`(事件网关) · `DecisionTableTest`(DMN) · `Jpa/Mybatis*AggregationTest`(监控聚合三套一致) ·
 > `BatchStartTest`/`BatchApiTest`(批处理) · `MultiTenantTest`(多租户) · `NotificationServiceTest`(通知) ·
 > `JumpToNodeTest`(退回任意节点) · `PerformanceBenchmarkTest`(性能基准,`-Dperf=true` 才跑)。
-> 实测 `gradle :workflow-tests:test` 约 **270 用例**（跨库需 Docker 者 skip）。
+> 实测全量 `gradle build --rerun-tasks`：**397 PASSED / 0 FAILED / 35 SKIPPED**（skipped 均为需 Docker 的跨库套件）。
 
 | 套件 | 测试类数 | 用例数 | 继承基类 |
 |---|---|---|---|
@@ -1129,9 +1145,40 @@ WorkflowEngine legacy = engine.withoutConcurrencyControl();  // 无锁 + 无事�
 | `batchCompleteTasks(taskIds, userId, approved)` | 原子事务:全成功或全回滚,失败抛 `BatchPartialFailureException` 带 `BatchResult`（成功/失败计数 + 逐条失败详情） |
 | `batchTerminateInstances(instanceIds, operator, reason)` | 同上,批量终止 |
 | `batchStart(key[, version], List<vars>)` | 批量发起:先建全部实例 → 仓储 `saveBatch` 单事务插入 → 逐个推进 Token;所有实例继承当前租户 |
+| `migrateInstances(instanceIds, key, version, mapping, operator)` | 批量版本迁移:**逐实例独立事务**,失败不回滚已成功的,返回 `BatchResult`(v3.15) |
 | `saveBatch` | 仓储新增,JPA/MyBatis 单事务批量落库;InMemory 默认循环 |
 
 > **terminate 语义收紧**：`terminate` 现在校验实例状态,仅 `RUNNING` 可终止(与挂起/恢复一致),避免对终态实例重复操作。
+
+### 20.1 两种批量语义 —— 别把它们"统一"了
+
+| API | 语义 | 失败时 |
+|---|---|---|
+| `batchCompleteTasks` / `batchTerminateInstances` | **全或无** | 抛 `BatchPartialFailureException`，整个事务回滚 |
+| `migrateInstances` | **逐个提交、部分成功保留** | 只记进 `BatchResult.failures`，不中断整批 |
+
+看着不一致，但这是**有意为之**：
+
+- 批量终止/完成是一批**同质**操作，调用方期望"要么都成、要么都别动"，全或无最不容易留下半截状态；
+- 批量迁移的诉求是"**尽量多迁成功**"。迁 100 个实例时第 37 个失败，把前 36 个一起回滚纯属倒退；
+  运维真正要的是"哪几个没成、各自为什么"，然后拿 `failures` 里的 id 重试。
+
+实现上 `migrateInstances` 只是循环调用既有的 `migrateInstance` —— 后者内部是 `exclusive → tx.execute`，
+每次调用天然构成一个独立事务；**批方法自身刻意不开事务**，否则 N 个实例会被合并进同一个事务，独立事务就白设计了。
+
+```java
+BatchResult result = engine.migrateInstances(
+        List.of("inst-1", "inst-2", "inst-3"), "leave-flow", 2, nodeMapping, "admin");
+
+if (!result.isAllSuccess()) {
+    // 失败不抛异常，只逐个点名 —— 拿 id 重试即可
+    result.getFailures().forEach(f ->
+            log.warn("实例 {} 迁移失败({}): {}", f.getId(), f.getExceptionType(), f.getErrorMessage()));
+}
+```
+
+测试 `BatchMigrationTest` 从两侧夹住这条语义：失败实例**之前**的成果必须保住（防连坐回滚）、
+失败实例**之后**的照常处理（防一处失败就中断整批）—— 顺序 `[成功, 失败, 成功]`，终结中间那个实例使其非 `RUNNING`。
 
 ---
 

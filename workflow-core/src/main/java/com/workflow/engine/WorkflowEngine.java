@@ -51,6 +51,7 @@ import org.slf4j.LoggerFactory;
 import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -1581,6 +1582,31 @@ public class WorkflowEngine implements IWorkflowEngine {
             }
             log.info("[引擎] 实例 {} 迁移到 {} v{}，节点映射：{}", instanceId, targetProcessKey, targetDef.getVersion(), effectiveMapping);
         });
+    }
+
+    @Override
+    public BatchResult migrateInstances(List<String> instanceIds, String targetProcessKey,
+                                        int targetVersion, Map<String, String> nodeMapping,
+                                        String operator) {
+        List<BatchResult.FailureDetail> failures = new ArrayList<>();
+        int successCount = 0;
+        for (String instanceId : instanceIds) {
+            try {
+                // 逐个实例走一次 migrateInstance —— 它内部是 exclusive → tx.execute，
+                // 天然构成一个独立事务。本方法自身刻意不开事务：若把 N 个实例塞进同一个
+                // 事务，一个失败就会把已经成功的那些一起回滚，而这恰恰是批量迁移要避免的。
+                migrateInstance(instanceId, targetProcessKey, targetVersion, nodeMapping, operator);
+                successCount++;
+            } catch (RuntimeException ex) {
+                // 单个实例失败不中断整批：运维要的是"哪几个没成、各自为什么"，
+                // 而不是拿到第一个异常、剩下的动没动全靠猜。
+                failures.add(new BatchResult.FailureDetail(instanceId, ex));
+                log.warn("[引擎] 实例 {} 批量迁移失败，跳过并继续后续实例：{}", instanceId, ex.getMessage());
+            }
+        }
+        BatchResult result = BatchResult.partialFailure(instanceIds.size(), successCount, failures);
+        log.info("[引擎] 批量迁移完成：{}", result);
+        return result;
     }
 
     /** 反射设置 final 字段（用于迁移等场景） */
