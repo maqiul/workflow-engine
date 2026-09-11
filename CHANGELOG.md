@@ -2,7 +2,39 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.11.0 已完成** — serviceTask 自动节点支持（ServiceTaskDelegate），约 319 用例、全量 0 失败。
+项目状态：**v3.12.0 已完成** — Flowable 真实样本导入适配（customer_order_flow.bpmn），约 321 用例、全量 0 失败。
+
+---
+
+## [3.12.0] - 2026-09-11
+
+定位：**Flowable 真实样本导入适配**——成功解析用户提供的真实 Flowable 导出文件 `customer_order_flow.bpmn`（规格书完整流程），验证引擎能完整支持 Flowable 标准 BPMN 2.0 格式。
+
+### 新增
+- **Flowable 命名空间支持**：`BpmnImporter` 支持 `bpmn:` 前缀标签（如 `bpmn:process`、`bpmn:userTask`）和 `flowable:` 命名空间属性（如 `flowable:assignee`、`flowable:delegateExpression`）。
+- **`flowable:delegateExpression` 解析**：`serviceTask` 节点支持 Flowable 标准的 `flowable:delegateExpression="${varName}"` 格式，自动剥 `${}` 提取 delegate key。
+- **真实样本集成测试**：`FlowableSampleImportTest` 验证 `customer_order_flow.bpmn` 完整导入（20+ 节点、排他/并行网关、循环回边、动态 assignee、serviceTask）。
+
+### 变更
+- **`BpmnImporter.findProcess`**：增强命名空间兼容性，依次尝试 `getElementsByTagNameNS(BPMN_NS)` → `getElementsByTagName("process")` → `getElementsByTagName("bpmn:process")` → 遍历所有元素。
+- **`BpmnImporter.parseProcess`**：子元素标签名处理支持带前缀格式（`bpmn:startEvent` → `startEvent`）。
+- **`BpmnImporter.parseServiceTask`**：优先读 `flowable:delegateExpression`，兜底读 `wf:delegate`（自有格式）。
+
+### 测试
+- **`FlowableSampleImportTest`**：2 个用例（导入验证、启动验证）。
+- **全量回归 321/321 通过**：InMemory 275 + JPA 39 + MyBatis 39（含跨库一致性），0 失败。
+- **真实样本覆盖**：`customer_order_flow.bpmn` 包含 20+ 节点、排他/并行网关、循环回边、动态 assignee、serviceTask，全部正确解析。
+
+### OA 能力对标进度
+- ✅ #1 多实例会签/或签（v3.7.0）
+- ✅ #2 加签/减签（v3.7.0）
+- ✅ #3 并行逐支跳转（v3.7.0）
+- ✅ #4 循环回边（v3.9.0）
+- ✅ #5 动态 assignee（v3.10.0）
+- ✅ #6 serviceTask 自动节点（v3.11.0）
+- ✅ **#7 Flowable 导入适配层（v3.12.0）** ← 本轮完成
+-  #8 运行中实例版本迁移（待补）
+- ❌ #9 getBpmnModel 拓扑自省（待补）
 
 ---
 
