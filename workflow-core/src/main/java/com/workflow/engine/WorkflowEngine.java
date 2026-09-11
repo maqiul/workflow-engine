@@ -933,6 +933,41 @@ public class WorkflowEngine implements IWorkflowEngine {
         });
     }
 
+    @Override
+    public void jumpTokenToNode(String instanceId, String tokenId, String targetNodeId,
+                                String operator, String reason) {
+        exclusiveVoid(instanceId, "jumpTokenToNode", () -> {
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            if (instance.getStatus() != InstanceStatus.RUNNING) {
+                throw new IllegalStateException("仅 RUNNING 状态的流程可逐支跳转,当前: " + instance.getStatus());
+            }
+            ProcessDefinition def = defOf(instance);
+            if (def.getNode(targetNodeId) == null) {
+                throw new IllegalArgumentException("目标节点 " + targetNodeId + " 不存在于流程定义中");
+            }
+            Token token = instance.getActiveTokens().get(tokenId);
+            if (token == null) {
+                throw new IllegalArgumentException("Token 不存在或已消耗: " + tokenId);
+            }
+            // 只终止「这一支(token)」当前节点的 PENDING 待办，其它并行支不受影响
+            for (TaskInstance t : taskRepo.findByInstanceId(instanceId)) {
+                if (tokenId.equals(t.getTokenId()) && t.getStatus() == TaskStatus.PENDING) {
+                    t.setStatus(TaskStatus.TERMINATED);
+                    taskRepo.save(t);
+                    syncTaskInInstance(instance, t);
+                }
+            }
+            token.setCurrentNodeId(targetNodeId);
+            instanceRepo.save(instance);
+            advanceToken(instance, def, tokenId);  // 目标是 USER_TASK 会新建该支待办
+            log.info("[引擎] 逐支跳转 instance={} token={} -> {} by={} reason={}",
+                    instanceId, tokenId, targetNodeId, operator, reason);
+            audit(AuditEventType.PROCESS_JUMPED, instanceId, null, operator,
+                    "逐支跳转 token=" + tokenId + " -> " + targetNodeId
+                            + (reason != null ? " 原因: " + reason : ""));
+        });
+    }
+
     // ========== 加签/减签（多实例会签） ==========
 
     @Override

@@ -99,6 +99,21 @@ public interface IWorkflowEngine {
     void jumpToNode(String instanceId, String targetNodeId, String operator, String reason);
 
     /**
+     * 逐支跳转 - 只把「指定 Token 所在的那一条并行分支」移动到目标节点，
+     * 其它并行分支的 Token 与待办不受影响。用于并行区内单支回退。
+     *
+     * <p>与 {@link #jumpToNode} 的区别：jumpToNode 消耗实例全部 Token（整实例回退）；
+     * 本方法只处理 {@code tokenId} 这一支：终止该支当前待办、把该 Token 移到目标节点并推进。
+     *
+     * @param instanceId   流程实例 ID
+     * @param tokenId      要跳转的 Token（须为该实例的活跃 Token）
+     * @param targetNodeId 目标节点 ID
+     * @param operator     操作人
+     * @param reason       原因（可为 null）
+     */
+    void jumpTokenToNode(String instanceId, String tokenId, String targetNodeId, String operator, String reason);
+
+    /**
      * 加签 - 给进行中的多实例会签节点临时增加一个审批人(新建一个独立待办任务)。
      *
      * @param instanceId 流程实例 ID
