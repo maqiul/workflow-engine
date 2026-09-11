@@ -576,7 +576,7 @@ gradlew.bat :workflow-sample:run --no-daemon
 :: 编译（不测试）
 gradlew.bat assemble --no-daemon
 
-:: 全量测试（约 397 用例；跨库需 Docker，否则 skip）
+:: 全量测试（约 411 用例；跨库需 Docker，否则 skip）
 gradlew.bat :workflow-tests:test --no-daemon
 
 :: ⚠️ 最终验证一律用这个：增量构建的"绿灯"可能是复用上次的 XML 结果
