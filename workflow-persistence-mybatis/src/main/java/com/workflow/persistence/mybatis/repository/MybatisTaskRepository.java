@@ -2,6 +2,7 @@ package com.workflow.persistence.mybatis.repository;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.TypeReference;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.workflow.concurrency.WorkflowConflictException;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.CandidateCodec;
@@ -9,6 +10,7 @@ import com.workflow.enums.TaskStatus;
 import com.workflow.persistence.mybatis.MybatisPersistence;
 import com.workflow.persistence.mybatis.entity.WfTaskEntity;
 import com.workflow.persistence.mybatis.mapper.WfTaskMapper;
+import com.workflow.repository.TaskFilter;
 import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.TaskInstance;
 
@@ -161,11 +163,81 @@ public class MybatisTaskRepository implements TaskRepository {
 
     @Override
     public List<TaskInstance> findPendingByUser(String userId) {
-        return mb.inSession(session ->
-                session.getMapper(WfTaskMapper.class).findByStatus(TaskStatus.PENDING)
-                        .stream().map(MybatisTaskRepository::toDomain)
-                        .filter(t -> t.getCandidate().getUserIds().contains(userId))
-                        .toList());
+        return findPaged(TaskFilter.create()
+                .status(TaskStatus.PENDING)
+                .candidateUser(userId));
+    }
+
+    // ========== 条件下推 ==========
+
+    @Override
+    public List<TaskInstance> findPaged(TaskFilter filter) {
+        return mb.inSession(session -> {
+            boolean pushLimit = filter.canPushDownLimit();
+            List<TaskInstance> hits = session.getMapper(WfTaskMapper.class)
+                    .selectList(buildWrapper(filter, pushLimit))
+                    .stream()
+                    .map(MybatisTaskRepository::toDomain)
+                    .filter(filter::matches)
+                    .toList();
+            // 粗筛场景下 limit 没敢下推，分页必须挪到精筛之后 ——
+            // 否则被 LIKE 误命中的行会把真匹配挤出这一页
+            return pushLimit ? hits : filter.finish(hits);
+        });
+    }
+
+    @Override
+    public long countByFilter(TaskFilter filter) {
+        if (filter.hasCandidateCondition()) {
+            // 候选人条件走 LIKE 粗筛，SQL 计数会把假阳性算进去，只能取回来精筛后数
+            return mb.inSession(session -> session.getMapper(WfTaskMapper.class)
+                    .selectList(buildWrapper(filter, false)).stream()
+                    .map(MybatisTaskRepository::toDomain)
+                    .filter(filter::matches)
+                    .count());
+        }
+        return mb.inSession(session -> session.getMapper(WfTaskMapper.class)
+                .selectCount(buildWrapper(filter, false)));
+    }
+
+    /**
+     * 拼可下推条件。
+     *
+     * <p>候选人用 {@code apply} 而不是 {@code like}：{@code like} 会把模式包成
+     * {@code %值%}，而 JSON 里的用户 id 一定带引号 —— 带上引号才能让 u1 不误配 u10。
+     *
+     * <p>分页刻意<b>不</b>由 {@code withPaging} 之外的调用方触发：计数路径绝不能带
+     * limit，否则「一共几条」会变成「这一页几条」，分页组件的总页数就错了。
+     */
+    private static QueryWrapper<WfTaskEntity> buildWrapper(TaskFilter filter, boolean withPaging) {
+        QueryWrapper<WfTaskEntity> qw = new QueryWrapper<>();
+        if (filter.getInstanceId() != null) {
+            qw.eq("instance_id", filter.getInstanceId());
+        }
+        if (filter.getStatus() != null) {
+            qw.eq("status", filter.getStatus().name());
+        }
+        if (filter.getNodeId() != null) {
+            qw.eq("node_id", filter.getNodeId());
+        }
+        if (filter.getCandidateUserId() != null) {
+            qw.apply("candidate_json LIKE {0}",
+                    TaskFilter.candidateLikePattern(filter.getCandidateUserId()));
+        }
+        if (filter.getCandidateGroupId() != null) {
+            qw.apply("candidate_json LIKE {0}",
+                    TaskFilter.candidateLikePattern(filter.getCandidateGroupId()));
+        }
+        if (filter.isOrderByCreateTime()) {
+            // create_time 同毫秒时用 id 兜底，与 TaskFilter.finish 的排序规则一致
+            qw.orderBy(true, !filter.isDescending(), "create_time", "id");
+        }
+        if (withPaging && filter.getLimit() != null) {
+            int offset = filter.getOffset() == null ? 0 : filter.getOffset();
+            // H2 与 MySQL 的 LIMIT n OFFSET m 语法一致；last 一定落在 ORDER BY 之后
+            qw.last("LIMIT " + filter.getLimit() + " OFFSET " + offset);
+        }
+        return qw;
     }
 
     private static TaskInstance toDomain(WfTaskEntity e) {

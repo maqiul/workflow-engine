@@ -92,11 +92,38 @@ public class InMemoryTaskRepository implements TaskRepository {
 
     @Override
     public List<TaskInstance> findPendingByUser(String userId) {
-        return byId.values().stream()
-                .filter(t -> t.getStatus() == TaskStatus.PENDING)
-                .filter(t -> t.getCandidate().getUserIds().contains(userId))
-                .map(TaskInstance::copy)
-                .collect(Collectors.toList());
+        return findPaged(TaskFilter.create()
+                .status(TaskStatus.PENDING)
+                .candidateUser(userId));
+    }
+
+    /**
+     * 内存版「下推」：条件、排序、分页都在本地做。
+     *
+     * <p>看着像是没下推，但差别实打实 —— 旧路径是 {@code findAll()} 先把全库任务
+     * 复制一遍再过滤，这里是直接遍历存量对象，只有命中的那些才复制。
+     * 命中稀疏时（"我的待办"正是如此）省掉的是整个表的拷贝。
+     */
+    @Override
+    public List<TaskInstance> findPaged(TaskFilter filter) {
+        List<TaskInstance> hits = new ArrayList<>();
+        for (TaskInstance task : byId.values()) {
+            if (filter.matches(task)) {
+                hits.add(task.copy());
+            }
+        }
+        return filter.finish(hits);
+    }
+
+    @Override
+    public long countByFilter(TaskFilter filter) {
+        long count = 0;
+        for (TaskInstance task : byId.values()) {
+            if (filter.matches(task)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     @Override

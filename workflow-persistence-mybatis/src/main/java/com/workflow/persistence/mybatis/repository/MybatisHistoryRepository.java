@@ -217,10 +217,4 @@ public class MybatisHistoryRepository implements HistoryRepository {
                 e.getNodeId(), fromCsv(e.getCandidateUsers()), fromCsv(e.getCompletedBy()),
                 e.getStartTime(), e.getEndTime(), e.getEndReason(), e.getSeq());
     }
-
-    /** 便于按实例清理（测试隔离用）。 */
-    public int deleteByInstanceId(String instanceId) {
-        return mb.inSession(session -> session.getMapper(WfHistActivityMapper.class)
-                .delete(new QueryWrapper<WfHistActivityEntity>().eq("instance_id", instanceId)));
-    }
 }

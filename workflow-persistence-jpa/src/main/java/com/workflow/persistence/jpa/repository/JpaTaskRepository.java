@@ -7,9 +7,11 @@ import com.workflow.definition.CandidateCodec;
 import com.workflow.enums.TaskStatus;
 import com.workflow.persistence.jpa.JpaPersistence;
 import com.workflow.persistence.jpa.entity.WfTaskEntity;
+import com.workflow.repository.TaskFilter;
 import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.TaskInstance;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
 
 import java.util.HashSet;
 import java.util.List;
@@ -185,16 +187,114 @@ public class JpaTaskRepository implements TaskRepository {
 
     @Override
     public List<TaskInstance> findPendingByUser(String userId) {
+        return findPaged(TaskFilter.create()
+                .status(TaskStatus.PENDING)
+                .candidateUser(userId));
+    }
+
+    // ========== 条件下推 ==========
+
+    @Override
+    public List<TaskInstance> findPaged(TaskFilter filter) {
         return runInOrOpenTx(em -> {
-            List<WfTaskEntity> list = em.createQuery(
-                    "SELECT t FROM WfTaskEntity t WHERE t.status = :st", WfTaskEntity.class)
-                    .setParameter("st", TaskStatus.PENDING)
-                    .getResultList();
-            return list.stream()
+            boolean pushLimit = filter.canPushDownLimit();
+            List<TaskInstance> hits = selectByFilter(em, filter, pushLimit).stream()
                     .map(JpaTaskRepository::toDomain)
-                    .filter(t -> t.getCandidate().getUserIds().contains(userId))
+                    .filter(filter::matches)
                     .toList();
+            // 粗筛场景下 limit 没敢下推，分页必须挪到精筛之后 ——
+            // 否则被 LIKE 误命中的行会把真匹配挤出这一页
+            return pushLimit ? hits : filter.finish(hits);
         });
+    }
+
+    @Override
+    public long countByFilter(TaskFilter filter) {
+        if (filter.hasCandidateCondition()) {
+            // 候选人条件走的是 LIKE 粗筛，SQL 计数会把假阳性算进去，只能取回来精筛后数
+            return runInOrOpenTx(em -> selectByFilter(em, filter, false).stream()
+                    .map(JpaTaskRepository::toDomain)
+                    .filter(filter::matches)
+                    .count());
+        }
+        return runInOrOpenTx(em -> {
+            StringBuilder jpql = new StringBuilder("SELECT COUNT(t) FROM WfTaskEntity t WHERE 1=1");
+            appendConditions(jpql, filter);
+            Query query = em.createQuery(jpql.toString(), Long.class);
+            bindConditions(query, filter);
+            return (Long) query.getSingleResult();
+        });
+    }
+
+    /** 按 filter 取行；{@code paging} 为 true 时才把 limit/offset 交给数据库。 */
+    private List<WfTaskEntity> selectByFilter(EntityManager em, TaskFilter filter,
+                                              boolean paging) {
+        StringBuilder jpql = new StringBuilder("SELECT t FROM WfTaskEntity t WHERE 1=1");
+        appendConditions(jpql, filter);
+        appendOrder(jpql, filter);
+        Query query = em.createQuery(jpql.toString(), WfTaskEntity.class);
+        bindConditions(query, filter);
+        if (paging) {
+            if (filter.getLimit() != null) {
+                query.setMaxResults(filter.getLimit());
+            }
+            if (filter.getOffset() != null && filter.getOffset() > 0) {
+                query.setFirstResult(filter.getOffset());
+            }
+        }
+        return query.getResultList();
+    }
+
+    /**
+     * 拼可下推条件。
+     *
+     * <p>候选人列是 CLOB（JSON），得先 {@code CAST} 成字符串才能 {@code LIKE} ——
+     * 直接对 CLOB 比较在部分数据库上会因类型不匹配报错。
+     */
+    private static void appendConditions(StringBuilder jpql, TaskFilter f) {
+        if (f.getInstanceId() != null) {
+            jpql.append(" AND t.instanceId = :iid");
+        }
+        if (f.getStatus() != null) {
+            jpql.append(" AND t.status = :st");
+        }
+        if (f.getNodeId() != null) {
+            jpql.append(" AND t.nodeId = :nid");
+        }
+        if (f.getCandidateUserId() != null) {
+            jpql.append(" AND CAST(t.candidateJson AS string) LIKE :cu");
+        }
+        if (f.getCandidateGroupId() != null) {
+            jpql.append(" AND CAST(t.candidateJson AS string) LIKE :cg");
+        }
+    }
+
+    /** 排序规则与 {@link TaskFilter#finish} 保持一致：createTime 同毫秒时用 id 兜底。 */
+    private static void appendOrder(StringBuilder jpql, TaskFilter f) {
+        if (!f.isOrderByCreateTime()) {
+            return;
+        }
+        String dir = f.isDescending() ? "DESC" : "ASC";
+        jpql.append(" ORDER BY t.createTime ").append(dir)
+                .append(", t.id ").append(dir);
+    }
+
+    private static void bindConditions(Query query, TaskFilter f) {
+        if (f.getInstanceId() != null) {
+            query.setParameter("iid", f.getInstanceId());
+        }
+        if (f.getStatus() != null) {
+            query.setParameter("st", f.getStatus());
+        }
+        if (f.getNodeId() != null) {
+            query.setParameter("nid", f.getNodeId());
+        }
+        if (f.getCandidateUserId() != null) {
+            query.setParameter("cu", TaskFilter.candidateLikePattern(f.getCandidateUserId()));
+        }
+        if (f.getCandidateGroupId() != null) {
+            query.setParameter("cg", TaskFilter.candidateLikePattern(f.getCandidateGroupId()));
+        }
     }
 
     // ========== 全局查询 ==========

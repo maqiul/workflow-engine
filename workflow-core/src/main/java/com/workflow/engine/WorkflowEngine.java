@@ -32,6 +32,7 @@ import com.workflow.repository.EventRepository;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
 import com.workflow.repository.ProcessRepository;
+import com.workflow.repository.TaskFilter;
 import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.AuditLog;
 import com.workflow.runtime.CarbonCopy;
@@ -1700,6 +1701,23 @@ public class WorkflowEngine implements IWorkflowEngine {
     @Override
     public List<TaskInstance> allTasks() {
         return taskRepo.findAll();
+    }
+
+    /**
+     * 条件查询 —— 直接委托仓储，由它把条件下推到数据库（见 {@link TaskFilter}）。
+     *
+     * <p>引擎这一层刻意<b>不</b>掺和过滤：一旦在这里补一道内存过滤，
+     * 就等于默认仓储给的是「可能多出来一批」的结果，下推的意义会被抹掉一半。
+     * 精筛是仓储自己的职责（{@link TaskFilter#matches}）。
+     */
+    @Override
+    public List<TaskInstance> findTasks(TaskFilter filter) {
+        return taskRepo.findPaged(filter);
+    }
+
+    @Override
+    public long countTasks(TaskFilter filter) {
+        return taskRepo.countByFilter(filter);
     }
 
     /** 全量实例 —— 任务与流程定义的关联（key / version / 变量）由此补齐。 */

@@ -48,11 +48,23 @@ public abstract class AbstractCrossDbTest {
      * {@code MYSQL.start()} 抛出的 IllegalStateException 会被 JUnit 记作
      * {@code initializationError} + FAILED，让 CI 在无法运行它的机器上假红。
      *
+     * <p><b>探测本身也会炸</b>，所以这里连探测异常一起兜：Testcontainers 的
+     * {@code DockerMachineClient} 解析 PATH 时不认条目尾部的空格
+     * （GitHub Desktop 会把 {@code C:\...\GitHubDesktop\bin } 写进 PATH），
+     * 于是 {@code isDockerAvailable()} 直接抛 {@code InvalidPathException}，
+     * 照样变成假红。「探测不出来」和「探测出来没有」对用例而言是同一件事 ——
+     * 都是这台机器上跑不了，一律按 skip 处理。
+     *
      * <p>必须在子类的 {@code @BeforeAll} <b>第一行</b>调用，早于任何容器启动。
      */
     protected static void requireDocker() {
-        Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(),
-                "本机无可用 Docker，跳过 Testcontainers 跨库用例");
+        boolean available;
+        try {
+            available = DockerClientFactory.instance().isDockerAvailable();
+        } catch (RuntimeException | LinkageError ex) {
+            available = false;
+        }
+        Assumptions.assumeTrue(available, "本机无可用 Docker，跳过 Testcontainers 跨库用例");
     }
 
     @BeforeEach

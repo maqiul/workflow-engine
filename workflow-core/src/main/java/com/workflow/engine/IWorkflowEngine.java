@@ -2,6 +2,7 @@ package com.workflow.engine;
 
 import com.workflow.enums.CommentType;
 import com.workflow.monitor.DashboardMetrics;
+import com.workflow.repository.TaskFilter;
 import com.workflow.runtime.CarbonCopy;
 import com.workflow.runtime.Comment;
 import com.workflow.runtime.ProcessInstance;
@@ -302,6 +303,33 @@ public interface IWorkflowEngine {
      * 内存版测试全绿，真实仓储一调用就炸。强制实现才能把缺口暴露在编译阶段。
      */
     List<TaskInstance> allTasks();
+
+    /**
+     * 条件查询任务 —— 把可下推的条件交给仓储在数据库侧过滤、排序、分页。
+     *
+     * <p><b>为什么这里是 {@code default} 而不是抽象方法</b>：与 {@link #allTasks()}
+     * 不同，本方法提供的是<b>性能路径</b>，不是<b>缺失能力</b> —— 默认实现
+     * （全量 + 内存过滤）的结果与下推版逐条一致，只是慢。要求每个实现都表态
+     * 换不来正确性，只会逼出「复制一份默认逻辑」的样板代码。
+     *
+     * <p>{@link #allTasks()} 那条注释批评的是「{@code default} 抛
+     * {@code UnsupportedOperationException}」—— 那是拿默认实现掩盖能力缺口。
+     * 这里两条都不占：有真实的默认实现，语义也和下推版相同。
+     *
+     * @see com.workflow.repository.TaskRepository#findPaged(TaskFilter)
+     */
+    default List<TaskInstance> findTasks(TaskFilter filter) {
+        return filter.finish(allTasks().stream().filter(filter::matches).toList());
+    }
+
+    /**
+     * 条件下的任务总数 —— <b>不受 {@code limit}/{@code offset} 影响</b>。
+     *
+     * <p>分页组件靠它算总页数，所以它必须绕过分页逻辑，否则总页数会随每页大小漂移。
+     */
+    default long countTasks(TaskFilter filter) {
+        return allTasks().stream().filter(filter::matches).count();
+    }
 
     /** 全部流程实例（历史与效能查询的基础）。 */
     List<ProcessInstance> allInstances();

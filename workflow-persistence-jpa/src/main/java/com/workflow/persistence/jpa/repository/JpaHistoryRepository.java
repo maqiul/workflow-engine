@@ -225,12 +225,4 @@ public class JpaHistoryRepository implements HistoryRepository {
                 e.getNodeId(), fromCsv(e.getCandidateUsers()), fromCsv(e.getCompletedBy()),
                 e.getStartTime(), e.getEndTime(), e.getEndReason(), e.getSeq());
     }
-
-    /** 便于按实例清理（测试隔离用）。 */
-    public int deleteByInstanceId(String instanceId) {
-        return jpa.inTransaction(em -> em.createQuery(
-                        "DELETE FROM WfHistActivityEntity e WHERE e.instanceId = :iid")
-                .setParameter("iid", instanceId)
-                .executeUpdate());
-    }
 }

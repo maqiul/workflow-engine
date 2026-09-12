@@ -1847,6 +1847,78 @@ POST /api/instances/{id}/variables
 每次写入留一条 `VARIABLE_UPDATED` 审计，detail 形如 `amount=2000(原 1000)` ——
 审计要能回答的不只是「谁改的」，还有「改前是什么」。
 
+## 30. 任务查询条件下推（v3.22）
+
+### 30.1 场景
+
+「查我的待办」是最高频的查询。此前 `TaskQuery` 与 `findPendingByUser` 都是
+「把整张 `wf_task` 拉进内存，再用 stream 过滤」—— 功能正确，量级错误。
+
+### 30.2 两类条件，两种命运
+
+| 条件 | 数据在哪 | 能否下推 |
+|------|---------|---------|
+| 实例 id / 状态 / 节点 id / 候选人 | `wf_task` 自己有列 | ✅ SQL 直接过滤 |
+| 流程 key / 定义版本 / 流程变量 | 长在 `wf_instance` 上 | ❌ 内存里按实例补齐 |
+
+分页也一样：只有**全部条件都能下推**时才让仓储截断，否则会漏数据。
+
+### 30.3 候选人为什么是「粗筛」
+
+候选人存在一个 JSON 列里，没有结构化索引，SQL 侧只能近似匹配：
+
+```sql
+candidate_json LIKE '%"u1"%'
+```
+
+两侧的引号是刻意的 —— JSON 里用户 id 一定以字符串形式出现，带上引号才能让
+`u1` **不误配** `u10`。
+
+但这仍然不是精确匹配：候选组名与用户 id 同名时（比如某组的名字就叫 `u1`），
+SQL 分不出「候选组是 u1」和「候选人是 u1」。这类假阳性交给 `TaskFilter.matches`
+在内存里兜掉 —— **粗筛只影响性能，不影响正确性**。
+
+### 30.4 limit 为什么不能跟着一起下推
+
+粗筛结果里混着假阳性，若在 SQL 层就把行数截断到 `limit`，精筛掉假阳性之后
+真匹配就少了，调用方会看到「明明有数据却不足一页」。
+
+所以规则是：
+
+- **SQL 过滤精确**（没有候选人条件）→ `limit` / `offset` 下推给数据库
+- **走了粗筛**（有候选人条件）→ SQL 只负责把候选集缩小，分页挪到精筛之后
+
+### 30.5 API
+
+```java
+// 绝大多数场景不用直接碰 TaskFilter，查询构建器已经走这条路
+List<TaskInstance> mine = TaskQuery.create()
+        .candidate("u1")
+        .status(TaskStatus.PENDING)
+        .orderByCreateTimeDesc()
+        .limit(20)
+        .list(engine);
+
+// 需要直接下推到仓储时
+List<TaskInstance> hits = taskRepo.findPaged(TaskFilter.create()
+        .instanceId(instanceId)
+        .status(TaskStatus.PENDING)
+        .orderByCreateTimeAsc()
+        .limit(50)
+        .offset(100));
+
+long total = taskRepo.countByFilter(filter);   // 不受 limit/offset 影响
+```
+
+`TaskRepository.findPaged` / `countByFilter` 是 `default` 方法：默认实现
+「全量 + 内存过滤」，结果与下推版一致，只是慢。三套官方仓储（内存 / JPA / MyBatis）
+都已覆写 —— 自定义仓储不覆写也能跑对，但会退回旧量级。
+
+### 30.6 测试
+
+三套仓储跑同一份断言（`TaskFilterPushdownTest`），专盯下推之后最容易出错的三处：
+候选人 LIKE 的边界、粗筛的假阳性、粗筛场景下的分页位置。
+
 ---
 
 _本文档随项目演进持续更新。_

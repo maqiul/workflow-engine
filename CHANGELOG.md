@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.21.0**
+项目状态：**v3.22.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -10,6 +10,61 @@
 - v3.19.0 — 嵌入式集成（接入宿主 DataSource 与事务 / 独立 Flyway 历史表 / 连接池不再传递给消费方）
 - v3.20.0 — 审批意见一等能力（Comment + 三套持久化 + REST 端点 + Flyway V10；不随历史保留策略清理）
 - v3.21.0 — 运行期变量写入（setVariable / setVariables + 保留前缀拒写 + 审计含新旧值 + REST 端点）
+- v3.22.0 — 任务查询条件下推（TaskFilter + 三套仓储下推 + 粗筛精筛分离 + 清掉孤儿方法）
+
+---
+
+## [3.22.0] - 2026-09-12
+
+定位：**把查询条件下推到数据库**，并清掉一个零调用的孤儿方法。
+
+> ⚠️ **修的是一个「功能对、量级错」的缺口**：`TaskQuery` 与 `findPendingByUser`
+> 都是「把整张 `wf_task` 拉进内存，再用 stream 过滤」。功能测试全绿 ——
+> 因为内存里过滤十行和过滤一万行看起来一模一样 —— 直到任务表到了真实量级，
+> 「查我的待办」这条最高频的查询要读全库。
+
+### 新增
+
+- **`TaskFilter`**：可下推条件的载体，同时是三套仓储共用的**语义裁判**
+  （`matches` 精筛 / `finish` 排序分页 / `candidateLikePattern` 粗筛模式）
+- **`TaskRepository.findPaged(TaskFilter)` / `countByFilter(TaskFilter)`**：
+  契约是「过滤 + 排序 + 分页都已完成」；默认实现退化为全量 + 内存，三套官方仓储覆写为下推版
+- **`IWorkflowEngine.findTasks(TaskFilter)` / `countTasks(TaskFilter)`**：
+  刻意用 `default` 而非抽象方法 —— 它提供的是**性能路径**，不是缺失能力，
+  默认实现的结果与下推版逐条一致
+
+### 设计要点
+
+- **两类条件，两种命运**：实例 id / 状态 / 节点 / 候选人在 `wf_task` 表里有列，SQL 能直接过滤；
+  流程 key、定义版本、流程变量长在 `wf_instance` 上，任务表没冗余这三列，
+  只能回到内存里按实例补齐
+- **候选人只能粗筛**：候选人躺在 JSON 列里，没有结构化索引，SQL 侧只能
+  `candidate_json LIKE '%"u1"%'`。JSON 字符串值自带引号，所以 `u1` 不会误配 `u10`；
+  但候选组名与用户 id 同名时仍会中假阳性 —— 交给 `matches` 精筛兜掉，
+  **粗筛只影响性能，不影响正确性**
+- **`limit` 只在 SQL 过滤精确时才下推**：一旦走了粗筛，若还让 SQL 先截断，
+  假阳性会把真匹配挤出这一页，调用方看到的是「明明有数据却不足一页」。
+  所以粗筛场景的分页挪到精筛之后
+- **`count` 绕过分页**：分页组件靠它算总页数，带上 `limit` 会让总页数随每页大小漂移
+
+### 修复
+
+- 删掉 `JpaHistoryRepository` / `MybatisHistoryRepository` 上**零调用的
+  `deleteByInstanceId`**（`public` 但非 `@Override`，注释自称「测试隔离用」，而测试从未用过它）。
+  它压根**没法被调用**：调用方手里是 `HistoryRepository` 类型，看不见实现类的额外方法 ——
+  真要支持「按实例删历史」，那该是接口能力，不是实现细节
+- `AbstractCrossDbTest.requireDocker()` 连**探测异常**一起兜：Testcontainers 的
+  `DockerMachineClient` 解析 PATH 时不认条目尾部的空格（GitHub Desktop 会写进
+  `C:\...\GitHubDesktop\bin `），于是 `isDockerAvailable()` 直接抛 `InvalidPathException`，
+  「本机跑不了跨库用例」被记账成 FAILED 而非 SKIPPED，让本地构建假红
+
+### 测试
+
+新增 `TaskFilterPushdownTest`（三套仓储跑同一份断言，5 个用例），专盯下推之后最容易
+出错的三处：候选人 LIKE 的边界（`u1` vs `u10`）、粗筛的假阳性（组名与用户名同名）、
+粗筛场景下的分页位置。
+
+全量 **544 用例（509 通过 / 0 失败 / 0 错误 / 35 跳过）**，基线 539 净增 5 逐项吻合。
 
 ---
 

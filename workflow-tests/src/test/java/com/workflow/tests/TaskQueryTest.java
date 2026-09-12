@@ -9,6 +9,9 @@ import com.workflow.enums.TaskStatus;
 import com.workflow.persistence.jpa.JpaPersistence;
 import com.workflow.persistence.mybatis.MybatisPersistence;
 import com.workflow.query.TaskQuery;
+import com.workflow.repository.InMemoryInstanceRepository;
+import com.workflow.repository.InMemoryProcessRepository;
+import com.workflow.repository.InMemoryTaskRepository;
 import com.workflow.repository.InstanceRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
@@ -102,9 +105,9 @@ class TaskQueryTest {
                 tr = mb.taskRepo();
             }
             default -> {
-                pr = new com.workflow.repository.InMemoryProcessRepository();
-                ir = new com.workflow.repository.InMemoryInstanceRepository();
-                tr = new com.workflow.repository.InMemoryTaskRepository();
+                pr = new InMemoryProcessRepository();
+                ir = new InMemoryInstanceRepository();
+                tr = new InMemoryTaskRepository();
             }
         }
         pr.save(leave);

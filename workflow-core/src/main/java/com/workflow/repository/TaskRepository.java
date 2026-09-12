@@ -34,6 +34,32 @@ public interface TaskRepository {
         throw new UnsupportedOperationException("findAll not implemented");
     }
 
+    /**
+     * 条件下推的分页查询 —— 契约：返回<b>已完成过滤、排序、分页</b>的结果。
+     *
+     * <p>调用方（{@link com.workflow.query.TaskQuery}）只把 SQL 能表达的条件放进
+     * {@link TaskFilter}，剩下的实例条件由它自己在内存里补。所以本方法的职责很明确：
+     * 把 filter 里的条件、排序、分页尽可能交给数据库，然后用
+     * {@link TaskFilter#matches} 精筛兜底。
+     *
+     * <p>默认实现退回「全量 + 内存过滤」，结果与下推版完全一致，只是慢。
+     * 三套官方仓储（内存 / JPA / MyBatis）都已覆写为下推版；
+     * 这个 default 是留给第三方实现的兼容路径，不是可选的偷懒余地。
+     */
+    default List<TaskInstance> findPaged(TaskFilter filter) {
+        return filter.finish(findAll().stream().filter(filter::matches).toList());
+    }
+
+    /**
+     * 同条件下的命中总数 —— <b>不受 {@link TaskFilter#getLimit()} / {@code offset} 影响</b>。
+     *
+     * <p>分页组件要的是「一共几条」而不是「这一页几条」，所以计数绝不能经分页逻辑，
+     * 否则总页数会随每页大小漂移。
+     */
+    default long countByFilter(TaskFilter filter) {
+        return findAll().stream().filter(filter::matches).count();
+    }
+
     /** 按节点 ID 查找任务 */
     default List<TaskInstance> findByNodeId(String nodeId) {
         throw new UnsupportedOperationException("findByNodeId not implemented");

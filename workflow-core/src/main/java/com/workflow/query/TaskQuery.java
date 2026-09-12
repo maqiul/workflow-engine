@@ -2,17 +2,16 @@ package com.workflow.query;
 
 import com.workflow.engine.IWorkflowEngine;
 import com.workflow.enums.TaskStatus;
+import com.workflow.repository.TaskFilter;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
 
-import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * 任务查询构建器 - 支持复杂条件查询
@@ -29,7 +28,7 @@ import java.util.stream.Stream;
  * <p>修复的四个问题：
  * <ol>
  *   <li>{@code queryAllTasks()} 原先直接 {@code return new ArrayList<>()} ——
- *       不带 processInstanceId 的查询<b>永远返回空</b>。现走 {@code engine.allTasks()}。</li>
+ *       不带 processInstanceId 的查询<b>永远返回空</b>。现走仓储查询。</li>
  *   <li>{@code processDefinitionKey} / {@code processDefinitionVersion} /
  *       {@code processVariable} 三个条件字段原先定义了却从未参与 {@code matches()}，
  *       即过滤条件是空转的。现按任务的实例关联补齐。</li>
@@ -40,6 +39,12 @@ import java.util.stream.Stream;
  *       于是 {@code limit(5).count()} 最多返回 5，是个静默错数。现 count 走同一条
  *       过滤链但不经分页，得到真实命中数。</li>
  * </ol>
+ *
+ * <p><b>条件下推</b>：本类不再把整张任务表拉进内存过滤。可由 SQL 表达的条件
+ * （实例 id / 状态 / 节点 / 候选人）交给 {@link TaskFilter} 下推到仓储；
+ * 只有流程 key、定义版本、流程变量这三个「长在实例上」的条件才在内存里补做 ——
+ * 任务表没有冗余这三列，下推不了。分页也随之下沉，但只在<b>全部条件都能下推</b>时
+ * 才让仓储截断，否则会漏数据。
  */
 public final class TaskQuery {
 
@@ -155,17 +160,12 @@ public final class TaskQuery {
      * 执行查询并返回分页后的结果。
      */
     public List<TaskInstance> list(IWorkflowEngine engine) {
-        return sortedIfRequested(applyFilters(engine))
-                .skip(offset != null ? offset : 0)
-                .limit(limit != null ? limit : Long.MAX_VALUE)
-                .collect(Collectors.toList());
+        return execute(engine, true);
     }
 
     /** 查询单个结果；无匹配返回 null，多条匹配抛异常（避免静默取第一条）。 */
     public TaskInstance singleResult(IWorkflowEngine engine) {
-        List<TaskInstance> results = sortedIfRequested(applyFilters(engine))
-                .limit(limit != null ? limit : Long.MAX_VALUE)
-                .collect(Collectors.toList());
+        List<TaskInstance> results = execute(engine, false);
         if (results.isEmpty()) {
             return null;
         }
@@ -183,64 +183,97 @@ public final class TaskQuery {
      * 分页组件会据此少算总页数。
      */
     public long count(IWorkflowEngine engine) {
-        return applyFilters(engine).count();
+        if (canPushDownCompletely()) {
+            return engine.countTasks(buildFilter());
+        }
+        return filterByInstance(engine, engine.findTasks(buildFilter())).size();
     }
 
     // ========== 内部 ==========
 
-    /** 只应用过滤条件，不分页不排序：list() 与 count() 共用的前半段。 */
-    private Stream<TaskInstance> applyFilters(IWorkflowEngine engine) {
-        Map<String, ProcessInstance> instanceCache = new HashMap<>();
-        return sourceTasks(engine)
-                .filter(task -> matches(engine, instanceCache, task));
-    }
-
     /**
-     * 待过滤的任务来源。
+     * 查询执行：能下推的条件交给仓储，下推不了的在内存里补。
      *
-     * <p>指定了实例 id 就只扫该实例（多数场景），否则全量扫描。
+     * <p>仓储侧已经完成过滤、排序（{@code findTasks} 的契约），所以这里只在
+     * 「还有条件下推不了」时补一道内存过滤，并补上分页。
+     *
+     * @param paged 是否应用 {@code offset}。{@code singleResult} 刻意不分页 ——
+     *              它要回答的是「到底命中几条」而不是「第一页有几条」，
+     *              带上 offset 会把本该报出来的多条冲突藏掉
      */
-    private Stream<TaskInstance> sourceTasks(IWorkflowEngine engine) {
-        if (processInstanceId != null) {
-            ProcessInstance instance = engine.getInstance(processInstanceId);
-            return instance.getTasks().stream();
+    private List<TaskInstance> execute(IWorkflowEngine engine, boolean paged) {
+        if (canPushDownCompletely()) {
+            return engine.findTasks(buildFilter()
+                    .limit(limit)
+                    .offset(paged ? offset : null));
         }
-        return engine.allTasks().stream();
+        List<TaskInstance> tasks = filterByInstance(engine, engine.findTasks(buildFilter()));
+        if (paged) {
+            return buildFilter().limit(limit).offset(offset).finish(tasks);
+        }
+        return limit == null ? tasks : tasks.stream().limit(limit).toList();
     }
 
     /**
-     * 单条任务的过滤判定。
+     * 构造可下推条件。
+     *
+     * <p>{@code limit}/{@code offset} 刻意<b>不</b>在这里带上：调用方要在
+     * {@link #execute} 里决定给不给。仓储实现自己也不会把 limit 下推到 SQL ——
+     * 除非没有候选人条件（见 {@link TaskFilter#canPushDownLimit()}）。
+     */
+    private TaskFilter buildFilter() {
+        TaskFilter filter = TaskFilter.create()
+                .instanceId(processInstanceId)
+                .status(status)
+                .nodeId(nodeId)
+                .candidateUser(assignee)
+                .candidateGroup(candidateGroup);
+        if ("createTime".equals(orderByField)) {
+            filter = ascending ? filter.orderByCreateTimeAsc() : filter.orderByCreateTimeDesc();
+        }
+        return filter;
+    }
+
+    /**
+     * 是否全部条件都能下推。
+     *
+     * <p>流程 key、定义版本、流程变量这三者长在实例上，任务表没有冗余这些列 ——
+     * 只要用到其中任何一个，就必须回到内存里按实例补齐，分页也就不能提前截断。
+     */
+    private boolean canPushDownCompletely() {
+        return processDefinitionKey == null
+                && processDefinitionVersion == null
+                && (processVariables == null || processVariables.isEmpty());
+    }
+
+    /**
+     * 内存补过滤：只处理下推不了的那三个条件。
+     *
+     * <p>可下推条件（状态 / 节点 / 实例 / 候选人）已经由仓储过滤过了，这里不再重复判定 ——
+     * 重复判定本身无害，但会让「哪个条件归谁管」变得含糊，改动时容易两边不一致。
+     */
+    private List<TaskInstance> filterByInstance(IWorkflowEngine engine,
+                                                List<TaskInstance> tasks) {
+        Map<String, ProcessInstance> instanceCache = new HashMap<>();
+        List<TaskInstance> out = new ArrayList<>(tasks.size());
+        for (TaskInstance task : tasks) {
+            if (matchesInstanceConditions(engine, instanceCache, task)) {
+                out.add(task);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 实例相关条件的判定。
      *
      * <p>{@code instanceCache} 只在本次查询内有效：按 key / 版本 / 变量过滤需要
      * 任务的所属实例，而任务表本身不冗余这些字段。缓存避免 N 次重复回查，
      * 但不要把该 map 外传 —— 它反映的是查询开始时的快照。
      */
-    private boolean matches(IWorkflowEngine engine,
-                            Map<String, ProcessInstance> instanceCache,
-                            TaskInstance task) {
-        if (status != null && task.getStatus() != status) {
-            return false;
-        }
-        if (nodeId != null && !nodeId.equals(task.getNodeId())) {
-            return false;
-        }
-        if (assignee != null && !task.getCandidate().getUserIds().contains(assignee)) {
-            return false;
-        }
-        if (candidateGroup != null && !task.getCandidate().getGroupIds().contains(candidateGroup)) {
-            return false;
-        }
-        if (processInstanceId != null && !processInstanceId.equals(task.getInstanceId())) {
-            return false;
-        }
-
-        boolean needInstance = processDefinitionKey != null
-                || processDefinitionVersion != null
-                || processVariables != null && !processVariables.isEmpty();
-        if (!needInstance) {
-            return true;
-        }
-
+    private boolean matchesInstanceConditions(IWorkflowEngine engine,
+                                              Map<String, ProcessInstance> instanceCache,
+                                              TaskInstance task) {
         ProcessInstance instance = instanceCache.computeIfAbsent(
                 task.getInstanceId(), engine::getInstance);
         if (instance == null) {
@@ -282,17 +315,5 @@ public final class TaskQuery {
                 && expected.getClass().isEnum() == actual.getClass().isEnum()
                 && expected.toString().equals(actual.toString())
                 && expected.getClass() == actual.getClass();
-    }
-
-    /** 未指定排序字段时保持仓储返回顺序，不擅自重排。 */
-    private Stream<TaskInstance> sortedIfRequested(Stream<TaskInstance> source) {
-        if (!"createTime".equals(orderByField)) {
-            return source;
-        }
-        Comparator<TaskInstance> cmp =
-                Comparator.comparingLong(TaskInstance::getCreateTime)
-                        // 同一毫秒内用 id 兜底，保证结果稳定可复现
-                        .thenComparing(TaskInstance::getId);
-        return source.sorted(ascending ? cmp : cmp.reversed());
     }
 }
