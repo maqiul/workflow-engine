@@ -14,7 +14,7 @@ dependencies {
 
     // ---- 跨数据库测试(MySQL / PostgreSQL,基于 Testcontainers) ----
     // Testcontainers BOM 统一版本(1.21.4 为 1.x 最新,含 mysql/postgresql 模块)
-    testImplementation(platform("org.testcontainers:testcontainers-bom:1.21.4"))
+    testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.testcontainers:testcontainers")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:mysql")
