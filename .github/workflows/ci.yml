@@ -1,5 +1,16 @@
 name: CI
 
+# ⚠️ 分支保护联动 —— 动下面 on: 段之前先读这段
+#
+# main 的分支保护把本 workflow 的 build（建议连带 dependency-review）列为 required check。
+# 官方规则（Troubleshooting required status checks）：
+#   ① 整个 workflow 被跳过 —— paths-ignore / paths 过滤 / 分支过滤 / commit message 过滤
+#      → 其 check 会永久停在 Pending，PR 再也合不进去；
+#   ② 只有「job 级 if」造成的跳过会报 Success、不阻塞合并。本文件的 cross-db 与
+#      dependency-review 都属 ②（job 级 if），所以它们列为 required 是安全的。
+# 结论：**不要给本 workflow 的 on: 段加 paths 类过滤，也不要从 pull_request.branches
+#       里移除 main**。确有需要时，先同步调整分支保护的 required 列表。
+# 文档：https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks
 on:
   push:
     branches: [ main ]
