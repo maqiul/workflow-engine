@@ -32,6 +32,12 @@ dependencies {
 tasks.test {
     forkEvery = 1
     maxParallelForks = 4
+    // 显式抬高测试 JVM 堆。Gradle 默认 512m，在 forkEvery=1 + 4 并发 + `-Dperf` 高负载下
+    // 曾触发 JDK 17.0.14 的 C2 JIT 编译器自身崩溃（2026-09-11 的 hs_err:
+    // EXCEPTION_ACCESS_VIOLATION，崩在 "C2 CompilerThread0" 编译 BuiltinClassLoader 时）。
+    // 崩的是 JVM、不是被测代码，但整轮测试作废 —— 抬堆只是降低触发概率的标准缓解，
+    // 不是根治（根治要等 JDK patch 更新）。
+    maxHeapSize = "1g"
     // 透传给测试 JVM：默认关闭，`gradle test -Dperf=true` 才启用性能基准用例
     systemProperty("perf", System.getProperty("perf", ""))
 

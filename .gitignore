@@ -16,6 +16,12 @@ local.properties
 *.log
 tmp-json-test/
 
+# JVM 崩溃现场（C2/JIT 或 native 崩溃时由 JVM 自动落盘）。
+# 已被上面的 *.log 覆盖，这里显式列出：万一将来把 *.log 规则收窄，也不会误入库 ——
+# 这类文件含内存地址、机器名、用户路径等现场信息，不该进公开仓库。
+hs_err_pid*.log
+replay_pid*.log
+
 # 本地解压的 Gradle 发行版与安装包（勿入库）
 gradle-8.5/
 gradle-8.5-bin.zip
