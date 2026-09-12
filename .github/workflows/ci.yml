@@ -27,7 +27,7 @@ jobs:
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v6
 
       # 全量构建 + 测试；跨库用例(Testcontainers)默认跳过(需 Docker、易抖动)，
       # 由 -PskipCrossDb 控制；真库兼容性交给下面的 cross-db job（nightly）。
@@ -84,7 +84,7 @@ jobs:
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v6
 
       # 不加 -PskipCrossDb，跨库用例纳入运行
       - name: Build & Test (cross-DB included)
