@@ -1,0 +1,53 @@
+name: Dependency Submission
+
+# 为什么需要这个 workflow —— Gradle 是依赖图里的特例
+#
+# GitHub 的依赖图对多数生态能静态解析：Maven 读 pom.xml、Go 读 go.mod、npm 读 lock 文件。
+# Gradle 不行：官方支持表格里 Gradle 那一行的「Recommended files」栏是空的，因为 Gradle
+# 依赖要执行构建时才解析（Kotlin DSL、属性插值、BOM、根 build 里的 subprojects {} 注入），
+# 静态读 build.gradle.kts 读不出来。官方 changelog 原话：
+#   "Projects that use Gradle need to include dependencies that are resolved at build time
+#    in order to get a full, transitive dependency tree."
+#
+# 所以必须由本 workflow 主动生成快照并提交。缺了它仓库依赖图是空的，后果有二：
+#   ① dependency-review 在 PR 上比对 base/head 时后端无数据 → HTTP 403 →
+#      action 甩出一句「Please ensure that Dependency graph is enabled」。那句话是误导性的：
+#      action 源码里 403 固定映射成这句、404 才是「could not obtain dependency data」，
+#      它并不真的检查开关状态（见 actions/dependency-review-action issue #164）。
+#   ② Dependabot alerts 拿不到 Gradle 依赖的漏洞告警。
+#
+# 同时挂 push 与 pull_request 是刻意的：dependency-review 比的是「PR head vs base」，
+# 两侧都得有快照，只提交 main 侧不够。
+#
+# ⚠️ 单独成文件也是刻意的：ci.yml 顶层是 permissions: contents: read，而提交依赖图需要
+#    contents: write。permissions 是 workflow 级的，分成两个文件各管各的，互不牵连。
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dependency-submission:
+    # Dependabot 触发的 run 拿到的是只读 GITHUB_TOKEN（GitHub 的硬性安全降级，声明
+    # contents: write 也不生效），提交必然 403。与其在每个依赖升级 PR 上挂一个红叉，
+    # 不如直接跳过 —— 反正提交不上去，ci.yml 的 dependency-review 同样对 dependabot 放行。
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 该 action 会执行一次 Gradle 内建的「解析全部依赖」任务（不跑测试），
+      # 把完整传递依赖树提交给 Dependency Submission API。
+      - name: Generate and submit dependency graph
+        uses: gradle/actions/dependency-submission@v6

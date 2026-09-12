@@ -62,17 +62,25 @@ jobs:
   # 默认启用、没有开关可点，告警直接看 /security（旧注释说「去 Settings → Code security
   # 手工开」是按 private 仓库模型写的，已实测证伪）。
   #
-  # ⚠️ 前置条件：仓库必须启用 Dependency graph（Settings → Advanced Security →
-  #    点开 Dependency graph）。未启用时 action 直接报
-  #    「Dependency review is not supported on this repository」—— 且这是仓库级开关，
-  #    改文件改不动。public 仓库免费，但默认状态需人工确认一次。
+  # ⚠️ 前置条件有两层，缺一不可：
+  #    ① 仓库启用 Dependency graph（Settings → Security and quality → Advanced Security）。
+  #       public 仓库默认开启，一般无需人工干预。
+  #    ② 依赖图里真的要有数据。Gradle 是特例 —— 官方支持表格里 Gradle 那一行的
+  #       「Recommended files」栏是空的：Gradle 依赖要执行构建时才解析，GitHub 无法从
+  #       build.gradle.kts 静态读取，所以必须由 dependency-submission.yml 主动提交快照。
+  #    缺②的症状极易误导：比对时后端无数据，action 返回 403 并甩出一句
+  #    「Please ensure that Dependency graph is enabled」。这句是 403 的固定映射
+  #    （404 才是「could not obtain dependency data」），action 并不检查开关状态，
+  #    别被它引去反复确认一个本来就开着的开关 —— 见 action issue #164。
   #
   # 刻意不设 comment-summary-in-pr：该选项要求 pull-requests: write，而 Dependabot
   # 触发的 run 拿到的 GITHUB_TOKEN 恒为只读（GitHub 的硬性安全降级，声明也不生效），
   # 评论必然 403 —— 那会让每一只依赖升级 PR 都飘红，把真正的失败信号淹掉。
   # 比对结果本来就会写进 job summary（Actions → 该 run 的 Summary 页），够看。
   dependency-review:
-    if: github.event_name == 'pull_request'
+    # Dependabot 触发的 run 拿到的 token 恒为只读，依赖图快照提交不上去、比对必然 403。
+    # 这类 PR 由 dependency-submission 一并跳过，此 check 不参与。
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
