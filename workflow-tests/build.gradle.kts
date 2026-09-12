@@ -10,7 +10,7 @@ dependencies {
     // 引擎「自建池 / H2 内存库」路径(MybatisPersistence.init())在测试里仍要跑,
     // 而引擎已把 HikariCP 与 H2 降为 compileOnly(不向消费方传递),故测试侧显式补运行时依赖
     testRuntimeOnly("com.zaxxer:HikariCP:5.1.0")
-    testRuntimeOnly("com.h2database:h2:2.2.224")
+    testRuntimeOnly("com.h2database:h2:2.5.250")
 
     // ---- 跨数据库测试(MySQL / PostgreSQL,基于 Testcontainers) ----
     // Testcontainers BOM 统一版本(1.21.4 为 1.x 最新,含 mysql/postgresql 模块)
@@ -21,7 +21,7 @@ dependencies {
     testImplementation("org.testcontainers:postgresql")
     // JDBC 驱动
     testImplementation("com.mysql:mysql-connector-j:8.4.0")
-    testImplementation("org.postgresql:postgresql:42.7.4")
+    testImplementation("org.postgresql:postgresql:42.7.13")
 
     // 测试相关依赖由根 build.gradle.kts 统一通过 testImplementation 引入
 }

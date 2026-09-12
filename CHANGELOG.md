@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.23.0**
+项目状态：**v3.24.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -12,6 +12,63 @@
 - v3.21.0 — 运行期变量写入（setVariable / setVariables + 保留前缀拒写 + 审计含新旧值 + REST 端点）
 - v3.22.0 — 任务查询条件下推（TaskFilter + 三套仓储下推 + 粗筛精筛分离 + 清掉孤儿方法）
 - v3.23.0 — 按候选组查待办（findPendingByGroup）+ 依赖与 CI 守卫（Dependabot / dependency-review）
+- v3.24.0 — 依赖安全补丁与 CI 守卫修复（6 项依赖升级含 3 个 CVE 修复 / actions 升 node24 运行时 / Dependabot ignore 策略）
+
+---
+
+## [3.24.0] - 2026-09-12
+
+定位：**把依赖安全与 CI 守卫的账结掉**。引擎代码零改动，无 API 变更、无行为变更。
+
+> 起点是 Dependabot 一次性提了 7 个 PR，**7 个全红**。红本身不稀奇，稀奇的是连
+> 「setup-java 4→6」这种纯版本号替换也红 —— 那说明红的原因跟代码无关。查下去确认是
+> 两层叠加：① `dependency-review` 报「Dependency review is not supported on this
+> repository」，即仓库级 Dependency graph 没开；② 所有 job 都在报 Node.js 20 弃用警告。
+> **假红比真红更贵**：它会训练人无视红灯，真出问题时没人再看。
+
+### 变更
+
+- **依赖升级 6 项**（均经 `gradle build --rerun-tasks` 全量验证，546 用例口径不变）：
+
+  | 依赖 | 原 → 新 | 动机 |
+  |---|---|---|
+  | fastjson2 | 2.0.49 → 2.0.65 | AutoType 授权绕过修复（官方标注 security fix release） |
+  | logback-classic | 1.5.6 → 1.6.3 | `MDCBasedDiscriminator` 路径穿越（CVE-2026-19880） |
+  | assertj-core | 3.25.3 → 3.27.7 | `isXmlEqualTo` XXE（CVE-2026-24400） |
+  | postgresql | 42.7.4 → 42.7.13 | SCRAM channel-binding 降级改为 fail-closed |
+  | slf4j-api | 2.0.13 → 2.0.19 | patch 跟进 |
+  | h2 | 2.2.224 → 2.5.250 | 测试/演示用（生产为 MySQL/PG），由 CI 覆盖 |
+
+- **CI 守卫修复**：
+  - 显式声明 `permissions: contents: read` —— 不声明会继承仓库默认策略，让需要额外
+    权限的 action 以「Resource not accessible by integration」一类看不出所以然的错误失败；
+  - 4 个 action 全部升到 node24 运行时，消掉弃用警告：`checkout` v4→v7、
+    `setup-java` v4→v6、`gradle/actions/setup-gradle` v3→v6、
+    `dependency-review-action` v4→v5；
+  - 去掉 `comment-summary-in-pr`：该选项要求 `pull-requests: write`，而 Dependabot
+    触发的 run 拿到的 `GITHUB_TOKEN` 恒为只读（GitHub 的硬性安全降级，声明也不生效），
+    评论必然 403 —— 那会让每一只依赖升级 PR 都飘红。比对结果本就写进 job summary，够看；
+  - 注释里写明 Dependency graph 是仓库级前置条件，并说明它改文件改不动。
+- **Dependabot ignore 策略 4 条**（hibernate-core major / `org.flywaydb:*` major /
+  mysql-connector-j major / jakarta.persistence-api minor+major）：每条都写明
+  「为什么现在不升」与「什么时候该放开」，免得半年后被当成无从判断的历史包袱。
+- **删除死变量 `logbackVersion`**：定义了但全仓零引用（Dependabot 也没动它 ——
+  它无从判断这个变量是否被使用）。logback 版本实际写在各子模块的字面量里。
+
+### 未做（有意）
+
+- **hibernate-core 6.4.4 → 7.4.7.Final**：CI 试跑直接构建失败，需专门一轮适配与回归。
+- **flyway-core 12.8.1 → 13.5.0**：CI 试跑构建失败，且触碰存量库 checksum 敏感区。
+- **mysql-connector-j 8.4.0 → 26.7.0**：这只 PR 的 build 是绿的 —— 但绿灯并不覆盖驱动
+  真正被用到的路径（cross-db 真库套件在 PR 上是跳过状态），先跑通 cross-db 再升。
+- **jakarta.persistence-api 3.1.0 → 3.2.0**：规范 API 必须与实现端配对（Hibernate 6.4.4
+  属 Jakarta EE 10 / JPA 3.1）。单独跳 3.2 会造出「规范 3.2 + 实现 6.4」这种编译能过、
+  单测能过、但不在任何人兼容矩阵里的组合。
+
+### 需人工完成
+
+- ⚠️ **仓库开启 Dependency graph**（Settings → Advanced Security）：否则
+  `dependency-review` 恒红，且这是仓库级开关，改文件改不动。
 
 ---
 

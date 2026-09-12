@@ -13,5 +13,5 @@ dependencies {
     api("org.flywaydb:flyway-database-postgresql:12.8.1")
 
     // 日志(运行时使用)
-    implementation("org.slf4j:slf4j-api:2.0.13")
+    implementation("org.slf4j:slf4j-api:2.0.19")
 }

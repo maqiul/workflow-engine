@@ -11,6 +11,12 @@ on:
   # 允许手动触发 —— 例如刚改完迁移脚本，想立刻验一次真库
   workflow_dispatch:
 
+# 最小权限：本 workflow 只读仓库内容（checkout + 依赖图比对 + 跑构建）。
+# 不写显式 permissions 时继承仓库默认策略，需要额外权限的 action 会以
+# 「Resource not accessible by integration」这类看不出所以然的错误失败。
+permissions:
+  contents: read
+
 jobs:
   # ---------- 主门禁：快 ----------
   # 跨库用例（Testcontainers）默认跳过 —— 拉镜像慢、环境易抖动，不该阻塞每一次 push。
@@ -18,16 +24,16 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v6
 
       # 全量构建 + 测试；跨库用例(Testcontainers)默认跳过(需 Docker、易抖动)，
       # 由 -PskipCrossDb 控制；真库兼容性交给下面的 cross-db job（nightly）。
@@ -52,18 +58,29 @@ jobs:
   # 若不加 fail-on-severity，默认只对 critical 失败 —— 对自研引擎来说 high 也该拦。
   # 仅对 PR 生效（比对需要 base/head 两侧），push 到 main 没有可比对象。
   #
-  # 存量依赖的漏洞告警是另一回事：那要仓库 Settings → Code security 开 Dependabot alerts。
+  # 存量依赖的漏洞告警是另一回事：本仓库是 public，Dependabot alerts 由 GitHub
+  # 默认启用、没有开关可点，告警直接看 /security（旧注释说「去 Settings → Code security
+  # 手工开」是按 private 仓库模型写的，已实测证伪）。
+  #
+  # ⚠️ 前置条件：仓库必须启用 Dependency graph（Settings → Advanced Security →
+  #    点开 Dependency graph）。未启用时 action 直接报
+  #    「Dependency review is not supported on this repository」—— 且这是仓库级开关，
+  #    改文件改不动。public 仓库免费，但默认状态需人工确认一次。
+  #
+  # 刻意不设 comment-summary-in-pr：该选项要求 pull-requests: write，而 Dependabot
+  # 触发的 run 拿到的 GITHUB_TOKEN 恒为只读（GitHub 的硬性安全降级，声明也不生效），
+  # 评论必然 403 —— 那会让每一只依赖升级 PR 都飘红，把真正的失败信号淹掉。
+  # 比对结果本来就会写进 job summary（Actions → 该 run 的 Summary 页），够看。
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Review dependency changes
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
-          comment-summary-in-pr: on-failure
 
   # ---------- 真库深度验证：nightly ----------
   # JPA×MySQL / JPA×PostgreSQL / MyBatis×MySQL / MyBatis×PostgreSQL 四种组合。
@@ -75,16 +92,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v6
 
       # 不加 -PskipCrossDb，跨库用例纳入运行
       - name: Build & Test (cross-DB included)

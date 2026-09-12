@@ -34,6 +34,33 @@ updates:
           - "minor"
           - "patch"
 
+    # 有意不提的依赖。每一条都写清楚「为什么现在不升」和「什么时候该放开」——
+    # 否则半年后看到 ignore 只会当成历史包袱，要么盲目删掉，要么永远不敢动。
+    ignore:
+      # 规范 API 必须与实现端配对：当前 hibernate-core 6.4.4 属 Jakarta EE 10
+      # (JPA 3.1)，单独把 API 跳到 3.2 会造出「规范版本 3.2 + 实现 6.4」这种
+      # 谁都没测过的组合 —— 编译能过、单测能过（3.2 是 additive 变更，不会
+      # AbstractMethodError），但它不在任何人的兼容矩阵里，真出问题没人兜底。
+      # 放开时机：hibernate-core 升到 7.x 时连同 API 一起动。
+      - dependency-name: "jakarta.persistence:jakarta.persistence-api"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # Hibernate 6→7 是 ORM 层大版本：实体映射、方言、Session API 都有断裂变更，
+      # 需要专门一轮适配 + 回归（CI 试跑已确认直接构建失败，不是白担心的）。
+      # 放开时机：单开一个升级分支，别混在例行依赖 PR 里。
+      - dependency-name: "org.hibernate.orm:hibernate-core"
+        update-types: ["version-update:semver-major"]
+      # Flyway 12→13 是迁移引擎大版本，且本项目对迁移脚本 checksum 有存量库约束
+      # （见 MEMORY：存量库校验失败不可逆）。升级必须配合一次真库演练。
+      - dependency-name: "org.flywaydb:*"
+        update-types: ["version-update:semver-major"]
+      # MySQL 驱动改用 CalVer（8.4 → 9.x → 26.x），版本号跨越不代表 API 跨越，
+      # 但也意味着「8.4→26.7」这种 PR 里藏着好几代变更。本项目唯一能验证它的是
+      # cross-db 真库套件（Testcontainers），而它在 PR 上是跳过状态 ——
+      # 也就是说这只 PR 的绿灯并不覆盖驱动真正被用到的路径。
+      # 放开时机：先本地/CI 跑通 cross-db，再升。
+      - dependency-name: "com.mysql:mysql-connector-j"
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

@@ -84,17 +84,17 @@
 |---|---|---|
 | 语言 | Java | 17 |
 | 构建 | Gradle (Kotlin DSL) | 8.5 |
-| 日志 | SLF4J + Logback | 2.0.13 / 1.5.6 |
-| JSON | fastjson2 | 2.0.49 |
+| 日志 | SLF4J + Logback | 2.0.19 / 1.6.3 |
+| JSON | fastjson2 | 2.0.65 |
 | 持久化（JPA 路线） | Jakarta Persistence API + Hibernate Core | 3.1.0 / 6.4.4.Final |
 | 持久化（MyBatis 路线） | MyBatis-Plus（国产） | 3.5.17 |
 | Schema 迁移 | Flyway（统一 DDL，跨库） | 12.8.1 |
-| 数据库 | H2 (内存模式) | 2.2.224 |
+| 数据库 | H2 (内存模式) | 2.5.250 |
 | 数据库 | MySQL / PostgreSQL（Testcontainers 集成测试） | 8.4 / 16 |
 | 连接池 | HikariCP | 5.1.0 |
 | 集成测试 | Testcontainers | 1.21.4 |
 | 测试 | JUnit Jupiter | 5.10.2 |
-| 断言 | AssertJ | 3.25.3 |
+| 断言 | AssertJ | 3.27.7 |
 
 ---
 
@@ -1361,22 +1361,21 @@ workflow-engine/
 
 ```kotlin
 // 根 build.gradle.kts 统一版本
-val fastjson2Version = "2.0.49"
-val slf4jVersion = "2.0.13"
-val logbackVersion = "1.5.6"
+val fastjson2Version = "2.0.65"
+val slf4jVersion = "2.0.19"
 val jakartaPersistenceVersion = "3.1.0"
 val hibernateVersion = "6.4.4.Final"
-val h2Version = "2.2.224"
+val h2Version = "2.5.250"
 val hikariVersion = "5.1.0"
 val junitVersion = "5.10.2"
-val assertjVersion = "3.25.3"
+val assertjVersion = "3.27.7"
 
 // 模块内声明
 val mybatisPlusVersion = "3.5.17"                       // workflow-persistence-mybatis
 val flywayVersion = "12.8.1"                            // workflow-persistence-flyway
 val testcontainersVersion = "1.21.4"                    // workflow-tests(跨库)
 val mysqlDriverVersion = "8.4.0"                        // workflow-tests(跨库)
-val postgresDriverVersion = "42.7.4"                    // workflow-tests(跨库)
+val postgresDriverVersion = "42.7.13"                    // workflow-tests(跨库)
 ```
 
 ### C. 联系与维护
