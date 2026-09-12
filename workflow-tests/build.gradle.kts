@@ -20,7 +20,7 @@ dependencies {
     testImplementation("org.testcontainers:mysql")
     testImplementation("org.testcontainers:postgresql")
     // JDBC 驱动
-    testImplementation("com.mysql:mysql-connector-j:8.4.0")
+    testImplementation("com.mysql:mysql-connector-j:26.7.0")
     testImplementation("org.postgresql:postgresql:42.7.4")
 
     // 测试相关依赖由根 build.gradle.kts 统一通过 testImplementation 引入
