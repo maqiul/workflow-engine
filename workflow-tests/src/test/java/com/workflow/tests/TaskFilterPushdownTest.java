@@ -263,4 +263,55 @@ class TaskFilterPushdownTest {
             h.engine().shutdown();
         });
     }
+
+    // ---------- 6. 按组查：与按人查各查各的（候选组是快照） ----------
+
+    @Test
+    @DisplayName("按组查待办能看到个人查询天然失明的未展开任务")
+    void pendingByGroupSeesTasksThatUserQueryCannot() {
+        acrossAllRepositories(h -> {
+            // 已展开的组任务：userIds 有具体人，groupIds 原样保留原组名
+            saveTask(h, "t-expanded",
+                    new Candidate(Set.of("u1"), Set.of("finance"), CandidateStrategy.ANY), 1000L);
+            // 未展开的组任务：userIds 为空 —— 调用方没注入 GroupResolver 时的存量数据
+            saveTask(h, "t-unresolved",
+                    new Candidate(null, Set.of("finance"), CandidateStrategy.ANY), 2000L);
+            // 别的组
+            saveTask(h, "t-hr", Candidate.ofGroups(Set.of("hr"), CandidateStrategy.ANY), 3000L);
+            // 纯个人任务
+            saveTask(h, "t-personal", Candidate.ofAny("u2"), 4000L);
+
+            assertThat(h.taskRepo().findPendingByGroup("finance"))
+                    .as("按组查不看展开与否 —— 两条组任务都该在")
+                    .extracting(TaskInstance::getId)
+                    .containsExactlyInAnyOrder("t-expanded", "t-unresolved");
+
+            assertThat(h.taskRepo().findPendingByUser("u1"))
+                    .as("个人维度只看得到展开后的那条：未展开任务对个人查询天然失明")
+                    .extracting(TaskInstance::getId)
+                    .containsExactly("t-expanded");
+
+            assertThat(h.taskRepo().findPendingByGroup("nobody"))
+                    .as("不存在的组返回空，而不是静默退回全部")
+                    .isEmpty();
+        });
+    }
+
+    @Test
+    @DisplayName("查询构建器与仓储的按组两条路语义一致")
+    void queryBuilderGroupPathMatchesRepository() {
+        acrossAllRepositories(h -> {
+            saveTask(h, "t-g1", Candidate.ofGroups(Set.of("finance"), CandidateStrategy.ANY), 1000L);
+            saveTask(h, "t-g2", Candidate.ofAny("u1"), 2000L);
+
+            assertThat(TaskQuery.create().candidateGroup("finance").list(h.engine()))
+                    .as("查询构建器与仓储走的是同一份 TaskFilter 语义，不该出现两套过滤逻辑")
+                    .extracting(TaskInstance::getId)
+                    .containsExactly("t-g1");
+
+            assertThat(h.engine().countTasks(TaskFilter.create()
+                    .status(TaskStatus.PENDING).candidateGroup("finance")))
+                    .isEqualTo(1);
+        });
+    }
 }

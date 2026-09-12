@@ -45,6 +45,26 @@ jobs:
           done >> "$GITHUB_STEP_SUMMARY" 2>&1 || echo "(未解析到失败用例，见 Build & Test 日志)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+  # ---------- 依赖安全：只在 PR 上跑 ----------
+  # 拿 GitHub 的 advisory 库比对 base/head 的依赖差异，拦住「PR 新增的依赖自带已知漏洞」。
+  # 这是唯一能提前拦的时机：merge 之后再发现，补丁就得走一轮完整的发版流程。
+  #
+  # 若不加 fail-on-severity，默认只对 critical 失败 —— 对自研引擎来说 high 也该拦。
+  # 仅对 PR 生效（比对需要 base/head 两侧），push 到 main 没有可比对象。
+  #
+  # 存量依赖的漏洞告警是另一回事：那要仓库 Settings → Code security 开 Dependabot alerts。
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
   # ---------- 真库深度验证：nightly ----------
   # JPA×MySQL / JPA×PostgreSQL / MyBatis×MySQL / MyBatis×PostgreSQL 四种组合。
   # 这套用例的全部价值就在「真库」两个字上：如果它只在某人的机器上手动跑过几次，

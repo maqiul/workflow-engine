@@ -29,6 +29,31 @@ public interface TaskRepository {
     /** 列出某用户作为候选人的待办任务 */
     List<TaskInstance> findPendingByUser(String userId);
 
+    /**
+     * 列出待办(PENDING)任务，条件是<b>候选组</b>命中给定组名。
+     *
+     * <p><b>与 {@link #findPendingByUser} 的分工</b>：那个查「组展开后的具体人」，
+     * 这个查「任务当初来自哪个组」。两者都要，因为展开是<b>快照</b> ——
+     * {@link com.workflow.definition.Candidate#withExpandedUsers} 会保留原始 {@code groupIds}：
+     * <ul>
+     *   <li>组里后来新加了人，旧任务不该突然冒到新人面前（快照的正当性），
+     *       但组管理员仍需要看到「我们组名下还挂着哪些待办」；</li>
+     *   <li>调用方没注入 {@code GroupResolver} 时组保持未展开 —— 这类任务
+     *       {@code userIds} 为空、对任何人都不可办理，{@code findPendingByUser}
+     *       对它完全失明；只有按组查能看到它们，进而用 {@code adminTransferTask} 兜底。</li>
+     * </ul>
+     *
+     * <p><b>为什么是 default 而不是抽象</b>：三套官方仓储的
+     * {@link #findPaged(TaskFilter)} 都已下推，这个 default 天然继承下推能力；
+     * {@link #findPendingByUser} 是抽象方法属于既有的历史约定（强制实现），
+     * 新方法不必复制那份重复。
+     */
+    default List<TaskInstance> findPendingByGroup(String groupId) {
+        return findPaged(TaskFilter.create()
+                .status(TaskStatus.PENDING)
+                .candidateGroup(groupId));
+    }
+
     /** 列出所有任务（用于复杂查询） */
     default List<TaskInstance> findAll() {
         throw new UnsupportedOperationException("findAll not implemented");

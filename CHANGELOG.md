@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.22.0**
+项目状态：**v3.23.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -11,6 +11,49 @@
 - v3.20.0 — 审批意见一等能力（Comment + 三套持久化 + REST 端点 + Flyway V10；不随历史保留策略清理）
 - v3.21.0 — 运行期变量写入（setVariable / setVariables + 保留前缀拒写 + 审计含新旧值 + REST 端点）
 - v3.22.0 — 任务查询条件下推（TaskFilter + 三套仓储下推 + 粗筛精筛分离 + 清掉孤儿方法）
+- v3.23.0 — 按候选组查待办（findPendingByGroup）+ 依赖与 CI 守卫（Dependabot / dependency-review）
+
+---
+
+## [3.23.0] - 2026-09-12
+
+定位：**补齐「按候选组查待办」的仓储具名方法**，并把依赖守卫补上。
+
+> 这一版的起点是一次**核查**，不是一个需求。原以为要新做按组查询，查下去发现整条链路
+> （`TaskQuery.candidateGroup` → `TaskFilter.candidateGroup` → `matches` 查 `groupIds`
+> → 三套仓储 `findPaged` 下推）**早就通了**，缺的只是仓储契约上一个对称的具名方法。
+> 把「已经能做的」和「还没做的」分清，比闷头加功能重要 —— 否则很容易把已有能力和新代码
+> 叠成两套语义。
+
+### 新增
+
+- **`TaskRepository.findPendingByGroup(String groupId)`**：按候选组查待办任务。
+  与 `findPendingByUser` 的分工是**快照语义**的两面 —— 那个查「组展开后的具体人」，
+  这个查「任务当初来自哪个组」：
+  - 组里后来新加了人，旧任务不该突然冒到新人面前（这正是快照的正当性），
+    但组管理员仍需要看到「我们组名下还挂着哪些待办」；
+  - **调用方没注入 `GroupResolver` 时组保持未展开**，这类任务 `userIds` 为空、
+    对任何人都不可办理 —— `findPendingByUser` 对它完全失明，只有按组查能看到它们，
+    进而用 `adminTransferTask` 兜底；
+  - 刻意用 `default` 而非抽象方法：三套官方仓储的 `findPaged` 都已下推，
+    default 天然继承下推能力，不必再让每个实现复制一遍同样的两行
+
+### CI / 依赖治理
+
+- **`.github/dependabot.yml`**：gradle 生态（weekly，minor + patch 合成一个 PR）
+  + github-actions 生态（monthly）。合成小版本是刻意的 —— 一次扫描冒十几个几乎不改代码的
+  PR，review 疲劳之下真正该看的那个 major 升级反而被淹没
+- **`ci.yml` 新增 `dependency-review` job**（仅 PR，`fail-on-severity: high`）：
+  比对 base/head 的依赖差异，拦住「PR 新增的依赖自带已知漏洞」。
+  这是唯一能提前拦的时机 —— merge 之后再发现，补丁得走一轮完整发版
+- 存量依赖的漏洞告警是**仓库级开关**（Settings → Code security → Dependabot alerts），
+  无法用文件配置，需人工开启一次
+
+### 测试
+
+- `TaskFilterPushdownTest` 新增 2 个用例（该类共 7 个），三套仓储跑同一份断言：
+  - 按组查能看到个人查询天然失明的**未展开任务**（`userIds` 为空的那种）
+  - 查询构建器与仓储的按组两条路语义一致 —— 防的是「同一件事两套过滤逻辑各自演化」
 
 ---
 

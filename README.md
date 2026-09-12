@@ -1919,6 +1919,44 @@ long total = taskRepo.countByFilter(filter);   // 不受 limit/offset 影响
 三套仓储跑同一份断言（`TaskFilterPushdownTest`），专盯下推之后最容易出错的三处：
 候选人 LIKE 的边界、粗筛的假阳性、粗筛场景下的分页位置。
 
+## 31. 按候选组查待办（v3.23）
+
+### 31.1 与「按人查」的分工
+
+`findPendingByUser` 查的是**组展开后的具体人**，`findPendingByGroup` 查的是
+**任务当初来自哪个组**。两条路都要，因为组展开是一份**快照**：
+
+- 组里后来新加了人，旧任务不该突然冒到新人面前 —— 这正是快照的正当性；
+  但组管理员仍然需要知道「我们组名下还挂着哪些待办」
+- 调用方**没注入 `GroupResolver`** 时组保持未展开，这类任务 `userIds` 为空、
+  对任何人都不可办理。`findPendingByUser` 对它完全失明，只有按组查能看到它们，
+  进而用 `adminTransferTask` 兜底
+
+```java
+// 我被列为候选人的待办（组已展开成我）
+taskRepo.findPendingByUser("u1");
+
+// 我们组名下的待办（组未展开也看得到）
+taskRepo.findPendingByGroup("finance");
+
+// 等价的查询构建器写法 —— 与上面走同一条 TaskFilter 语义
+TaskQuery.create().candidateGroup("finance").list(engine);
+```
+
+`findPendingByGroup` 是 `default` 方法，直接复用 `findPaged`：三套官方仓储都已下推，
+所以它天然继承下推能力，不必让每个实现再复制一遍。
+
+### 31.2 依赖与 CI 守卫
+
+| 守卫 | 位置 | 拦什么 |
+|------|------|--------|
+| Dependabot 版本更新 | `.github/dependabot.yml` | gradle 依赖（weekly，minor + patch 合成一个 PR）+ github-actions（monthly） |
+| 新增依赖的已知漏洞 | `ci.yml` 的 `dependency-review` job | 仅 PR，`fail-on-severity: high`，比对 base/head 的依赖差异 |
+| 真库兼容性 | `ci.yml` 的 `cross-db` job | nightly + 手动触发，4 种「ORM × 数据库」组合 |
+
+存量依赖的漏洞告警是**仓库级开关**（Settings → Code security → Dependabot alerts），
+文件配不了，需要人工开启一次。
+
 ---
 
 _本文档随项目演进持续更新。_

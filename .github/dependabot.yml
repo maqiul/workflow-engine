@@ -1,0 +1,46 @@
+# 依赖更新自动化
+#
+# 两个生态：
+#   - gradle           : 7 个模块的依赖坐标都直接写在各 build.gradle.kts 里（无 version catalog），
+#                        扫根目录即可覆盖全部模块
+#   - github-actions   : ci.yml 里那些 action 自身的版本
+#
+# 刻意不引 Renovate：与 Dependabot 功能重叠，而 Dependabot 是 GitHub 原生 ——
+# 零安装、零 token、零额外权限，对一个自研引擎项目来说足够了。
+#
+# 注意：本文件只管「版本更新 PR」。存量依赖的漏洞告警（Dependabot alerts）
+# 与安全更新是仓库级开关，必须去 Settings → Code security 手动开启，无法用文件配置。
+version: 2
+updates:
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    groups:
+      # minor + patch 合成一个 PR 提。
+      # 不这么做的后果是：一次扫描能冒出十几个几乎不用改代码的 PR，
+      # review 疲劳之下真正该看的那个 major 升级反而被淹没。
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "dependencies"
+      - "ci"
