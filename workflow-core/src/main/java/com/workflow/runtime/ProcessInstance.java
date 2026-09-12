@@ -281,6 +281,17 @@ public final class ProcessInstance {
         variables.put(key, value);
     }
 
+    /**
+     * 删除变量。
+     *
+     * <p>必须真删 key，而不是存一个 null 值占位：JSON 序列化会把 null 值丢掉，
+     * 「存 null」在 InMemory（key 还在但值为 null）与 JPA/MyBatis（key 没了）
+     * 下会分叉成两种结果。
+     */
+    public void removeVariable(String key) {
+        variables.remove(key);
+    }
+
     public Object getVariable(String key) {
         return variables.get(key);
     }

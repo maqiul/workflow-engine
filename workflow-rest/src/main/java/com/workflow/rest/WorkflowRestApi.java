@@ -207,6 +207,10 @@ public class WorkflowRestApi {
                     engine.resume(id);
                     return RestResponse.noContent();
                 }
+                case "variables" -> {
+                    requirePost(m);
+                    return setVariables(id, parse(req.body()));
+                }
                 case "withdraw" -> {
                     requirePost(m);
                     JSONObject body = parse(req.body());
@@ -302,6 +306,26 @@ public class WorkflowRestApi {
         out.put("processKey", key);
         out.put("tasks", taskDtos(engine.getInstance(instanceId)));
         return RestResponse.created(out);
+    }
+
+    /**
+     * POST /api/instances/{id}/variables —— 运行期修改变量。
+     *
+     * <p>用 POST 而非 PATCH：引擎侧的语义是「一次受锁保护的写」，
+     * 批量要么全成、要么全不动，不是逐字段合并且允许部分成功的语义。
+     */
+    private RestResponse setVariables(String instanceId, JSONObject body) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> variables = body.getObject("variables", Map.class);
+        if (variables == null || variables.isEmpty()) {
+            throw new BadRequest("variables 不能为空");
+        }
+        engine.setVariables(instanceId, variables, body.getString("operator"));
+        // 回传更新后的变量快照 —— 调用方不必紧接着再 GET 一次
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("instanceId", instanceId);
+        out.put("variables", engine.getInstance(instanceId).getVariables());
+        return RestResponse.ok(out);
     }
 
     private RestResponse getInstance(String id) {

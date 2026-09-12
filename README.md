@@ -43,6 +43,7 @@
 - [26. 拓扑自省](#26-拓扑自省)
 - [27. Flowable BPMN 导入兼容性](#27-flowable-bpmn-导入兼容性)
 - [28. 审批意见](#28-审批意见v320)
+- [29. 运行期变量写入](#29-运行期变量写入v321)
 
 ---
 
@@ -351,7 +352,7 @@ HikariCP 6.x，引擎若把 5.1.0 传出去，Maven 的 nearest-wins 会让宿�
 
 ## 6. 核心 API
 
-`com.workflow.engine.IWorkflowEngine` —— 以下是**最常用的 9 个入口**（完整接口另含批处理 §20、拓扑自省 §26、实例迁移 `migrateInstance` / `migrateInstances`、超时调度、监控 `dashboard` 等）：
+`com.workflow.engine.IWorkflowEngine` —— 以下是**最常用的入口**（完整接口另含批处理 §20、拓扑自省 §26、实例迁移 `migrateInstance` / `migrateInstances`、运行期变量 §29、超时调度、监控 `dashboard` 等）：
 
 | 方法 | 说明 |
 |---|---|
@@ -365,6 +366,7 @@ HikariCP 6.x，引擎若把 5.1.0 传出去，Maven 的 nearest-wins 会让宿�
 | `void suspend(String instanceId)` | 暂停实例（状态置 SUSPENDED） |
 | `void resume(String instanceId)` | 恢复实例（状态置 RUNNING） |
 | `void terminate(String instanceId)` | 终止实例（状态置 TERMINATED,所有 PENDING 任务标 TERMINATED） |
+| `void setVariables(String instanceId, Map<String,Object> variables, String operator)` | 运行期修改变量，**立即持久化**（另有单变量重载 `setVariable`）。注意 `getInstance` 返回的是副本，改它无效 —— 详见 §29 |
 
 ---
 
@@ -1767,6 +1769,83 @@ engine.getInstanceComments(instanceId);    // 流程级 + 各任务，时间升�
 
 `CommentTest`(11) / `JpaCommentTest`(8) / `MybatisCommentTest`(8) / `RestCommentApiTest`(8)。
 关键用例「保留策略清空历史后，意见一条不少」：历史被清空，意见仍完整可读。
+
+---
+
+## 29. 运行期变量写入（v3.21）
+
+### 29.1 场景
+
+审批到一半发现金额填错、出差天数要改、某个字段要到审批阶段才补得上。
+这些都要求在**运行期**改变量，而且必须是个受引擎保护的动作：带实例锁、在事务里、留审计。
+
+### 29.2 曾经的坑：改了，但没生效
+
+```java
+// ❌ 看着能改，其实改的是副本
+ProcessInstance instance = engine.getInstance(instanceId);
+instance.setVariable("amount", 2000);   // 副本被改，库里没动
+```
+
+仓储是**拷贝语义**：`getInstance` 返回的是重建出来的对象；而 `getVariables()`
+返回 `Collections.unmodifiableMap`，连「直接改 map」这条歪路也堵着。
+这个坑最阴的地方在于**不报错** —— 代码跑得好好的，只是没生效。
+
+所以 v3.21 的入口是引擎方法，不是实体：
+
+```java
+engine.setVariable(instanceId, "amount", 2000, "u1");   // 立即持久化
+
+Map<String, Object> vars = new LinkedHashMap<>();
+vars.put("amount", 2000);
+vars.put("reason", "预算追加");
+engine.setVariables(instanceId, vars, "u1");            // 一次锁 / 一次事务 / 一条审计
+```
+
+**批量不是便利方法，是正确性需求**：多个变量共同决定一个网关分支时，逐个调用会在中间态
+留下「只改了一半」的快照，此刻若有并发推进读到它，分支就走错了。
+
+### 29.3 `__` 前缀：不可写
+
+引擎自己的状态也住在变量表里，全部以 `__` 开头：
+
+| 变量 | 决定什么 |
+|---|---|
+| `__initiator` | 谁能撤回这个流程 |
+| `__mi_<tokenId>` | 多实例会签节点是否已展开 |
+| `__dynamic_<tokenId>` | 动态并行节点是否已创建任务 |
+| `__sub_<tokenId>` / `__sub_depth` | 子流程是否已发起、嵌套多深 |
+
+因此 `setVariable(s)` 一律拒绝 `__` 开头的 key。这不是命名洁癖 —— 写进去就是漏洞：
+伪造 `__initiator` 能撤回别人的流程，把 `__mi_*` 写成 `expanded` 会让会签节点**一个任务都不建**。
+
+### 29.4 校验与状态规则
+
+| 规则 | 行为 |
+|---|---|
+| 类型 | 命中流程定义的变量声明 → 校类型；**未声明的放行**（运行时变量本就允许临时出现） |
+| 必填 | **不复查**。改一个 key 时其它必填项早已在实例里，不该要求重传全部变量 |
+| 状态 | `RUNNING` / `SUSPENDED` 可写；`ENDED` / `TERMINATED` 拒绝（事后改数据会污染审计与报表） |
+| `value = null` | **清除**该变量（真删 key，不是存 null 占位 —— 那会在不同仓储下分叉） |
+| 空批量 | 抛异常，不做静默 no-op |
+
+### 29.5 REST
+
+```
+POST /api/instances/{id}/variables
+{"operator": "u1", "variables": {"amount": 2000, "reason": "预算追加"}}
+→ 200 {"instanceId": "...", "variables": {...}}     // 回传更新后的快照
+```
+
+错误码按「客户端接下来该做什么」分：保留前缀 / 类型错 / 空批量 → **400**（改参数就能解决）、
+实例不存在 → **404**、实例已结束 → **409**（刷新看到新状态再决定）。
+
+### 29.6 持久化与审计
+
+三套仓储语义一致，同一组用例逐条对应（`SetVariableTest` / `JpaSetVariableTest` /
+`MybatisSetVariableTest`）。变量存在 `wf_instance.variables_json`，**无需新迁移**。
+每次写入留一条 `VARIABLE_UPDATED` 审计，detail 形如 `amount=2000(原 1000)` ——
+审计要能回答的不只是「谁改的」，还有「改前是什么」。
 
 ---
 

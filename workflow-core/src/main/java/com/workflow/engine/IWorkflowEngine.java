@@ -134,6 +134,41 @@ public interface IWorkflowEngine {
     /** 终止实例 */
     void terminate(String instanceId);
 
+    // ========== 运行期变量 ==========
+
+    /**
+     * 修改单个流程变量（运行期）。
+     *
+     * <p>走引擎的实例锁与事务，改完<b>立即持久化</b>。
+     *
+     * <p><b>为什么必须有这个 API：</b>{@link #getInstance} 返回的是仓储的副本，
+     * 直接对它调 {@code ProcessInstance.setVariable} 改的是副本 —— 看着像成功，
+     * 重读就没了。而且 {@code getVariables()} 返回不可变视图，连"直接改 map"
+     * 这条歪路也走不通。在拿到本方法之前，调用方要改变量只能绕开引擎直接写仓储，
+     * 那是拿锁、事务、审计三者去换一次写操作。
+     *
+     * @param instanceId 流程实例 ID
+     * @param key        变量名；<b>不可使用引擎保留前缀 {@code __}</b>
+     * @param value      新值；null 表示清除该变量
+     * @param operator   操作人；null/空白记为系统操作
+     * @throws IllegalArgumentException 实例不存在、变量名为空、占用保留前缀、
+     *                                  或类型不符流程定义中的声明
+     * @throws IllegalStateException    实例非 RUNNING / SUSPENDED（已结束的实例不可改）
+     */
+    void setVariable(String instanceId, String key, Object value, String operator);
+
+    /**
+     * 批量修改变量 —— 一次锁、一次事务、一条审计，<b>要么全成、要么全不动</b>。
+     *
+     * <p>多个变量<b>共同决定一个网关分支</b>时必须用本方法：逐个调用会在中间态
+     * 留下「只改了一半」的快照，此刻若有并发推进读到它，分支就走错了。
+     *
+     * @param variables 变量名 → 新值；不能为 null 或空（空调用是调用方的 bug，
+     *                  快速失败好过静默 no-op）
+     * @see #setVariable(String, String, Object, String)
+     */
+    void setVariables(String instanceId, Map<String, Object> variables, String operator);
+
     /**
      * 撤回流程 - 发起人撤回未审批的申请
      *

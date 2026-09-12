@@ -55,6 +55,7 @@ import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -139,6 +140,15 @@ public class WorkflowEngine implements IWorkflowEngine {
     private static final String SYSTEM_USER = "__system__";
     /** 发起人变量 key(内部使用):用于撤回校验 */
     private static final String INITIATOR_VAR = "__initiator";
+    /**
+     * 引擎内部变量保留前缀 —— 调用方不得写入。
+     *
+     * <p>该前缀下是引擎自己的状态：{@code __initiator}(撤回鉴权)、
+     * {@code __mi_<tokenId>}(多实例展开标记)、{@code __dynamic_<tokenId>}(动态并行标记)、
+     * {@code __sub_<tokenId>}(子流程发起标记)。放进来的口子会直接变成漏洞，
+     * 详见 {@link #ensureVariableWritable}。
+     */
+    private static final String RESERVED_VAR_PREFIX = "__";
 
     private final TimeoutScheduler scheduler;
 
@@ -1085,6 +1095,89 @@ public class WorkflowEngine implements IWorkflowEngine {
             audit(AuditEventType.PROCESS_TERMINATED, instanceId, null, "system", "流程终止");
             listenerSupport.fireExecutionTerminated(instance);
         });
+    }
+
+    // ========== 运行期变量 ==========
+
+    @Override
+    public void setVariable(String instanceId, String key, Object value, String operator) {
+        // 用 singletonMap 而非 Map.of：变量值允许为 null(清除该变量的写法)，Map.of 会直接 NPE
+        setVariables(instanceId, Collections.singletonMap(key, value), operator);
+    }
+
+    @Override
+    public void setVariables(String instanceId, Map<String, Object> variables, String operator) {
+        if (variables == null || variables.isEmpty()) {
+            throw new IllegalArgumentException("变量不能为空");
+        }
+        exclusiveVoid(instanceId, "setVariables", () -> {
+            ProcessInstance instance = instanceRepo.findById(instanceId);
+            if (instance == null) {
+                throw new IllegalArgumentException("流程实例不存在: " + instanceId);
+            }
+
+            InstanceStatus status = instance.getStatus();
+            // 挂起只暂停"推进"、不冻结"数据"：挂起 → 改数据 → 恢复 是常规运维动作。
+            // 已结束的实例则一律拒绝 —— 事后改数据会污染审计与效能报表。
+            if (status != InstanceStatus.RUNNING && status != InstanceStatus.SUSPENDED) {
+                throw new IllegalStateException("仅 RUNNING / SUSPENDED 实例可修改变量,当前: " + status);
+            }
+
+            // 1. 全部校验通过才开始写 —— 批量要么全成、要么全不动
+            ProcessDefinition def = defOf(instance);
+            for (Map.Entry<String, Object> entry : variables.entrySet()) {
+                ensureVariableWritable(def, entry.getKey(), entry.getValue());
+            }
+
+            // 2. 写入(顺带抓旧值 —— 审计要能回答"改前是什么")
+            StringBuilder detail = new StringBuilder();
+            for (Map.Entry<String, Object> entry : variables.entrySet()) {
+                if (detail.length() > 0) {
+                    detail.append(", ");
+                }
+                detail.append(entry.getKey()).append('=')
+                      .append(entry.getValue())
+                      .append("(原 ").append(instance.getVariable(entry.getKey())).append(')');
+                if (entry.getValue() == null) {
+                    // 值为 null 即"清除"。必须真删 key 而非存 null 占位 —— JSON 序列化会丢掉
+                    // null 值，"存 null"在 InMemory 与 JPA/MyBatis 下会分叉成两种结果。
+                    instance.removeVariable(entry.getKey());
+                } else {
+                    instance.setVariable(entry.getKey(), entry.getValue());
+                }
+            }
+            instanceRepo.save(instance);
+
+            // 3. 审计
+            String op = operator != null && !operator.isBlank() ? operator : SYSTEM_USER;
+            audit(AuditEventType.VARIABLE_UPDATED, instanceId, null, op, "变量更新: " + detail);
+            log.info("[引擎] 实例 {} 变量更新: {}", instanceId, detail);
+        });
+    }
+
+    /**
+     * 变量可写性校验：非空 → 不占用保留前缀 → 类型符合定义(未声明则放行)。
+     *
+     * <p>保留前缀这关不是洁癖。放进来的后果：
+     * <ul>
+     *   <li>{@code __initiator} —— 伪造发起人，越权撤回他人流程；</li>
+     *   <li>{@code __mi_<tokenId>} 写成 {@code expanded} —— 骗过多实例节点的幂等判定，
+     *       会签节点的任务<b>根本不会展开</b>；</li>
+     *   <li>{@code __dynamic_<tokenId>} 写成 {@code created} —— 同上，动态并行支被跳过；</li>
+     *   <li>{@code __sub_<tokenId>} —— 子流程发起标记被改写，子流程重复发起。</li>
+     * </ul>
+     */
+    private void ensureVariableWritable(ProcessDefinition def, String key, Object value) {
+        if (key == null || key.isBlank()) {
+            throw new IllegalArgumentException("变量名不能为空");
+        }
+        if (key.startsWith(RESERVED_VAR_PREFIX)) {
+            throw new IllegalArgumentException(String.format(
+                    "变量名 [%s] 占用引擎保留前缀 %s —— 该前缀下是发起人、子流程标记、多实例展开标记"
+                            + "等内部状态，外部写入会破坏撤回鉴权与节点幂等判定",
+                    key, RESERVED_VAR_PREFIX));
+        }
+        VariableValidator.validateOne(def, key, value);
     }
 
     @Override

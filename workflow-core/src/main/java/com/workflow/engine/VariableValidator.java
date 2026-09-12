@@ -50,6 +50,37 @@ public class VariableValidator {
     }
 
     /**
+     * 运行期校验单个变量 —— 只校类型，<b>不做必填校验</b>。
+     *
+     * <p>与 {@link #validate} 的区别：后者是<b>启动期</b>的整体校验，会检查必填。
+     * 运行期改一个 key 时，定义里的其它必填项早已存在于实例中，拿整体 schema 再
+     * 校一遍只会把「只想改金额」变成「必须把全部变量再传一次」。
+     *
+     * <p>未在定义中声明的变量<b>放行</b>：运行时变量本就允许临时出现 ——
+     * 循环标记、动态办理人来源等都不在 schema 里。
+     *
+     * @param def   流程定义；null 表示无从校验，直接放行
+     * @param name  变量名
+     * @param value 变量值；null 放行（视为清除该变量）
+     */
+    public static void validateOne(ProcessDefinition def, String name, Object value) {
+        if (def == null || name == null || value == null) {
+            return;
+        }
+        List<VariableDefinition> varDefs = def.getVariableDefinitions();
+        if (varDefs == null || varDefs.isEmpty()) {
+            return;
+        }
+        for (VariableDefinition varDef : varDefs) {
+            if (name.equals(varDef.getName())) {
+                validateType(name, value, varDef.getType());
+                return;
+            }
+        }
+        // 定义里没声明这个变量 —— 放行
+    }
+
+    /**
      * 校验单个变量的类型
      */
     private static void validateType(String name, Object value, VariableType expectedType) {

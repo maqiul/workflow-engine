@@ -2,13 +2,61 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.20.0**
+项目状态：**v3.21.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
 - v3.18.0 — 发布最后一公里（版本号唯一来源 / 真实可解析的发布坐标 / 异常基类 / nightly 真库验证）
 - v3.19.0 — 嵌入式集成（接入宿主 DataSource 与事务 / 独立 Flyway 历史表 / 连接池不再传递给消费方）
 - v3.20.0 — 审批意见一等能力（Comment + 三套持久化 + REST 端点 + Flyway V10；不随历史保留策略清理）
+- v3.21.0 — 运行期变量写入（setVariable / setVariables + 保留前缀拒写 + 审计含新旧值 + REST 端点）
+
+---
+
+## [3.21.0] - 2026-09-12
+
+定位：**把「流程变量」从只读上下文变成可写状态**。
+
+> ⚠️ **修的是一个「看着能改、其实没改」的缺口**：`ProcessInstance.setVariable` 一直是 public，
+> 但仓储是拷贝语义 —— `engine.getInstance(id)` 拿到的是副本，改它等于没改；
+> `getVariables()` 又返回不可变视图，连「直接改 map」这条歪路也堵着。
+> 于是运行期想改一个金额、补一个字段，只能绕开引擎直接写仓储：
+> 拿**锁、事务、审计**三者去换一次写操作。
+
+### 新增
+
+- **引擎 API**：`setVariable(instanceId, key, value, operator)` /
+  `setVariables(instanceId, Map, operator)` —— 一次锁、一次事务、一条审计，要么全成、要么全不动
+- **`AuditEventType.VARIABLE_UPDATED`**：审计 detail 记下**新旧值**（审计要能回答「改前是什么」）
+- **`VariableValidator.validateOne`**：运行期只校类型、**不校必填**
+- **REST 端点**：`POST /api/instances/{id}/variables`
+- **`ProcessInstance.removeVariable`**：`value = null` 即清除该变量
+
+### 设计要点
+
+- **`__` 前缀是安全边界，不是命名风格**：引擎内部变量一律拒写 ——
+  `__initiator` 决定「谁能撤回」、`__mi_<tokenId>` / `__dynamic_<tokenId>` 决定节点幂等、
+  `__sub_<tokenId>` 决定子流程不重发。放进来就是漏洞：伪造 `__initiator` 可越权撤回他人流程，
+  把 `__mi_*` 写成 `expanded` 能让会签节点**根本不展开任务**。
+- **运行期不复查必填**：改一个 key 时，定义里其它必填项早已存在于实例中；
+  拿整体 schema 再校一遍只会把「只想改金额」变成「必须把全部变量再传一次」。
+  未声明的变量**放行** —— 运行时变量本就允许临时出现（循环标记、动态办理人来源都不在 schema 里）。
+- **允许 RUNNING + SUSPENDED**：挂起暂停的是「推进」而非「数据」，挂起 → 改数据 → 恢复是常规运维动作；
+  已结束实例一律拒绝 —— 事后改数据会污染审计与效能报表。
+  （对比：`migrateInstance` 只允许 RUNNING，因为它改的是流程结构。）
+- **`null` = 真删 key，而非存 null 占位**：JSON 序列化会丢掉 null 值，
+  「存 null」在 InMemory（key 还在、值为 null）与 JPA/MyBatis（key 没了）下会分叉成两种结果。
+- **批量之所以必要**：多个变量共同决定一个网关分支时，逐个调用会在中间态留下「只改了一半」的
+  瞬时快照，此刻若有并发推进读到它，分支就走错了。
+
+### 测试
+
+- 新增 35 用例：`SetVariableTest`(14，InMemory) / `JpaSetVariableTest`(7) /
+  `MybatisSetVariableTest`(7) / `RestVariableApiTest`(7)
+- 关键用例「改完的变量真的参与路由」：改闸门变量后，下一次推进走的是另一条分支
+- JPA 版额外直查原生列 `wf_instance.variables_json`，绕过 ORM 缓存证明写的是库
+- 本轮 `--rerun-tasks` 实测：**PASSED 504 / FAILED 0 / ERRORS 0 / SKIPPED 35**（总 539）。
+  基线 469 + 新增 35 逐项吻合，可复核（跨库 35 项需 Docker）
 
 ---
 

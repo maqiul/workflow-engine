@@ -35,5 +35,7 @@ public enum AuditEventType {
     /** 减签 - 多实例会签节点移除审批人 */
     SIGN_REMOVED,
     /** 实例迁移 - 运行中实例迁移到新版本流程定义 */
-    INSTANCE_MIGRATED
+    INSTANCE_MIGRATED,
+    /** 流程变量变更 - 运行期通过引擎 API 修改变量 */
+    VARIABLE_UPDATED
 }
