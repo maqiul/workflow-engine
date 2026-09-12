@@ -6,15 +6,18 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.workflow.persistence.migrate.FlywayMigrator;
 import com.workflow.persistence.mybatis.mapper.WfAuditLogMapper;
+import com.workflow.persistence.mybatis.mapper.WfCommentMapper;
 import com.workflow.persistence.mybatis.mapper.WfProcessDefMapper;
 import com.workflow.persistence.mybatis.mapper.WfInstanceMapper;
 import com.workflow.persistence.mybatis.mapper.WfTaskMapper;
 import com.workflow.persistence.mybatis.mapper.WfTokenMapper;
 import com.workflow.persistence.mybatis.repository.MybatisAuditLogRepository;
+import com.workflow.persistence.mybatis.repository.MybatisCommentRepository;
 import com.workflow.persistence.mybatis.repository.MybatisInstanceRepository;
 import com.workflow.persistence.mybatis.repository.MybatisProcessRepository;
 import com.workflow.persistence.mybatis.repository.MybatisTaskRepository;
 import com.workflow.repository.AuditLogRepository;
+import com.workflow.repository.CommentRepository;
 import com.workflow.repository.InstanceRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
@@ -211,6 +214,8 @@ public final class MybatisPersistence {
         configuration.addMapper(WfTokenMapper.class);
         configuration.addMapper(WfTaskMapper.class);
         configuration.addMapper(WfAuditLogMapper.class);
+        // 审批意见：与历史同样地，漏掉这行不会编译报错，只在 getMapper 时抛运行时异常
+        configuration.addMapper(WfCommentMapper.class);
         // 历史活动：漏掉这行不会编译报错，只在 getMapper 时抛运行时异常
         configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistActivityMapper.class);
         configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistTaskMapper.class);
@@ -329,6 +334,7 @@ public final class MybatisPersistence {
     /** 清理所有表数据(测试用) */
     public void clearTables() {
         try (Connection conn = dataSource.getConnection(); Statement st = conn.createStatement()) {
+            st.execute("DELETE FROM wf_comment");
             st.execute("DELETE FROM wf_hist_task");
             st.execute("DELETE FROM wf_hist_activity");
             st.execute("DELETE FROM wf_event");
@@ -409,6 +415,16 @@ public final class MybatisPersistence {
     /** 提供 HistoryRepository（历史活动区间，见 README §18）。 */
     public com.workflow.repository.HistoryRepository historyRepo() {
         return new com.workflow.persistence.mybatis.repository.MybatisHistoryRepository(this);
+    }
+
+    /**
+     * 提供 CommentRepository（审批意见）。
+     *
+     * <p>意见<b>不参与</b>历史保留策略清理 —— 它是归档导出的一等证据，
+     * 清理时机由调用方显式决定（{@code deleteBefore}）。
+     */
+    public CommentRepository commentRepo() {
+        return new MybatisCommentRepository(this);
     }
 
     /** 提供 EventRepository（事件网关：消息/信号/定时器）。 */

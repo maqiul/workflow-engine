@@ -56,7 +56,7 @@ class RestApiTest {
 
     /** 用给定历史仓储装配引擎；hr 传 null 即不记历史。 */
     private WorkflowEngine engine(HistoryRepository hr) {
-        return new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, null,
+        return new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, null, null,
                 hr, java.util.EnumSet.allOf(com.workflow.enums.HistoryKind.class), 
                 null, null, null, new com.workflow.concurrency.LocalInstanceLocks(),
                 new com.workflow.tx.UndoLogTransactionRunner(), 0, 0L);

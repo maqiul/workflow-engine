@@ -7,6 +7,7 @@ import com.workflow.dmn.DecisionRepository;
 import com.workflow.enums.HistoryKind;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.CarbonCopyRepository;
+import com.workflow.repository.CommentRepository;
 import com.workflow.repository.DelegationRepository;
 import com.workflow.repository.EventRepository;
 import com.workflow.repository.HistoryRepository;
@@ -55,6 +56,7 @@ public final class WorkflowEngineBuilder {
     private DelegationRepository delegationRepository;
     private NotificationService notificationService;
     private CarbonCopyRepository carbonCopyRepository;
+    private CommentRepository commentRepository;
     private HistoryRepository historyRepository;
     private EnumSet<HistoryKind> historyKinds = EnumSet.allOf(HistoryKind.class);
     private EventRepository eventRepository;
@@ -132,6 +134,17 @@ public final class WorkflowEngineBuilder {
         return this;
     }
 
+    /**
+     * 审批意见仓储；不设置时不记录意见。
+     *
+     * <p>与其它可选仓储不同，建议<b>默认注入</b>：意见是归档导出的一等数据，
+     * 不配它意味着驳回理由退回到「只在会过期的审计日志里」。
+     */
+    public WorkflowEngineBuilder commentRepository(CommentRepository commentRepository) {
+        this.commentRepository = commentRepository;
+        return this;
+    }
+
     /** 历史活动仓储；不设置时不记录历史 */
     public WorkflowEngineBuilder historyRepository(HistoryRepository historyRepository) {
         this.historyRepository = historyRepository;
@@ -195,6 +208,7 @@ public final class WorkflowEngineBuilder {
                 delegationRepository,
                 notificationService,
                 carbonCopyRepository,
+                commentRepository,
                 historyRepository,
                 historyKinds,
                 eventRepository,

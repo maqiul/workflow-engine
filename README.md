@@ -6,7 +6,7 @@
 
 > 一个**纯代码 DSL**、**零第三方工作流框架依赖**、**国产基础库 + Java 17** 的轻量级审批流引擎。
 > 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）/ **动态 assignee**（运行时从变量取办理人）/ **serviceTask 自动节点**（自动执行 delegate）/ **拓扑自省**（节点/连线 + 实例 Token 高亮只读视图）/ **实例版本迁移**，
-> 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务,
+> 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务 · **审批意见**（一等存储，不随历史保留策略清理）,
 > 三仓储实现（InMemory + JPA + MyBatis-Plus）。
 >
 > 📘 **要用起来？** 看面向接入方的操作手册 → **[OPERATIONS.md](OPERATIONS.md)**（跑 Demo、五步接入、DSL 速查、REST 全表、多租户/监控/DB 接入、排错）。变更记录见 [CHANGELOG.md](CHANGELOG.md)。
@@ -42,6 +42,7 @@
 - [25. serviceTask 自动节点](#25-servicetask-自动节点)
 - [26. 拓扑自省](#26-拓扑自省)
 - [27. Flowable BPMN 导入兼容性](#27-flowable-bpmn-导入兼容性)
+- [28. 审批意见](#28-审批意见v320)
 
 ---
 
@@ -772,6 +773,7 @@ CREATE TABLE wf_audit_log (
   而记在 `flyway_schema_history.script` 里的路径是 `db/migration/xxx.sql`（**不含模块名**），
   所以纯移动不影响已应用的库。
 - 编号顺延先例：V8 被占用时，乐观锁脚本顺延为 **V9**（而非 V10）。
+  当前最高号为 **V10**（`V10__comment.sql`，审批意见表 `wf_comment`）—— **下一个新迁移从 V11 起**。
 
 ### 12.1 表结构（两路线共用）
 
@@ -782,6 +784,7 @@ CREATE TABLE wf_audit_log (
 | `wf_token` | `id`、`instance_id`、`current_node_id`、`status` |
 | `wf_task` | `id`、`instance_id`、`token_id`、`node_id`、`candidate_json`、`completed_approvers_json`、`status`、`create_time` |
 | `wf_audit_log` | `id`、`instance_id`、`task_id`、`event_type`、`operator`、`timestamp`、`detail` |
+| `wf_comment` | `id`、`instance_id`、`task_id`、`node_id`、`user_id`、`type`、`message`、`create_time`、`seq`（v3.20） |
 
 ### 12.2 Domain ↔ Entity 映射
 
@@ -792,6 +795,7 @@ CREATE TABLE wf_audit_log (
 | `Token` | `WfTokenEntity` | 直接字段映射 |
 | `TaskInstance` | `WfTaskEntity` | candidate / completedApprovers JSON 化;`status` 用枚举字符串 |
 | `AuditLog` | `WfAuditLogEntity` | 直接字段映射,`event_type` 用枚举字符串 |
+| `Comment` | `WfCommentEntity` | 直接字段映射,`type` 用枚举字符串;`createTime + seq` 双键定序 |
 
 ### 12.3 反射重建不可变 Domain 对象
 
@@ -851,7 +855,7 @@ mb.inSession(session -> {
 > `EventGatewayTest`(事件网关) · `DecisionTableTest`(DMN) · `Jpa/Mybatis*AggregationTest`(监控聚合三套一致) ·
 > `BatchStartTest`/`BatchApiTest`(批处理) · `MultiTenantTest`(多租户) · `NotificationServiceTest`(通知) ·
 > `JumpToNodeTest`(退回任意节点) · `PerformanceBenchmarkTest`(性能基准,`-Dperf=true` 才跑)。
-> 实测全量 `gradle build --rerun-tasks`：**430 PASSED / 0 FAILED / 35 SKIPPED**（总 465；skipped 均为需 Docker 的跨库套件）。
+> 实测全量 `gradle build --rerun-tasks`：**469 PASSED / 0 FAILED / 35 SKIPPED**（总 504；skipped 均为需 Docker 的跨库套件）。
 
 | 套件 | 测试类数 | 用例数 | 继承基类 |
 |---|---|---|---|
@@ -902,13 +906,21 @@ mb.inSession(session -> {
 |---|---|---|
 | `FlowableImportCompatibilityTest` | 14 | 静态/动态 `flowable:assignee`、`candidateUsers`、`candidateGroups`（组名保留 + 诊断）、assignee 与候选池并存时的优先级、`flowable:collection` → `MULTI_INSTANCE` 映射、或签/会签判定、导入导出往返对称、顺序多实例诊断、未知属性/元素诊断、被忽略节点导致的校验失败报错、无审批人来源时的错误可操作性 |
 
+**v3.20 增量套件**（审批意见）：
+
+| 套件 | 用例 | 覆盖 |
+|---|---|---|
+| `CommentTest`（InMemory） | 11 | 意见落库与节点推导、类型缺省、流程级意见、同毫秒按写入顺序、完成带意见同事务、驳回理由进一等存储、空意见不写、**保留策略清空历史后意见一条不少**、清理是独立开关、未注入时快速失败、未注入时审批动作零回归 |
+| `JpaCommentTest` / `MybatisCommentTest` | 8 × 2 | 同一套语义在真库上逐条对应：字段往返完整、按人查最近在前、显式清理只删早于 cutoff 的 |
+| `RestCommentApiTest` | 8 | 201/400/501 语义、类型大小写不敏感、任务级 POST 由服务端推导实例与节点、任务列表不混入流程级意见、**未启用部署给 501 而非 409** |
+
 ### 13.3 测试运行
 
 ```bash
 cd D:\project\workflow-engine
 set PATH=%CD%\gradle-8.5\bin;%PATH%
 
-# 全部测试（168 个,跨库需本机 Docker）
+# 全部测试（跨库需本机 Docker）
 gradle :workflow-tests:test --no-daemon
 
 # 仅 InMemory
@@ -1671,6 +1683,90 @@ if (diag.hasWarnings()) {
 ### 27.6 测试
 
 `FlowableImportCompatibilityTest`（14 用例）+ `FlowableSampleImportTest`（真实样本 `customer_order_flow.bpmn` 零降级断言）。
+
+---
+
+## 28. 审批意见（v3.20）
+
+### 28.1 场景
+
+驳回理由、加签说明、财务附言 —— 这些「话」往往比审批结果更需要长期留存。
+此前它们只能挂在 `wf_audit_log.detail`，而**审计日志会被历史保留策略清理**：
+等要做归档导出时，最该留的那部分反而第一批消失。v3.20 把意见提升为一等数据，
+语义对齐 Flowable 的 `ACT_HI_COMMENT`。
+
+### 28.2 设计：意见不归历史保留策略管
+
+这是本能力唯一一条不能被「统一化」重构动摇的约束：
+
+```
+HistoryRetention.purgeBefore()   →  清历史活动 / 历史任务
+CommentRepository.deleteBefore() →  清意见（独立开关，必须显式调用）
+```
+
+把 `deleteBefore` 接进 `purgeBefore` 能让代码少一个入口，代价是归档需求**静默**失效
+—— 而那个静默失效，正是本能力要修的东西。
+
+**定序用 `createTime + seq` 双键**：同一毫秒写入的多条意见必须按写入顺序返回。
+顺序交给随机 UUID 决定的话，并发审批下串起来的话就是错的。
+
+**可选注入**：`commentRepo` 未注入时引擎行为与 v3.19.0 完全一致（零破坏）；
+但显式查询 / 写意见时**快速失败**，不返回空列表 —— 空列表会被读成「这个流程真的没有意见」。
+
+### 28.3 API
+
+```java
+engine.supportsComments();                 // 部署是否启用了意见能力
+
+// 任务级 / 流程级（taskId 传 null 即流程级；nodeId 由引擎从任务推导）
+engine.addComment(instanceId, taskId, "u1", "出差三天，请批准");
+engine.addComment(instanceId, null, "u1", CommentType.COMMENT, "补充：往返高铁");
+
+// 带意见完成审批：意见与审批动作同事务，要么都成、要么都不留
+engine.completeTask(taskId, "u1", true, "同意");
+
+engine.getTaskComments(taskId);
+engine.getInstanceComments(instanceId);    // 流程级 + 各任务，时间升序
+```
+
+`rejectTask(taskId, userId, reason)` 会自动落一条 `REJECT` 意见，调用方无需额外操作。
+
+### 28.4 意见类型
+
+| 类别 | 取值 |
+|---|---|
+| 纯评论 | `COMMENT`（默认） |
+| 随审批动作产生 | `APPROVE` / `REJECT` / `TRANSFER` / `DELEGATE` / `WITHDRAW` / `TIMEOUT` / `SYSTEM` |
+
+区分这两类是为了让导出能分开处理：「某人的备注」和「系统因超时自动通过」不是一回事。
+
+### 28.5 REST
+
+| 方法 路径 | 作用 | 成功码 |
+|---|---|---|
+| `GET /api/instances/{id}/comments` | 实例全部意见 | 200 |
+| `POST /api/instances/{id}/comments` | 加流程级意见 | 201 |
+| `GET /api/tasks/{id}/comments` | 某任务的意见 | 200 |
+| `POST /api/tasks/{id}/comments` | 给任务加意见 | 201 |
+
+请求体 `{"userId": "...", "message": "...", "type": "APPROVE?"}`，`type` 缺省为 `COMMENT`。
+任务级 `POST` 只要 `taskId`，实例与节点由服务端推导。
+
+**未启用意见仓储的部署返回 501**，而不是靠引擎 `IllegalStateException` 兜底出的 409 ——
+「这个部署没开这个功能」和「当前状态办不到、刷新重试」对客户端是两种处置方式。
+
+### 28.6 持久化
+
+- Flyway `V10__comment.sql`（纯增量新表 `wf_comment`，不动任何既有表）
+- JPA：`WfCommentEntity` + `JpaCommentRepository`
+- MyBatis：`WfCommentEntity` + `WfCommentMapper` + `MybatisCommentRepository`
+
+三套语义一致，同一套用例逐条对应。
+
+### 28.7 测试
+
+`CommentTest`(11) / `JpaCommentTest`(8) / `MybatisCommentTest`(8) / `RestCommentApiTest`(8)。
+关键用例「保留策略清空历史后，意见一条不少」：历史被清空，意见仍完整可读。
 
 ---
 

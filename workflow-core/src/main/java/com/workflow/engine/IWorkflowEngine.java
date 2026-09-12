@@ -1,7 +1,9 @@
 package com.workflow.engine;
 
+import com.workflow.enums.CommentType;
 import com.workflow.monitor.DashboardMetrics;
 import com.workflow.runtime.CarbonCopy;
+import com.workflow.runtime.Comment;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
 import com.workflow.topology.InstanceTopologyView;
@@ -62,6 +64,51 @@ public interface IWorkflowEngine {
 
     /** 完成任务 - approved=true 通过;false 表示走驳回 */
     void completeTask(String taskId, String userId, boolean approved);
+
+    /**
+     * 完成任务并附意见 —— 意见写入与流程推进在<b>同一次引擎事务</b>内完成，
+     * 不会出现「意见存了但流程没推进」这类需要补偿收拾的分裂状态。
+     *
+     * @param comment 审批意见；null 或空白表示不写意见（等同三参重载）
+     */
+    void completeTask(String taskId, String userId, boolean approved, String comment);
+
+    /**
+     * 添加审批意见（普通评论，类型 {@link CommentType#COMMENT}）。
+     *
+     * <p>意见<b>不随历史保留策略清理</b> —— 它是审批证据，归档导出要求长期保留。
+     *
+     * @param instanceId 流程实例 ID（必填）
+     * @param taskId     关联的待办 ID；null 表示流程级意见（如发起人说明）
+     * @param userId     发表人
+     * @param message    意见正文；可为 null
+     * @return 落库后的意见对象
+     * @throws IllegalStateException 未注入 {@code CommentRepository} 时
+     */
+    Comment addComment(String instanceId, String taskId, String userId, String message);
+
+    /**
+     * 添加带类型的审批意见。
+     *
+     * <p>类型用于检索切片：只看驳回理由取 {@link CommentType#REJECT}，
+     * 「这个流程上人说过什么」取全部。
+     */
+    Comment addComment(String instanceId, String taskId, String userId,
+                       CommentType type, String message);
+
+    /** 某张待办上的意见，按时间升序（同毫秒按写入顺序）。 */
+    List<Comment> getTaskComments(String taskId);
+
+    /** 某个实例上的全部意见（流程级 + 各任务），按时间升序。 */
+    List<Comment> getInstanceComments(String instanceId);
+
+    /**
+     * 该部署是否启用了审批意见能力（取决于是否注入 {@code CommentRepository}）。
+     *
+     * <p>供接入层在调用前探测，把「这个部署没开这个功能」与「这次请求参数错了」
+     * 区分成 501 与 400，而不是混在同一个异常里靠消息文本猜。
+     */
+    boolean supportsComments();
 
     /** 驳回任务到上一个 UserTask */
     void rejectTask(String taskId, String userId, String reason);

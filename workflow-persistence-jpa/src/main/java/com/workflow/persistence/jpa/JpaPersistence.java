@@ -2,11 +2,13 @@ package com.workflow.persistence.jpa;
 
 import com.workflow.concurrency.WorkflowConflictException;
 import com.workflow.persistence.jpa.repository.JpaAuditLogRepository;
+import com.workflow.persistence.jpa.repository.JpaCommentRepository;
 import com.workflow.persistence.jpa.repository.JpaInstanceRepository;
 import com.workflow.persistence.jpa.repository.JpaProcessRepository;
 import com.workflow.persistence.jpa.repository.JpaTaskRepository;
 import com.workflow.persistence.migrate.FlywayMigrator;
 import com.workflow.repository.AuditLogRepository;
+import com.workflow.repository.CommentRepository;
 import com.workflow.repository.InstanceRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
@@ -230,6 +232,16 @@ public class JpaPersistence {
     /** 提供 HistoryRepository（历史活动区间，见 README §18）。 */
     public com.workflow.repository.HistoryRepository historyRepo() {
         return new com.workflow.persistence.jpa.repository.JpaHistoryRepository(this);
+    }
+
+    /**
+     * 提供 CommentRepository（审批意见）。
+     *
+     * <p>意见<b>不参与</b>历史保留策略清理 —— 它是归档导出的一等证据，
+     * 清理时机由调用方显式决定（{@code deleteBefore}）。
+     */
+    public CommentRepository commentRepo() {
+        return new JpaCommentRepository(this);
     }
 
     /** 提供 EventRepository（事件网关：消息/信号/定时器）。 */

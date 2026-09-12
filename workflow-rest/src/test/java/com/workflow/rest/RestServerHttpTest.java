@@ -49,7 +49,7 @@ class RestServerHttpTest {
         instRepo = new InMemoryInstanceRepository();
         taskRepo = new InMemoryTaskRepository();
         histRepo = new InMemoryHistoryRepository();
-        engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, null,
+        engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, null, null,
                 histRepo, java.util.EnumSet.allOf(com.workflow.enums.HistoryKind.class),
                 null, null, null, new com.workflow.concurrency.LocalInstanceLocks(),
                 new com.workflow.tx.UndoLogTransactionRunner(), 0, 0L);

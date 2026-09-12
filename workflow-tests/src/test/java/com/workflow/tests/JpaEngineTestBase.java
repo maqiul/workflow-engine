@@ -60,6 +60,7 @@ public abstract class JpaEngineTestBase {
     /** 清空 5 张表的全部数据(测试隔离) */
     private void clearTables() {
         jpa.inTransaction(em -> {
+            em.createNativeQuery("DELETE FROM wf_comment").executeUpdate();
             em.createNativeQuery("DELETE FROM wf_audit_log").executeUpdate();
             em.createNativeQuery("DELETE FROM wf_task").executeUpdate();
             em.createNativeQuery("DELETE FROM wf_token").executeUpdate();

@@ -6,10 +6,12 @@ import com.workflow.WorkflowException;
 import com.workflow.bpmn.BpmnException;
 import com.workflow.concurrency.WorkflowConflictException;
 import com.workflow.engine.IWorkflowEngine;
+import com.workflow.enums.CommentType;
 import com.workflow.enums.TaskStatus;
 import com.workflow.query.TaskQuery;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.ProcessRepository;
+import com.workflow.runtime.Comment;
 import com.workflow.runtime.HistoricActivityInstance;
 import com.workflow.runtime.HistoricTaskInstance;
 import com.workflow.runtime.ProcessInstance;
@@ -21,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -220,6 +223,14 @@ public class WorkflowRestApi {
                 case "history" -> {
                     return getHistory(id);
                 }
+                case "comments" -> {
+                    requireCommentSupport();
+                    if (m.equals("GET")) {
+                        return listInstanceComments(id);
+                    }
+                    requirePost(m);
+                    return addComment(id, null, parse(req.body()));
+                }
                 default -> throw new ResourceNotFound("未知实例操作: " + action);
             }
         }
@@ -254,6 +265,15 @@ public class WorkflowRestApi {
                     engine.transferTask(taskId, requireString(body, "fromUserId"),
                             requireString(body, "toUserId"));
                     return RestResponse.noContent();
+                }
+                case "comments" -> {
+                    requireCommentSupport();
+                    if (m.equals("GET")) {
+                        return listTaskComments(taskId);
+                    }
+                    requirePost(m);
+                    // taskId 里的实例由引擎反查，调用方不必重复传 instanceId
+                    return addComment(engine.getTask(taskId).getInstanceId(), taskId, body);
                 }
                 default -> throw new ResourceNotFound("未知任务操作: " + action);
             }
@@ -396,6 +416,73 @@ public class WorkflowRestApi {
         out.put("activities", acts);
         out.put("tasks", tasks);
         return RestResponse.ok(out);
+    }
+
+    // ---------- 审批意见 ----------
+
+    /**
+     * 部署未启用意见能力时给 501。
+     *
+     * <p>不靠引擎抛出的 IllegalStateException 兜底 —— 那条路径的兜底映射是 409
+     * （语义是「当前状态办不到，刷新重试」），而这里的事实是「该部署根本没这个能力」，
+     * 两者对客户端的含义截然不同。
+     */
+    private void requireCommentSupport() {
+        if (!engine.supportsComments()) {
+            throw new UnsupportedOperation("该部署未启用审批意见仓储");
+        }
+    }
+
+    private RestResponse listInstanceComments(String instanceId) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Comment c : engine.getInstanceComments(instanceId)) {
+            out.add(commentDto(c));
+        }
+        return RestResponse.ok(out);
+    }
+
+    private RestResponse listTaskComments(String taskId) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Comment c : engine.getTaskComments(taskId)) {
+            out.add(commentDto(c));
+        }
+        return RestResponse.ok(out);
+    }
+
+    /**
+     * 添加意见。{@code type} 省略时按普通评论处理 —— 让「随手备注」不必记枚举名。
+     *
+     * <p>{@code taskId} 为 null 表示流程级意见（如发起人附言）。
+     */
+    private RestResponse addComment(String instanceId, String taskId, JSONObject body) {
+        String userId = requireString(body, "userId");
+        String message = body.getString("message");
+        String typeName = body.getString("type");
+        Comment comment = (typeName == null)
+                ? engine.addComment(instanceId, taskId, userId, message)
+                : engine.addComment(instanceId, taskId, userId, commentType(typeName), message);
+        return RestResponse.created(commentDto(comment));
+    }
+
+    private static CommentType commentType(String name) {
+        try {
+            return CommentType.valueOf(name.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new BadRequest("未知意见类型: " + name);
+        }
+    }
+
+    private static Map<String, Object> commentDto(Comment c) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", c.getId());
+        out.put("instanceId", c.getInstanceId());
+        out.put("taskId", c.getTaskId());
+        out.put("nodeId", c.getNodeId());
+        out.put("userId", c.getUserId());
+        out.put("type", c.getType().name());
+        out.put("message", c.getMessage());
+        out.put("createTime", c.getCreateTime());
+        return out;
     }
 
     // ========== DTO 与工具 ==========

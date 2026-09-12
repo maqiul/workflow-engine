@@ -2,12 +2,56 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.19.0**
+项目状态：**v3.20.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
 - v3.18.0 — 发布最后一公里（版本号唯一来源 / 真实可解析的发布坐标 / 异常基类 / nightly 真库验证）
 - v3.19.0 — 嵌入式集成（接入宿主 DataSource 与事务 / 独立 Flyway 历史表 / 连接池不再传递给消费方）
+- v3.20.0 — 审批意见一等能力（Comment + 三套持久化 + REST 端点 + Flyway V10；不随历史保留策略清理）
+
+---
+
+## [3.20.0] - 2026-09-12
+
+定位：**把审批意见从审计日志的附属字段提升为一等数据**。
+
+> ⚠️ **修的是一个归档级的缺口**：驳回理由、审批附言此前只落在 `wf_audit_log.detail`，
+> 而审计日志是**会被历史保留策略清理**的。于是最需要长期留存的「谁说了什么」，
+> 恰恰是第一批被删掉的数据 —— 等要做归档导出时，意见已经不在了。
+
+### 新增
+
+- **`com.workflow.runtime.Comment`** + **`com.workflow.enums.CommentType`**（8 种类型，
+  区分「纯评论」与「随审批动作产生」两类语义）
+- **`CommentRepository`**（全抽象、无 default 方法 —— 遵循 `HistoryRepository` 的教训）
+  + **`InMemoryCommentRepository`**
+- **引擎 API**：`addComment` / `getTaskComments` / `getInstanceComments` / `supportsComments`，
+  以及 `completeTask(taskId, userId, approved, comment)` 四参重载（意见与审批动作同事务）
+- **`rejectTask` 的 reason 同步落一条 `REJECT` 意见**（此前只进 AuditLog）
+- **三套持久化**：JPA（`WfCommentEntity` + `JpaCommentRepository`）、
+  MyBatis（`WfCommentEntity` + `WfCommentMapper` + `MybatisCommentRepository`）
+- **REST 端点**：`GET|POST /api/instances/{id}/comments`、`GET|POST /api/tasks/{id}/comments`
+- **Flyway `V10__comment.sql`**：纯增量新表 `wf_comment`，**不动任何既有表**
+
+### 设计要点
+
+- **意见不随历史保留策略消失**：`deleteBefore` 是独立开关，**刻意不接** `HistoryRetention`。
+  接上去能让代码看起来更「统一」，代价是归档需求被静默破坏 —— 而那正是本缺口要修的东西。
+- **`createTime` + `seq` 双键定序**：同一毫秒写入的多条意见，顺序不能交给随机 UUID 决定。
+- **`commentRepo` 可选注入**：未注入时引擎行为与 v3.19.0 完全一致（零破坏）；
+  但**显式查询或写意见时快速失败**，不返回空列表骗人。
+- **REST 能力探测 `supportsComments()`**：未启用意见能力的部署返回 **501**，
+  而不是让引擎的 `IllegalStateException` 落到兜底的 409 —— 「这个部署没开这个功能」和
+  「当前状态办不到、刷新重试」对客户端是两种完全不同的处置。
+
+### 测试
+
+- 新增 35 用例：`CommentTest`(11，InMemory) / `JpaCommentTest`(8) / `MybatisCommentTest`(8) /
+  `RestCommentApiTest`(8)
+- 关键用例「保留策略清空历史后，意见一条不少」：历史被清空，意见仍完整可读
+- 本轮 `--rerun-tasks` 实测：**PASSED 469 / FAILED 0 / ERRORS 0 / SKIPPED 35**（总 504）。
+  基线 434 + 新增 35 逐项吻合，可复核（跨库 35 项需 Docker）
 
 ---
 

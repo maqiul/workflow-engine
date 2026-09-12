@@ -14,6 +14,7 @@ import com.workflow.dmn.DecisionRepository;
 import com.workflow.dmn.DecisionTableExecutor;
 import com.workflow.enums.AuditEventType;
 import com.workflow.enums.CandidateStrategy;
+import com.workflow.enums.CommentType;
 import com.workflow.enums.HistoryKind;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.enums.NodeType;
@@ -25,6 +26,7 @@ import com.workflow.monitor.DashboardMetrics;
 import com.workflow.monitor.MonitoringService;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.CarbonCopyRepository;
+import com.workflow.repository.CommentRepository;
 import com.workflow.repository.DelegationRepository;
 import com.workflow.repository.EventRepository;
 import com.workflow.repository.HistoryRepository;
@@ -33,6 +35,7 @@ import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.AuditLog;
 import com.workflow.runtime.CarbonCopy;
+import com.workflow.runtime.Comment;
 import com.workflow.runtime.Delegation;
 import com.workflow.runtime.HistoricTaskInstance;
 import com.workflow.runtime.ProcessInstance;
@@ -91,6 +94,13 @@ public class WorkflowEngine implements IWorkflowEngine {
     private final DelegationRepository delegationRepo;  // 可为 null（不启用委托）
     private final NotificationService notificationService;  // 可为 null（不启用通知）
     private final CarbonCopyRepository carbonCopyRepo;  // 可为 null（不启用抄送）
+    /**
+     * 审批意见仓储，可为 null（不启用意见能力）。
+     *
+     * <p>这里的 null 只关掉「记录意见」本身：审批动作（完成 / 驳回）照常工作，
+     * 只是不再额外留意见 —— 与审计、抄送同一套「可选副作用」定位。
+     */
+    private final CommentRepository commentRepo;
     /** 历史活动仓储，可为 null（不记录历史）。埋点须在同一事务内写入，见 closeHistoryIfSettled。 */
     private final HistoryRepository historyRepo;
     /**
@@ -159,7 +169,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                           InstanceRepository instanceRepo,
                           TaskRepository taskRepo) {
         this(processRepo, instanceRepo, taskRepo, null, null, null, null, null,
-                null, null, null, null, null, null, null, 3, 20L);
+                null, null, null, null, null, null, null, null, 3, 20L);
     }
 
     /**
@@ -173,6 +183,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                    DelegationRepository delegationRepo,
                    NotificationService notificationService,
                    CarbonCopyRepository carbonCopyRepo,
+                   CommentRepository commentRepo,
                    HistoryRepository historyRepo,
                    EnumSet<HistoryKind> historyKinds,
                    EventRepository eventRepo,
@@ -189,6 +200,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.delegationRepo = delegationRepo;
         this.notificationService = notificationService;
         this.carbonCopyRepo = carbonCopyRepo;
+        this.commentRepo = commentRepo;
         this.historyRepo = historyRepo;
         this.historyKinds = (historyKinds == null || historyKinds.isEmpty())
                 ? EnumSet.noneOf(HistoryKind.class)
@@ -283,7 +295,7 @@ public class WorkflowEngine implements IWorkflowEngine {
      */
     public WorkflowEngine withoutConcurrencyControl() {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
-                auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, historyRepo,
+                auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, commentRepo, historyRepo,
                 historyKinds, eventRepo, decisionRepo, decisionHistoryRepo, passthroughLocks(), TransactionRunner.noop(), 0, 0L);
     }
 
@@ -297,7 +309,7 @@ public class WorkflowEngine implements IWorkflowEngine {
     public WorkflowEngine withHistoryKinds(
             EnumSet<HistoryKind> kinds) {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
-                auditLogRepo, delegationRepo, notificationService, carbonCopyRepo,
+                auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, commentRepo,
                 historyRepo, kinds, eventRepo, decisionRepo, decisionHistoryRepo, locks, tx, conflictRetries, retryBackoffMillis);
     }
 
@@ -674,6 +686,81 @@ public class WorkflowEngine implements IWorkflowEngine {
         return processRepo.findByKey(instance.getProcessKey());
     }
 
+    // ========== 审批意见 ==========
+    //
+    // 意见是一等数据：归档、导出、责任追溯都靠它，因此**不随历史保留策略清理**。
+    // 与 AuditLog 的分工见 Comment 的类注释 —— 审计是系统流水，意见是人的表达。
+
+    @Override
+    public Comment addComment(String instanceId, String taskId, String userId, String message) {
+        return addComment(instanceId, taskId, userId, CommentType.COMMENT, message);
+    }
+
+    @Override
+    public Comment addComment(String instanceId, String taskId, String userId,
+                              CommentType type, String message) {
+        Objects.requireNonNull(instanceId, "instanceId 不能为空");
+        Objects.requireNonNull(userId, "userId 不能为空");
+        Objects.requireNonNull(type, "type 不能为空");
+        CommentRepository repo = requireCommentRepo();
+        return exclusive(instanceId, "addComment", () -> {
+            if (instanceRepo.findById(instanceId) == null) {
+                throw new IllegalArgumentException("流程实例不存在: " + instanceId);
+            }
+            String nodeId = null;
+            if (taskId != null) {
+                TaskInstance task = taskRepo.findById(taskId);
+                if (task == null) {
+                    throw new IllegalArgumentException("任务不存在: " + taskId);
+                }
+                nodeId = task.getNodeId();
+            }
+            Comment comment = new Comment(instanceId, taskId, nodeId, userId, type, message);
+            repo.save(comment);
+            log.info("[引擎] {} 在流程 {} 上留下意见 type={} task={}", userId, instanceId, type,
+                    taskId == null ? "-" : taskId);
+            return comment;
+        });
+    }
+
+    @Override
+    public List<Comment> getTaskComments(String taskId) {
+        return requireCommentRepo().findByTaskId(taskId);
+    }
+
+    @Override
+    public List<Comment> getInstanceComments(String instanceId) {
+        return requireCommentRepo().findByInstanceId(instanceId);
+    }
+
+    @Override
+    public boolean supportsComments() {
+        return commentRepo != null;
+    }
+
+    /** 未注入意见仓储时快速失败 —— 显式报错比静默丢数据好。 */
+    private CommentRepository requireCommentRepo() {
+        if (commentRepo == null) {
+            throw new IllegalStateException("未启用审批意见功能，请注入 CommentRepository");
+        }
+        return commentRepo;
+    }
+
+    /**
+     * 记录一条随审批动作产生的意见 —— 必须在 {@link #exclusive} 临界区内调用。
+     *
+     * <p>未注入意见仓储时静默跳过：这类意见是审批动作的<b>副作用</b>，
+     * 不该因为没配意见仓储就让完成 / 驳回本身失败（与审计、抄送的定位一致）。
+     */
+    private void recordApprovalComment(TaskInstance task, String userId,
+                                       CommentType type, String message) {
+        if (commentRepo == null) {
+            return;
+        }
+        commentRepo.save(new Comment(task.getInstanceId(), task.getId(), task.getNodeId(),
+                userId, type, message));
+    }
+
     // ========== 任务操作 ==========
 
     @Override
@@ -684,6 +771,30 @@ public class WorkflowEngine implements IWorkflowEngine {
             } else {
                 // approved=false 等同于 reject,但保留 rejectTask API 接收 reason
                 rejectTaskInternal(taskId, userId, "未提供理由");
+            }
+        });
+    }
+
+    /**
+     * 完成任务并附意见 —— 与三参重载的唯一区别是同一次事务里多写一条意见，
+     * 避免「意见存了流程没推进」这类靠补偿收拾的分裂状态。
+     *
+     * <p>{@code comment} 为 null / 空白时不写意见，行为与三参重载完全一致。
+     */
+    @Override
+    public void completeTask(String taskId, String userId, boolean approved, String comment) {
+        exclusiveVoidByTask(taskId, "completeTask", () -> {
+            if (!approved) {
+                rejectTaskInternal(taskId, userId, comment == null || comment.isBlank()
+                        ? "未提供理由" : comment);
+                return;
+            }
+            completeAndAdvance(taskId, userId);
+            if (comment != null && !comment.isBlank()) {
+                TaskInstance task = taskRepo.findById(taskId);
+                if (task != null) {
+                    recordApprovalComment(task, userId, CommentType.APPROVE, comment);
+                }
             }
         });
     }
@@ -759,6 +870,8 @@ public class WorkflowEngine implements IWorkflowEngine {
         task.setStatus(TaskStatus.REJECTED);
         taskRepo.save(task);
         syncTaskInInstance(instance, task);
+        // 驳回理由进一等存储 —— 不再只落在会被历史保留策略清理的 AuditLog.detail 里
+        recordApprovalComment(task, userId, CommentType.REJECT, reason);
 
         // 取消超时调度 —— 放到提交后：事务回滚时任务仍是 PENDING，调度必须保留
         afterCommitSchedule(() -> scheduler.cancel(taskId));

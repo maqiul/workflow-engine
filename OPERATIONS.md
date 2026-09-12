@@ -27,6 +27,7 @@
 - [17. 动态 assignee 操作](#17-动态-assignee-操作)
 - [18. serviceTask 自动节点操作](#18-servicetask-自动节点操作)
 - [19. 拓扑自省操作](#19-拓扑自省操作)
+- [20. 审批意见操作](#20-审批意见操作)
 
 ---
 
@@ -457,7 +458,7 @@ mb.close();
 - 默认连独立 H2 库 `jdbc:h2:mem:workflow_mybatis`；`init(url,user,pwd)` 换库。
 
 ### Flyway（DDL 单一真相）
-迁移脚本**全部**在 `workflow-persistence-flyway/src/main/resources/db/migration/`：`V1__init` → `V9__optimistic_lock`。启动时 `FlywayMigrator.migrate(url,...)` 自动执行；三库同一份脚本。
+迁移脚本**全部**在 `workflow-persistence-flyway/src/main/resources/db/migration/`：`V1__init` → `V10__comment`。启动时 `FlywayMigrator.migrate(url,...)` 自动执行；三库同一份脚本。
 
 > **⚠️ 迁移脚本只有一个家** —— 别的模块的 `src/main/resources/db/migration/` 下**不得**再放 `.sql`。
 > Flyway 扫的是**合并后的 classpath**（`locations("classpath:db/migration")` 会命中所有 jar 的同名目录），
@@ -526,6 +527,10 @@ ApiKeyAuthenticator.bearer("token-1")
 | `POST /api/instances/{id}/withdraw` | 撤回 | `{"initiator"}` | 204 |
 | `POST /api/instances/{id}/jump` | 退回任意节点 | `{"targetNodeId","operator","reason?"}` | 204 |
 | `GET /api/instances/{id}/history` | 实例历史 | — | 200 |
+| `GET /api/instances/{id}/comments` | 实例全部意见（流程级 + 各任务） | — | 200 |
+| `POST /api/instances/{id}/comments` | 加流程级意见 | `{"userId","message?","type?"}` | 201 |
+| `GET /api/tasks/{id}/comments` | 某任务的意见 | — | 200 |
+| `POST /api/tasks/{id}/comments` | 给任务加意见 | `{"userId","message?","type?"}` | 201 |
 | `GET /api/tasks` | 待办列表/分页 | `?assignee=&status=&nodeId=&processKey=&instanceId=&processVersion=&page=&size=` | 200 |
 | `POST /api/tasks/{id}/complete` | 完成/通过 | `{"userId","approved?=true"}` | 204 |
 | `POST /api/tasks/{id}/reject` | 驳回 | `{"userId","reason?"}` | 204 |
@@ -561,7 +566,7 @@ curl -XPOST localhost:8080/api/instances/<id>/jump \
 | 404 | 资源不存在 | 实例/任务/流程定义/端点不存在 |
 | **409** | 状态冲突（**并发**） | 任务非 PENDING（"这条待办已被他人处理"）——审批最高频交互，务必与 400 区分 |
 | 500 | 服务内部错误 | 鉴权器自身抛异常（fail-closed，不外泄异常细节） |
-| 501 | 不支持的操作 | 如对子实例调 `withdraw`、未启用历史仓储却查 `/history` |
+| 501 | 不支持的操作 | 如对子实例调 `withdraw`、未启用历史仓储却查 `/history`、未注入 `CommentRepository` 却调 `/comments` |
 
 ---
 
@@ -848,4 +853,80 @@ view.getStatus();            // 实例状态
 
 ---
 
-*本手册对应 v3.14.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*
+## 20. 审批意见操作
+
+### 20.1 场景
+
+审批过程中的「话」往往比审批结果本身更需要长期留存：驳回理由、加签说明、财务附言、
+发起人补充材料。这些内容此前只能挂在审计日志的 `detail` 字段上，而**审计日志会被历史保留策略清理**
+—— 归档时最该留的那部分反而先没了。v3.20.0 把意见提升为一等数据。
+
+### 20.2 装配（可选能力）
+
+```java
+IWorkflowEngine engine = WorkflowEngineBuilder
+        .builder(procRepo, instRepo, taskRepo)
+        .commentRepository(new InMemoryCommentRepository())   // JPA / MyBatis 传各自实现
+        .build();
+
+engine.supportsComments();   // false 表示该部署没开这个能力
+```
+
+> **不注入 = 不启用**，引擎行为与 v3.19.0 完全一致（零破坏）。
+> 未注入时若显式调意见 API 会**快速失败**（`IllegalStateException`），
+> 而不是返回空列表 —— 空列表会让调用方以为「这个流程真的没有意见」。
+
+### 20.3 API 速查
+
+```java
+Comment addComment(String instanceId, String taskId, String userId, String message);
+Comment addComment(String instanceId, String taskId, String userId, CommentType type, String message);
+
+// 意见与审批动作同事务：要么都成，要么都不留
+void completeTask(String taskId, String userId, boolean approved, Comment comment);
+
+List<Comment> getTaskComments(String taskId);
+List<Comment> getInstanceComments(String instanceId);   // 流程级 + 各任务，按时间升序
+boolean supportsComments();
+```
+
+- `taskId` 传 `null` = **流程级意见**（如发起人附言）；`nodeId` 由引擎从任务推导，调用方不必传
+- `rejectTask(taskId, userId, reason)` 会**自动落一条 `REJECT` 意见**，无需额外调用
+
+### 20.4 意见类型
+
+`CommentType` 共 8 种，分两类语义：
+
+| 类别 | 取值 |
+|---|---|
+| 纯评论 | `COMMENT`（默认） |
+| 随审批动作产生 | `APPROVE` / `REJECT` / `TRANSFER` / `DELEGATE` / `WITHDRAW` / `TIMEOUT` / `SYSTEM` |
+
+> 区分这两类的意义：导出时「某人的备注」和「系统因超时自动通过」不该混为一谈。
+> REST 层的 `type` 缺省即 `COMMENT`，随手备注不必记枚举名。
+
+### 20.5 保留与清理（重要）
+
+**意见不随 `HistoryRetention` 清理。** `deleteBefore(cutoff)` 是**独立开关**，必须显式调用。
+
+```java
+commentRepo.deleteBefore(LocalDateTime.now().minusYears(3));   // 只清意见
+historyRepo.purgeBefore(...);                                  // 只清历史活动/任务
+```
+
+> 有人会想「统一由保留策略管不是更省事」—— 但那正是本能力要修的问题：
+> 归档需求要的恰恰是长期留存，挂在会过期的策略上等于静默丢数据。
+
+### 20.6 注意事项
+
+- **顺序**：`createTime` + `seq` 双键定序。同一毫秒写入的多条意见**按写入顺序**返回，
+  不交给随机 UUID 决定 —— 并发审批下顺序错了，串起来的话就是错的。
+- **内容可为空**：`message` 允许为空（「同意」这类动作本身就是信息）。
+  但**不带内容的纯 `COMMENT` 不该写** —— 空记录会污染导出。
+- **实例 / 任务不存在时报错**，不留下悬空意见
+- **跨仓储一致**：InMemory / JPA / MyBatis 三套语义一致，同一套用例逐条对应
+- **REST 未启用时给 501**（而非 409）：这是「部署没开这个功能」，不是「刷新重试」
+
+---
+
+*本手册对应 v3.20.0。API 若与源码不一致，以源码为准，并烦请反馈更新。*
