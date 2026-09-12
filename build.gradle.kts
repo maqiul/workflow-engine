@@ -17,7 +17,6 @@ version = projectVersion
 
 // 统一依赖版本
 val fastjson2Version = "2.0.49"
-val hutoolVersion = "5.8.27"
 val slf4jVersion = "2.0.13"
 val logbackVersion = "1.5.6"
 val junitVersion = "5.10.2"
@@ -72,7 +71,6 @@ subprojects {
     dependencies {
         "implementation"("com.alibaba.fastjson2:fastjson2:$fastjson2Version")
         "implementation"("org.slf4j:slf4j-api:$slf4jVersion")
-        "implementation"("cn.hutool:hutool-all:$hutoolVersion")
         "testImplementation"("org.junit.jupiter:junit-jupiter:$junitVersion")
         "testImplementation"("org.assertj:assertj-core:$assertjVersion")
     }

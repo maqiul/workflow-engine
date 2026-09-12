@@ -31,7 +31,6 @@ dependencies {
 
     // JSON 序列化(已在根项目 api 引入,这里可省略)
     // - fastjson2
-    // - hutool
 
     // 日志实现 - 让 JPA 模块运行时能输出 SQL
     implementation("ch.qos.logback:logback-classic:1.5.6")

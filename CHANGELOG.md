@@ -50,6 +50,10 @@
 
 ### 变更
 
+- **移除 hutool**：全 7 模块主代码与测试对 `cn.hutool` 的引用数为 **0**，
+  但根构建一直把它注入每个模块、并作为 `runtime` scope 传给消费方（`hutool-all` 约 2.4 MB）——
+  消费方为一份从未被调用的库白背了一个包。README 里「工具用 hutool」的宣称同步更正，
+  国产化口径改为 fastjson2 + MyBatis-Plus（这两个都在真用）
 - **CI 增加 nightly 跨库 job**：`cross-db` 在每日 UTC 02:00 与手动触发时跑真库套件
   （JPA×MySQL / JPA×PostgreSQL / MyBatis×MySQL / MyBatis×PostgreSQL），
   并把实际用例数写进 Job Summary —— 只报"绿"不报跑了几条是危险的，
@@ -69,7 +73,7 @@
   是 HTTP 状态映射的私有控制流，不属于引擎失败。把它们混进业务异常体系，
   "可预期失败"这个边界就失去意义了
 - **不做全模块 `api` 化**：`fastjson2` 的 `@JSONCreator`/`@JSONField` 确实出现在 `NodeDefinition`
-  等公开类型上，但注解不参与消费方编译；强行 `api` 会把 `hutool`、`slf4j` 一并推成编译期依赖，
+  等公开类型上，但注解不参与消费方编译；强行 `api` 会把 `slf4j`、`logback` 一类基础库一并推成编译期依赖，
   给调用方增加无谓的类路径负担。只在**签名真的暴露了类型**时（JPA / MyBatis 那两处）才用 `api`
 - **版本号只留一个入口**：`gradle.properties`。多一个入口就多一次漂移的机会，
   而漂移是**不会被测试发现**的那类错误

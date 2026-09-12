@@ -49,7 +49,7 @@
 
 ### 1.1 目标
 - ✅ **不依赖任何第三方工作流框架**（❌ Flowable / Camunda / Activiti）
-- ✅ **基础设施库国产化**：fastjson2（阿里）、hutool（国产工具库）、SLF4J/Logback
+- ✅ **基础设施库国产化**：fastjson2（阿里，JSON 序列化）、SLF4J/Logback
 - ✅ **Java 17 + Gradle 8.5**（Kotlin DSL），不用 Maven
 - ✅ **测试**：JUnit 5 + AssertJ
 - ✅ **持久化抽象**：先 InMemory，后补 JPA（H2 内存库演示）
@@ -71,7 +71,7 @@
 | **Token 机制** | 每个流程实例持一组 `Token`，并行网关 fork 出多个 Token，join 等待汇聚 |
 | **路径导航（PathNavigator）** | 网关节点判定 fork/join，UserTask 节点判定创建/推进/终止任务 |
 | **状态机驱动** | `NodeType`（START/END/USER_TASK/EXCLUSIVE_GATEWAY/PARALLEL_GATEWAY）分派调度逻辑 |
-| **国产库 + 零外部工作流框架** | 不引入 Flowable / Camunda / Activiti；序列化用 fastjson2，工具用 hutool |
+| **国产库 + 零外部工作流框架** | 不引入 Flowable / Camunda / Activiti；序列化用 fastjson2（阿里）、持久化可用 MyBatis-Plus（苞米豆） |
 | **仓储事务内聚** | 仓储方法内部包事务，引擎 API 与持久化实现解耦 |
 
 ---
@@ -84,7 +84,6 @@
 | 构建 | Gradle (Kotlin DSL) | 8.5 |
 | 日志 | SLF4J + Logback | 2.0.13 / 1.5.6 |
 | JSON | fastjson2 | 2.0.49 |
-| 工具 | hutool | 5.8.27 |
 | 持久化（JPA 路线） | Jakarta Persistence API + Hibernate Core | 3.1.0 / 6.4.4.Final |
 | 持久化（MyBatis 路线） | MyBatis-Plus（国产） | 3.5.17 |
 | Schema 迁移 | Flyway（统一 DDL，跨库） | 12.8.1 |
@@ -956,7 +955,7 @@ HR 审批完成
 | `sourceCompatibility` 放在 `JavaPluginExtension` 内 | 不再使用废弃的 `JavaPluginConvention` |
 | Gradle Wrapper 自举 | 环境无 gradle 命令,下载 zip → 解压 → 复制 wrapper jar/properties → 写 `gradlew.bat` |
 | `subprojects { dependencies { add(...) } }` | 根 build.gradle.kts 统一注入依赖 |
-| 国产库选型 | fastjson2(JSON 序列化) + hutool(工具) + SLF4J/Logback |
+| 国产库选型 | fastjson2(JSON 序列化) + MyBatis-Plus(持久化) + SLF4J/Logback |
 | JPA 仓储事务策略 | 仓储内部 `JpaPersistence.inTransaction` 包事务,引擎 API 与 InMemory 完全一致 |
 | 反射重建 Domain 对象 | Domain 不可变 + 无 setter,JPA 仓储用反射写 final 字段 |
 | `runInOrOpenTx` 双模式 | JPA 仓储支持外部 ThreadLocal EM 与独立事务两种模式 |
@@ -1299,7 +1298,6 @@ workflow-engine/
 ```kotlin
 // 根 build.gradle.kts 统一版本
 val fastjson2Version = "2.0.49"
-val hutoolVersion = "5.8.27"
 val slf4jVersion = "2.0.13"
 val logbackVersion = "1.5.6"
 val jakartaPersistenceVersion = "3.1.0"
