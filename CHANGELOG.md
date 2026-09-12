@@ -2,11 +2,68 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.18.0**
+项目状态：**v3.19.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
 - v3.18.0 — 发布最后一公里（版本号唯一来源 / 真实可解析的发布坐标 / 异常基类 / nightly 真库验证）
+- v3.19.0 — 嵌入式集成（接入宿主 DataSource 与事务 / 独立 Flyway 历史表 / 连接池不再传递给消费方）
+
+---
+
+## [3.19.0] - 2026-09-12
+
+定位：**把引擎嵌进宿主**。前三版解决的是「引擎自己跑得对不对」，这一版解决的是
+「引擎在别人的进程、别人的连接池、别人的事务里跑得对不对」。
+
+> ⚠️ **修的是一个数据事故级的缺口**：引擎此前**接不进宿主的连接池** ——
+> `MybatisPersistence` 私有构造 + 自建 Hikari，宿主开 `@Transactional` 调引擎时，
+> 引擎从自己的池里另取一条连接，两边是**两笔独立事务** → 宿主回滚不会回滚引擎写入，
+> 留下「宿主业务失败但流程已推进」的脏数据，且无法自愈。
+
+### 新增
+
+- **`com.workflow.tx.ExternalTransactionProvider`**：宿主事务资源 SPI（引擎保持零 Spring 依赖）。
+  实现 `currentConnection()`，返回宿主当前事务的连接、无事务时返回 `null` 即可；
+  Spring 侧适配器约 10 行（`TransactionSynchronizationManager` + `DataSourceUtils`）。
+- **`MybatisPersistence.withDataSource(DataSource)` / `withDataSource(ds, migrate)`**：
+  嵌入式集成入口 —— 用宿主的连接池，引擎不再自建；`close()` 也不会关掉宿主的池。
+  第二个重载传 `false` 表示「DDL 由宿主管，不要迁移」。
+- **`FlywayMigrator.migrate(DataSource, String historyTable)`**：可指定 schema history 表名。
+
+### 修复
+
+- **引擎写入不并入宿主事务**：`inSession` 改为三分支 —— ① 宿主事务连接
+  （引擎**不提交、不回滚、不关闭**它）→ ② 引擎自身事务 → ③ 独立短事务。
+- **同库集成时与宿主 Flyway 抢历史表**：`withDataSource()` 默认用引擎专属的
+  `wf_schema_history`。此前两者共用 `flyway_schema_history` —— 宿主已有的 `V1__xxx`
+  会让引擎的 `V1__init` 被判为「已执行」而**静默跳过建表**，或直接抛
+  「Found more than one migration with version」。
+- **`close()` 会关掉宿主的连接池**：改为只关引擎自建的池（按 `AutoCloseable` 语义，不绑 Hikari 类型）。
+
+### 变更
+
+- **HikariCP / H2 由 `implementation` 降为 `compileOnly`**：不再作为运行时依赖传给消费方。
+  宿主用 Spring Boot 3.5 时它管的是 HikariCP **6.3**，而引擎带的是 **5.1.0** ——
+  Maven 的 nearest-wins 会让宿主用上低版本（`NoSuchMethodError` 风险）。
+  走 `withDataSource()` 的集成方式本就不需要引擎的池；独立/演示用法请自行引入连接池（见 README §5.6）。
+
+### 测试
+
+- 新增 `MybatisExternalTransactionTest` 4 用例：宿主事务内引擎写入对外不可见 / 宿主回滚写入一并消失 /
+  宿主提交写入保留且流程可在同一事务内推进 / **对照组复现旧缺口**（未注入 provider 时宿主回滚管不到引擎写入）。
+- 本轮 `--rerun-tasks` 实测：**PASSED 434 / FAILED 0 / ERRORS 0 / SKIPPED 35**（总 469，跨库需 Docker）。
+- **口径更正**：`[3.18.0]` 那条记的「PASSED 355 / 总 390」是**漏统计**（少了 75 个用例），
+  当时据此覆盖了 v3.17.0 的旧数字 —— 方向反了。正确基线是 v3.17.0 的 **430 / 35（总 465）**：
+  本轮 `434 - 4(新增用例) = 430` 逐项吻合，可复核。
+
+### 设计要点
+
+- **复用宿主的连接，但不共享宿主的 `SqlSessionFactory`**：宿主的插件链里没有
+  `OptimisticLockerInnerInterceptor`，共享工厂会让引擎 `@Version` 乐观锁**静默失效**
+  —— 并发写冲突无人拦截，比事务问题更难发现。引擎自建工厂、只借连接。
+- **引擎不碰宿主连接的 commit / rollback / close**：事务边界归宿主，引擎只把 SQL 下发到那条连接上。
+- **旧入口零变化**：`init()` / `init(url, user, pass)` 与未注入 provider 时的行为都和 v3.18 完全一致。
 
 ---
 

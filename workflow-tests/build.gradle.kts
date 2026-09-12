@@ -7,6 +7,10 @@ dependencies {
     testImplementation("jakarta.persistence:jakarta.persistence-api:3.1.0")
     // MyBatis-Plus 测试需要 workflow-persistence-mybatis 提供仓储实现
     testImplementation(project(":workflow-persistence-mybatis"))
+    // 引擎「自建池 / H2 内存库」路径(MybatisPersistence.init())在测试里仍要跑,
+    // 而引擎已把 HikariCP 与 H2 降为 compileOnly(不向消费方传递),故测试侧显式补运行时依赖
+    testRuntimeOnly("com.zaxxer:HikariCP:5.1.0")
+    testRuntimeOnly("com.h2database:h2:2.2.224")
 
     // ---- 跨数据库测试(MySQL / PostgreSQL,基于 Testcontainers) ----
     // Testcontainers BOM 统一版本(1.21.4 为 1.x 最新,含 mysql/postgresql 模块)

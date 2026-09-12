@@ -304,6 +304,50 @@ dependencies {
 
 ---
 
+### 5.6 接入自己的数据源与事务（嵌入式集成）
+
+引擎作为 jar 进宿主进程时，**别让引擎用自己的连接池** —— 宿主（Spring 等）的事务与连接池
+才是唯一的那一套。接上分两步：
+
+```java
+// 1. 用宿主的 DataSource 初始化引擎(不调 init(),不用引擎自建池)
+MybatisPersistence mb = MybatisPersistence.getDefault();
+mb.withDataSource(springDataSource);
+
+// 2. 把「当前线程的宿主事务连接」告诉引擎 —— 适配器由宿主自己写,引擎零 Spring 依赖
+mb.externalTransactionProvider(new ExternalTransactionProvider() {
+    @Override
+    public Connection currentConnection() {
+        return TransactionSynchronizationManager.isActualTransactionActive()
+                ? DataSourceUtils.getConnection(springDataSource)
+                : null;
+    }
+});
+
+// 3. 照常装配引擎
+WorkflowEngine engine = WorkflowEngineBuilder
+        .builder(mb.processRepo(), mb.instanceRepo(), mb.taskRepo())
+        .auditLogRepository(mb.auditLogRepo())
+        .build();
+```
+
+接上之后，宿主的 `@Transactional` 回滚会**连带回滚引擎写入**。不接的时候两边是两笔独立事务 ——
+宿主业务失败而流程已推进，这类脏数据无法自愈。
+
+**三个必须知道的点**：
+
+| 点 | 说明 |
+|----|------|
+| 建表历史表独立 | `withDataSource(ds)` 用引擎专属的 `wf_schema_history`，不与宿主的 `flyway_schema_history` 抢表（同库时抢表的后果：引擎建表被静默跳过，或启动即报版本冲突）。宿主由 DBA 统一管 DDL 时用 `withDataSource(ds, false)` 跳过迁移 |
+| 乐观锁插件仍归引擎 | 引擎**不共享**宿主的 `SqlSessionFactory`：宿主的插件链里没有 `OptimisticLockerInnerInterceptor`，共享会让 `@Version` 乐观锁静默失效。引擎复用的只是宿主的**连接** |
+| `close()` 不关宿主的池 | 引擎只关自己建的池；宿主注入的 DataSource 归宿主所有 |
+
+依赖上引擎**不传递** HikariCP 与 H2（声明为 `compileOnly`）：宿主用 Spring Boot 3.5 时它管的是
+HikariCP 6.x，引擎若把 5.1.0 传出去，Maven 的 nearest-wins 会让宿主用上低版本。走
+`withDataSource()` 时你本来也不需要引擎的池。
+
+---
+
 ## 6. 核心 API
 
 `com.workflow.engine.IWorkflowEngine` —— 以下是**最常用的 9 个入口**（完整接口另含批处理 §20、拓扑自省 §26、实例迁移 `migrateInstance` / `migrateInstances`、超时调度、监控 `dashboard` 等）：
@@ -783,6 +827,12 @@ mb.inSession(session -> {
 });
 ```
 
+- **连接来源（v3.19.0）**：`init()` / `init(url, user, pass)` 用引擎自建的 HikariCP；
+  `withDataSource(ds)` 用宿主的连接池（嵌入式集成，见 §5.6）
+- **事务三分支（v3.19.0）**：`inSession` 依次判断 —— ① 宿主事务连接
+  （由 `ExternalTransactionProvider` 提供，引擎**不提交、不回滚、不关闭**它）
+  → ② 引擎自身事务（`TransactionContext` 活跃时复用同一 SqlSession）
+  → ③ 独立短事务（自开自提交，v3.18 及以前的行为）
 - **建表方式**：`MybatisPersistence.init()` 调用 Flyway 统一迁移（v3.1 起，替代 v3.0 的内嵌 DDL）
 - **驱动自动识别**：按 JDBC URL 前缀选择驱动（`jdbc:mysql:` → MySQL / `jdbc:postgresql:` → PG / 其余 → H2）
 - **复合主键处理**：`BaseMapper` 只支持单主键,`wf_process_def` 的 Mapper 全部手写注解 SQL

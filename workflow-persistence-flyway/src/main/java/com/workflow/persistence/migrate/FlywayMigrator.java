@@ -32,6 +32,26 @@ public final class FlywayMigrator {
         log.info("[Flyway] 迁移完成, 执行脚本数={}", applied);
     }
 
+    /**
+     * 基于已有 DataSource 执行迁移,并<b>指定 schema history 表名</b>。
+     *
+     * <p>嵌入式集成时必须用这个重载:引擎与宿主<b>同库</b>时,两者若都用 Flyway 默认表名
+     * {@code flyway_schema_history},就会共用同一张历史表 —— 宿主已有的 {@code V1__xxx}
+     * 会让引擎的 {@code V1__init} 被判为「已执行」而<b>静默跳过建表</b>,或直接抛
+     * 「Found more than one migration with version」。给引擎一张自己的历史表即彻底隔离。
+     *
+     * @param historyTable 引擎专用的 schema history 表名(约定 {@code wf_schema_history})
+     */
+    public static void migrate(DataSource dataSource, String historyTable) {
+        Flyway flyway = Flyway.configure()
+                .dataSource(dataSource)
+                .locations("classpath:db/migration")
+                .table(historyTable)
+                .load();
+        int applied = flyway.migrate().migrationsExecuted;
+        log.info("[Flyway] 迁移完成, history={}, 执行脚本数={}", historyTable, applied);
+    }
+
     /** 基于 JDBC 参数执行迁移(JPA 用,EMF 创建前) */
     public static void migrate(String jdbcUrl, String user, String password) {
         Flyway flyway = Flyway.configure()
