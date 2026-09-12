@@ -9,6 +9,15 @@ name: Dependency Submission
 #   "Projects that use Gradle need to include dependencies that are resolved at build time
 #    in order to get a full, transitive dependency tree."
 #
+# ⚠️ 前提：仓库的 Dependency graph 开关必须开着（Settings → Security and quality →
+#    Advanced Security）。public 仓库**默认**开启，但**本仓库实测是 disabled** ——
+#    2026-09-12 首次运行本 workflow 时 GitHub 明确回：
+#      "The Dependency graph is disabled for this repository. Please enable it before
+#       submitting snapshots."
+#    别拿「默认值」推断「实际状态」。这步只能 owner 在页面上点。**开关与数据缺一不可**：
+#    开关不开，快照提交不上去（本 workflow 必然失败）；开关开了但没本 workflow，
+#    依赖图是空的（dependency-review 照样 403）。
+#
 # 所以必须由本 workflow 主动生成快照并提交。缺了它仓库依赖图是空的，后果有二：
 #   ① dependency-review 在 PR 上比对 base/head 时后端无数据 → HTTP 403 →
 #      action 甩出一句「Please ensure that Dependency graph is enabled」。那句话是误导性的：

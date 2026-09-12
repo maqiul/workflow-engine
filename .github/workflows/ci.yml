@@ -64,14 +64,18 @@ jobs:
   #
   # ⚠️ 前置条件有两层，缺一不可：
   #    ① 仓库启用 Dependency graph（Settings → Security and quality → Advanced Security）。
-  #       public 仓库默认开启，一般无需人工干预。
+  #       ⚠️ **本仓库实测是 disabled**：2026-09-12 首次运行 dependency-submission 时
+  #       GitHub 原话「The Dependency graph is disabled for this repository. Please enable
+  #       it before submitting snapshots.」—— 别拿 public 的**默认策略**当**实际状态**，
+  #       本仓库被显式关过。这步只能由仓库 owner 在页面上点，改文件改不动。
   #    ② 依赖图里真的要有数据。Gradle 是特例 —— 官方支持表格里 Gradle 那一行的
   #       「Recommended files」栏是空的：Gradle 依赖要执行构建时才解析，GitHub 无法从
   #       build.gradle.kts 静态读取，所以必须由 dependency-submission.yml 主动提交快照。
   #    缺②的症状极易误导：比对时后端无数据，action 返回 403 并甩出一句
   #    「Please ensure that Dependency graph is enabled」。这句是 403 的固定映射
-  #    （404 才是「could not obtain dependency data」），action 并不检查开关状态，
-  #    别被它引去反复确认一个本来就开着的开关 —— 见 action issue #164。
+  #    （404 才是「could not obtain dependency data」），action 并不检查开关状态 ——
+  #    所以它既可能真是①没开（本仓库就是），也可能①开着而只是②没数据，**得实测**，
+  #    见 action issue #164。
   #
   # 刻意不设 comment-summary-in-pr：该选项要求 pull-requests: write，而 Dependabot
   # 触发的 run 拿到的 GITHUB_TOKEN 恒为只读（GitHub 的硬性安全降级，声明也不生效），
