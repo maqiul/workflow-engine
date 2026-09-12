@@ -16,11 +16,11 @@ group = "com.workflow"
 version = projectVersion
 
 // 统一依赖版本
-val fastjson2Version = "2.0.49"
-val slf4jVersion = "2.0.13"
+val fastjson2Version = "2.0.65"
+val slf4jVersion = "2.0.19"
 val logbackVersion = "1.5.6"
 val junitVersion = "5.10.2"
-val assertjVersion = "3.25.3"
+val assertjVersion = "3.27.7"
 
 // 对外发布的「库」模块。sample 是 Demo、tests 是测试模块，都不发布。
 val publishableProjectNames = setOf(

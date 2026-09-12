@@ -10,5 +10,5 @@ application {
 dependencies {
     implementation(project(":workflow-core"))
     // 日志实现 - sample 模块需要能看日志
-    implementation("ch.qos.logback:logback-classic:1.5.6")
+    implementation("ch.qos.logback:logback-classic:1.6.3")
 }
