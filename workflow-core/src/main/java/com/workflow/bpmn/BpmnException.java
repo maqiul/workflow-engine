@@ -1,5 +1,7 @@
 package com.workflow.bpmn;
 
+import com.workflow.WorkflowException;
+
 /**
  * BPMN 解析/生成过程中的统一异常。
  *
@@ -11,7 +13,7 @@ package com.workflow.bpmn;
  *       同样重试无意义，但错误信息更具体</li>
  * </ul>
  */
-public class BpmnException extends RuntimeException {
+public class BpmnException extends WorkflowException {
 
     public BpmnException(String message) {
         super(message);

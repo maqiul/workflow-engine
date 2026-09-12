@@ -2,10 +2,77 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.17.0**
+项目状态：**v3.18.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
+- v3.18.0 — 发布最后一公里（版本号唯一来源 / 真实可解析的发布坐标 / 异常基类 / nightly 真库验证）
+
+---
+
+## [3.18.0] - 2026-09-12
+
+定位：**「给别人用」的最后一公里**。功能面早已完整（49 项能力 / 三套仓储 / BPMN 双向 / REST），
+这一版补的是别人接手时会立刻绊倒的地方 —— 版本号、发布产物、异常契约、真库的持续验证。
+
+> ⚠️ **行为变更（REST 状态码）**：引擎抛出的可预期失败不再一律返回 500。
+> `BpmnException`（流程定义非法）→ **400**；其余 `WorkflowException` 子类
+> （候选组展不出人、拿不到实例锁、批量部分失败）→ **409**。
+> 此前它们全都落到兜底的 `catch (RuntimeException)` → 500 + 一条 error 日志，
+> 调用方看到"服务内部错误"只能去翻服务器日志，而问题其实就摆在自己提交的输入里。
+> **升级要求**：靠 500 判断"服务器故障"来触发告警的调用方需同步调整 ——
+> 正确做法是判断 4xx/5xx 区间，而不是钉住 500。
+
+### 新增
+
+- **`com.workflow.WorkflowException`**：引擎「可预期失败」的共同基类。调用方终于能写
+  `catch (WorkflowException e)` 作统一边界 —— 在此之前只能 `catch (RuntimeException)`，
+  连引擎自己的空指针也一并被当成业务失败咽下去。已继承者：
+  `BpmnException` / `WorkflowConflictException` / `BatchPartialFailureException` /
+  `GroupResolutionException` / `LocalInstanceLocks.LockAcquisitionException`
+- **`maven-publish` 发布能力**：5 个库模块产出可用坐标
+  （`workflow-core` / `workflow-persistence-flyway` / `workflow-persistence-jpa` /
+  `workflow-persistence-mybatis` / `workflow-rest`）。
+  `publishToMavenLocal` 或 `publish`（→ `build/local-repo`）；sample 与 tests 不发布
+- **`gradle.properties` 的 `projectVersion`**：版本号唯一来源
+
+### 修复
+
+- **文档里的坐标解析不了**：README / FEATURES 写着 `implementation("com.workflow:workflow-core:3.16.0")`，
+  但构建里根本没有 `maven-publish` —— 照抄一行就卡在依赖解析
+- **版本号漂移 9 个版本**：构建脚本硬编码 `3.8.0`，而项目已到 3.17.0。
+  漂移能持续这么久，是因为没有任何机制把它和 CHANGELOG / 发布坐标绑在一起
+- **POM scope 泄漏（消费方编译期必踩）**：`JpaPersistence` 的公开签名暴露 `EntityManager`
+  （`bindCurrentEm`、`currentEm`、`inTransaction(em -> ...)`），`MybatisPersistence` 暴露
+  `SqlSession` / `SqlSessionFactory`，而对应依赖声明为 `implementation` → POM 里落到 `runtime` scope。
+  消费方编译自己那行 lambda 就会报 `cannot access EntityManager`。改用 `api`
+- **REST 层 4 类失败被误报成 500**：见上方行为变更
+
+### 变更
+
+- **CI 增加 nightly 跨库 job**：`cross-db` 在每日 UTC 02:00 与手动触发时跑真库套件
+  （JPA×MySQL / JPA×PostgreSQL / MyBatis×MySQL / MyBatis×PostgreSQL），
+  并把实际用例数写进 Job Summary —— 只报"绿"不报跑了几条是危险的，
+  "跨库全绿"完全可能是 0 条用例在跑。push/PR 门禁仍用 `-PskipCrossDb=true` 保持快
+
+### 测试
+
+- 本轮 `--rerun-tasks` 实测：**PASSED 355 / FAILED 0 / ERRORS 0 / SKIPPED 35**（跨库，本机无 Docker）
+- 真库的持续保障改由 nightly 承担；跨库用例的绿不再依赖"某人某天手动跑过一次"
+
+### 设计要点
+
+- **异常分界划在"谁能处理"上**：调用方可以理解、也应当处理的失败 → `WorkflowException`；
+  用错 API、或引擎自己坏了 → 保持 JDK 原生异常类型不动。
+  把编程错误伪装成业务失败，只会诱使调用方加个 catch 把 bug 吞掉 —— 那比不分类更糟
+- **REST 里 3 个内部异常刻意不继承**：`ResourceNotFound` / `BadRequest` / `UnsupportedOperation`
+  是 HTTP 状态映射的私有控制流，不属于引擎失败。把它们混进业务异常体系，
+  "可预期失败"这个边界就失去意义了
+- **不做全模块 `api` 化**：`fastjson2` 的 `@JSONCreator`/`@JSONField` 确实出现在 `NodeDefinition`
+  等公开类型上，但注解不参与消费方编译；强行 `api` 会把 `hutool`、`slf4j` 一并推成编译期依赖，
+  给调用方增加无谓的类路径负担。只在**签名真的暴露了类型**时（JPA / MyBatis 那两处）才用 `api`
+- **版本号只留一个入口**：`gradle.properties`。多一个入口就多一次漂移的机会，
+  而漂移是**不会被测试发现**的那类错误
 
 ---
 

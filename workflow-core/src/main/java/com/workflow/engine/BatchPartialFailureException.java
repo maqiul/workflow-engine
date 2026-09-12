@@ -1,12 +1,14 @@
 package com.workflow.engine;
 
+import com.workflow.WorkflowException;
+
 /**
  * 批处理部分失败异常
  * 
  * <p>当批处理操作中部分任务失败时抛出此异常，
  * 包含详细的失败信息和批处理结果。
  */
-public class BatchPartialFailureException extends RuntimeException {
+public class BatchPartialFailureException extends WorkflowException {
     
     private final BatchResult result;
     

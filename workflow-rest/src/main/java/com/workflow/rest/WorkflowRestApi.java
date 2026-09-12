@@ -2,6 +2,8 @@ package com.workflow.rest;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.workflow.WorkflowException;
+import com.workflow.bpmn.BpmnException;
 import com.workflow.concurrency.WorkflowConflictException;
 import com.workflow.engine.IWorkflowEngine;
 import com.workflow.enums.TaskStatus;
@@ -85,6 +87,18 @@ public class WorkflowRestApi {
         } catch (WorkflowConflictException conflict) {
             // 乐观锁冲突：重试无意义，必须重新读取最新状态
             return RestResponse.error(409, "并发冲突，请刷新后重试: " + conflict.getMessage());
+        } catch (BpmnException bpmn) {
+            // 流程定义是客户端提交的输入，定义非法就该是 400。
+            // 以前它落到最下面的 500，客户端看到"服务内部错误"转头去查服务器日志，
+            // 而真正的问题就摆在自己提交的那份 XML 里。
+            return RestResponse.error(400, bpmn.getMessage());
+        } catch (WorkflowException wf) {
+            // 引擎「可预期失败」的统一出口：候选组展不出人、拿不到实例锁、批量部分失败……
+            // 这些同样曾经落到 500 + error 日志，但服务器并没有坏 ——
+            // 是这次请求在当前状态下办不到。映射 409 而非 500，
+            // 调用方才能把「刷新重试 / 改输入」和「报警找运维」分开处理。
+            // 要更细的区分就 catch 具体子类（基类的存在正是为了让这件事可做）。
+            return RestResponse.error(409, wf.getMessage());
         } catch (IllegalStateException state) {
             // 含引擎对"迟到者"的正当拒绝：待办已被他人处理
             return RestResponse.error(409, state.getMessage());

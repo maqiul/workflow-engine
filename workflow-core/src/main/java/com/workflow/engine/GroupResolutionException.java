@@ -1,5 +1,7 @@
 package com.workflow.engine;
 
+import com.workflow.WorkflowException;
+
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -14,7 +16,7 @@ import java.util.Set;
  * <p>兜底不靠"放宽校验"，而靠 {@link WorkflowEngine#adminTransferTask}：
  * 运维可以在组织架构修好之前，先把任务强行改派给具体的人。
  */
-public class GroupResolutionException extends RuntimeException {
+public class GroupResolutionException extends WorkflowException {
 
     private static final long serialVersionUID = 1L;
 

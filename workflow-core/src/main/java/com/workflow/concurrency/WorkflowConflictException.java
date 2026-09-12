@@ -1,5 +1,7 @@
 package com.workflow.concurrency;
 
+import com.workflow.WorkflowException;
+
 /**
  * 并发冲突：同一份数据被其它线程 / 其它 JVM 先行修改。
  *
@@ -7,7 +9,7 @@ package com.workflow.concurrency;
  * 引擎捕获后在<b>重新读取最新状态</b>的前提下有限次重试；重试耗尽仍失败则向调用方透出，
  * 由上层业务决定提示用户刷新还是静默放弃。
  */
-public class WorkflowConflictException extends RuntimeException {
+public class WorkflowConflictException extends WorkflowException {
 
     private final String entityKey;
 

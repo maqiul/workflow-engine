@@ -270,6 +270,38 @@ WorkflowEngine engine = new WorkflowEngine(mb.processRepo(), mb.instanceRepo(), 
 > **跨库验证**：`workflow-tests` 里用 Testcontainers 起真实 MySQL 8.4 / PostgreSQL 16 容器，
 > 同一套核心用例在「JPA×MySQL / JPA×PostgreSQL / MyBatis×MySQL / MyBatis×PostgreSQL」
 > 四种组合下全量跑通（32 个跨库用例），证明仓储层真正与数据库无关。
+>
+> ⚠️ 但主 CI 用 `-PskipCrossDb=true` 跳过这 32 个用例（拉镜像慢、环境易抖动，不该阻塞主构建），
+> 所以**它们的绿是本地一次性的，不是持续保障** —— 持续覆盖交给 nightly 任务（见 §14）。
+
+---
+
+### 5.5 引入到自己的工程（发布坐标）
+
+引擎是**嵌入式 jar** —— 不引 Spring、不带容器，加两行依赖即可。
+
+```bash
+# 1. 先发布到本地 Maven 仓库（~/.m2）
+gradlew publishToMavenLocal
+# 想直接验证产物、或做离线归档：gradlew publish → build/local-repo
+```
+
+```groovy
+// 2. 消费方
+repositories {
+    mavenLocal()   // 或指向 publish 产出的 build/local-repo 目录
+}
+
+dependencies {
+    implementation("com.workflow:workflow-core:3.18.0")             // 只用 InMemory 仓储，仅此一个依赖
+    implementation("com.workflow:workflow-persistence-jpa:3.18.0")  // 需要 JPA 再加（或 mybatis）
+}
+```
+
+发布 5 个库模块：`workflow-core`、`workflow-persistence-flyway`、`workflow-persistence-jpa`、
+`workflow-persistence-mybatis`、`workflow-rest`；`workflow-sample`（Demo）与 `workflow-tests`（测试）不发布。
+版本号唯一来源是 `gradle.properties` 的 `projectVersion` —— 改一处，全工程跟着走。
+要发 Maven Central 或私有 Nexus，在根 `build.gradle.kts` 的 `localStaging` 旁边追加一个 maven 仓库即可。
 
 ---
 

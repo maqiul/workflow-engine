@@ -1,5 +1,6 @@
 package com.workflow.concurrency;
 
+import com.workflow.WorkflowException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,7 +99,7 @@ public class LocalInstanceLocks implements InstanceLockProvider {
     }
 
     /** 获取实例锁失败。 */
-    public static class LockAcquisitionException extends RuntimeException {
+    public static class LockAcquisitionException extends WorkflowException {
         public LockAcquisitionException(String message) {
             super(message);
         }

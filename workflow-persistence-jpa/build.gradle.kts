@@ -15,8 +15,12 @@ dependencies {
     // Flyway 统一 DDL 迁移(建表由迁移脚本负责,不再用 hbm2ddl)
     implementation(project(":workflow-persistence-flyway"))
 
-    // JPA 规范 + Hibernate 实现
-    implementation("jakarta.persistence:jakarta.persistence-api:3.1.0")
+    // JPA 规范：必须用 api —— JpaPersistence 的公开签名直接暴露 EntityManager /
+    // EntityManagerFactory（bindCurrentEm / currentEm / newEntityManager，
+    // 以及 inTransaction(Function<EntityManager, T>) 的 lambda 参数）。
+    // 若挂在 implementation 上，POM 里会变成 runtime scope，
+    // 消费方编译自己那行 lambda 就会报 "cannot access EntityManager"。
+    api("jakarta.persistence:jakarta.persistence-api:3.1.0")
     implementation("org.hibernate.orm:hibernate-core:6.4.4.Final")
 
     // H2 内存数据库(测试/演示用,生产替换为 MySQL/PostgreSQL)
