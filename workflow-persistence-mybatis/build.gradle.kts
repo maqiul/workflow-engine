@@ -33,7 +33,7 @@ dependencies {
     // 用上低版本,与 Spring Boot 期望的 6.x 不符(NoSuchMethodError 风险)。
     // 走 withDataSource(宿主连接池)的集成方式完全不依赖本依赖。
     // 独立/演示用法请自行引入连接池,见 README「接入自己的数据源与事务」。
-    compileOnly("com.zaxxer:HikariCP:5.1.0")
+    compileOnly("com.zaxxer:HikariCP:7.1.0")
 
     // 日志实现 - 让 MyBatis 模块运行时能输出 SQL
     implementation("ch.qos.logback:logback-classic:1.6.3")
