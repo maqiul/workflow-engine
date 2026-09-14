@@ -19,6 +19,11 @@ version = projectVersion
 val fastjson2Version = "2.0.65"
 val slf4jVersion = "2.0.19"
 val junitVersion = "5.10.2"
+// Gradle 9 起，测试运行时不再隐式提供 JUnit Platform Launcher，必须显式声明，
+// 否则 :workflow-core:test / :workflow-rest:test 会以
+// "Failed to load JUnit Platform" 失败。1.10.2 与 junit-jupiter 5.10.2 配套，
+// 升级 junitVersion 时须同步调整。
+val junitPlatformLauncherVersion = "1.10.2"
 val assertjVersion = "3.27.7"
 
 // 对外发布的「库」模块。sample 是 Demo、tests 是测试模块，都不发布。
@@ -72,6 +77,8 @@ subprojects {
         "implementation"("org.slf4j:slf4j-api:$slf4jVersion")
         "testImplementation"("org.junit.jupiter:junit-jupiter:$junitVersion")
         "testImplementation"("org.assertj:assertj-core:$assertjVersion")
+        // Gradle 9 必需：JUnit Platform Launcher 不再由 Gradle 隐式提供（见上方变量注释）
+        "testRuntimeOnly"("org.junit.platform:junit-platform-launcher:$junitPlatformLauncherVersion")
     }
 
     // ============ 发布：让文档里的坐标真正可解析 ============
