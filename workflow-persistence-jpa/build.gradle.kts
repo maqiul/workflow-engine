@@ -27,7 +27,7 @@ dependencies {
     implementation("com.h2database:h2:2.5.250")
 
     // HikariCP 连接池
-    implementation("com.zaxxer:HikariCP:5.1.0")
+    implementation("com.zaxxer:HikariCP:7.1.0")
 
     // JSON 序列化(已在根项目 api 引入,这里可省略)
     // - fastjson2
