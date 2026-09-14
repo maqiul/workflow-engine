@@ -13,12 +13,17 @@ dependencies {
     testRuntimeOnly("com.h2database:h2:2.5.250")
 
     // ---- 跨数据库测试(MySQL / PostgreSQL,基于 Testcontainers) ----
-    // Testcontainers BOM 统一版本(1.21.4 为 1.x 最新,含 mysql/postgresql 模块)
+    // Testcontainers BOM 统一版本。
+    // 注意：2.0 起子模块统一加 `testcontainers-` 前缀 —— 原来的
+    // org.testcontainers:mysql / :postgresql / :junit-jupiter 在 2.x 已不存在，
+    // 坐标解析会失败（Could not find ...:<empty version>），必须改为
+    // testcontainers-mysql / testcontainers-postgresql / testcontainers-junit-jupiter。
+    // 核心模块坐标不变，仍为 org.testcontainers:testcontainers。
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.testcontainers:testcontainers")
-    testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.testcontainers:mysql")
-    testImplementation("org.testcontainers:postgresql")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-mysql")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
     // JDBC 驱动
     testImplementation("com.mysql:mysql-connector-j:8.4.0")
     testImplementation("org.postgresql:postgresql:42.7.13")
