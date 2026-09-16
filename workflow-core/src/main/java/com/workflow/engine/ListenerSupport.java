@@ -213,4 +213,19 @@ public class ListenerSupport {
             }
         }
     }
+
+    /**
+     * 触发任务取消事件（实例终止 / 改道 / 减签导致待办被销毁，非正常办结）。
+     *
+     * @param reason 取消来源，供接入方区分清理策略
+     */
+    public void fireTaskCancelled(TaskInstance task, String reason) {
+        for (TaskListener l : taskListeners) {
+            try {
+                l.onCancelled(task, reason);
+            } catch (Exception e) {
+                log.warn("[监听器] onCancelled 异常 (reason={})", reason, e);
+            }
+        }
+    }
 }

@@ -29,4 +29,15 @@ public interface TaskListener {
 
     /** 任务撤回时触发 */
     default void onWithdrawn(TaskInstance task) {}
+
+    /**
+     * 任务被取消时触发 —— 区别于 {@link #onCompleted 正常办结}。
+     *
+     * <p>在<b>非办结</b>导致待办被销毁的路径统一派发：实例终止、改道跳转
+     * （{@code jumpToNode} / {@code jumpTokenToNode}）、减签。接入方据此清理待办投影，
+     * 避免出现"任务已消失、待办列表仍显示可办"的脏行。
+     *
+     * @param reason 取消来源：{@code terminated} / {@code jumped} / {@code sign-removed}
+     */
+    default void onCancelled(TaskInstance task, String reason) {}
 }

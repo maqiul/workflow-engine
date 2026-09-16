@@ -238,6 +238,47 @@ class Phase1ListenerQueryTest extends EngineTestBase {
         assertThat(execListener.startedInstances).isEmpty();
     }
 
+    @Test
+    void task_listener_should_fire_onCancelled_on_terminate() {
+        ProcessDefinition def = ProcessBuilder.create("task-cancel-term", "终止触发取消")
+                .start("start")
+                .userTask("apply", "申请", any("u1"))
+                .end("end")
+                .connect("start", "apply")
+                .connect("apply", "end")
+                .build();
+        register(def);
+
+        String instanceId = engine.start("task-cancel-term", Map.of());
+        engine.terminate(instanceId);
+
+        assertThat(taskListener.cancelledTasks).hasSize(1);
+        assertThat(taskListener.cancelledReasons).containsExactly("terminated");
+    }
+
+    @Test
+    void task_listener_should_fire_onCancelled_on_jump() {
+        ProcessDefinition def = ProcessBuilder.create("task-cancel-jump", "改道触发取消")
+                .start("start")
+                .userTask("apply", "申请", any("u1"))
+                .userTask("approve", "审批", any("u2"))
+                .end("end")
+                .connect("start", "apply")
+                .connect("apply", "approve")
+                .connect("approve", "end")
+                .build();
+        register(def);
+
+        String instanceId = engine.start("task-cancel-jump", Map.of());
+        TaskInstance apply = engine.getInstance(instanceId).getTasks().stream()
+                .filter(t -> t.getNodeId().equals("apply")).findFirst().orElseThrow();
+        engine.completeTask(apply.getId(), "u1", true);
+        // 回退到 apply 会终止当前 approve 待办 → 应派发 onCancelled(jumped)
+        engine.jumpToNode(instanceId, "apply", "u1", "回退重审");
+
+        assertThat(taskListener.cancelledReasons).contains("jumped");
+    }
+
     // ========== 查询 API 测试 ==========
 
     @Test
@@ -319,6 +360,8 @@ class Phase1ListenerQueryTest extends EngineTestBase {
         final List<TaskInstance> transferredTasks = new ArrayList<>();
         final List<String> transferredFromUsers = new ArrayList<>();
         final List<String> transferredToUsers = new ArrayList<>();
+        final List<TaskInstance> cancelledTasks = new ArrayList<>();
+        final List<String> cancelledReasons = new ArrayList<>();
 
         @Override
         public void onCreated(TaskInstance task) { createdTasks.add(task); }
@@ -337,6 +380,11 @@ class Phase1ListenerQueryTest extends EngineTestBase {
             transferredTasks.add(task);
             transferredFromUsers.add(fromUser);
             transferredToUsers.add(toUser);
+        }
+        @Override
+        public void onCancelled(TaskInstance task, String reason) {
+            cancelledTasks.add(task);
+            cancelledReasons.add(reason);
         }
     }
 }

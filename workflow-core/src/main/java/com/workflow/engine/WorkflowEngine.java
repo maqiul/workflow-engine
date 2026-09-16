@@ -1082,6 +1082,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                     taskRepo.save(t);
                     syncTaskInInstance(instance, t);
                     cancelledTaskIds.add(t.getId());
+                    listenerSupport.fireTaskCancelled(t, "terminated");
                 }
             }
             instanceRepo.save(instance);
@@ -1265,6 +1266,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                     taskRepo.save(t);
                     syncTaskInInstance(instance, t);
                     terminatedTaskIds.add(t.getId());
+                    listenerSupport.fireTaskCancelled(t, "jumped");
                 }
             }
             
@@ -1308,6 +1310,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                     t.setStatus(TaskStatus.TERMINATED);
                     taskRepo.save(t);
                     syncTaskInInstance(instance, t);
+                    listenerSupport.fireTaskCancelled(t, "jumped");
                 }
             }
             token.moveTo(targetNodeId);
@@ -1365,6 +1368,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             taskRepo.save(target);
             syncTaskInInstance(instance, target);
             instanceRepo.save(instance);
+            listenerSupport.fireTaskCancelled(target, "sign-removed");
             log.info("[引擎] 减签 instance={} node={} assignee={} by={}", instanceId, nodeId, assignee, operator);
             audit(AuditEventType.SIGN_REMOVED, instanceId, target.getId(), operator,
                     "减签 " + assignee + " @ " + nodeId);
