@@ -821,8 +821,8 @@ public class WorkflowEngine implements IWorkflowEngine {
         String actualApprover = userId;  // 实际审批人（可能是委托人）
         String delegatedBy = null;       // 如果是代理人审批，记录委托人
         
-        if (task.getCandidate().getUserIds().contains(userId)) {
-            // 用户是候选人，直接审批
+        if (task.getAssignee() != null || task.getCandidate().getUserIds().contains(userId)) {
+            // 已指派/认领 → 放行给 recordCompletion 严格校验操作者==assignee；否则候选人直接审批。
             actualApprover = userId;
         } else {
             // 检查是否有委托关系（用户是代理人）
@@ -912,6 +912,42 @@ public class WorkflowEngine implements IWorkflowEngine {
         listenerSupport.fireTaskRejected(task, userId, reason);
         // 在上一节点重新创建任务(新待办)
         advanceToken(instance, def, newToken.getId());
+    }
+
+    @Override
+    public void claim(String taskId, String userId) {
+        exclusiveVoidByTask(taskId, "claim", () -> {
+            TaskInstance task = taskRepo.findById(taskId);
+            ensureRunning(task);
+            if (!task.getCandidate().getUserIds().contains(userId)) {
+                throw new IllegalArgumentException("仅候选人可认领，" + userId + " "
+                        + task.getCandidate().explainRejection(userId));
+            }
+            task.assignTo(userId);
+            taskRepo.save(task);
+            ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
+            syncTaskInInstance(instance, task);
+            instanceRepo.save(instance);
+            log.info("[引擎] 认领 task={} by={}", taskId, userId);
+            audit(AuditEventType.TASK_ASSIGNED, instance.getId(), taskId, userId, "认领任务");
+            listenerSupport.fireTaskAssigned(task, userId);
+        });
+    }
+
+    @Override
+    public void setAssignee(String taskId, String userId) {
+        exclusiveVoidByTask(taskId, "setAssignee", () -> {
+            TaskInstance task = taskRepo.findById(taskId);
+            ensureRunning(task);
+            task.assignTo(userId);
+            taskRepo.save(task);
+            ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
+            syncTaskInInstance(instance, task);
+            instanceRepo.save(instance);
+            log.info("[引擎] 指派办理人 task={} assignee={}", taskId, userId);
+            audit(AuditEventType.TASK_ASSIGNED, instance.getId(), taskId, userId, "指派办理人");
+            listenerSupport.fireTaskAssigned(task, userId);
+        });
     }
 
     @Override

@@ -61,6 +61,9 @@ public class WfTaskEntity {
     @Column(name = "arrival")
     private int arrival;
 
+    @Column(name = "assignee", length = 64)
+    private String assignee;
+
     /**
      * 乐观锁版本号，由 Hibernate {@code @Version} 维护（见 V9__optimistic_lock.sql）。
      *
@@ -93,6 +96,8 @@ public class WfTaskEntity {
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
     public int getArrival() { return arrival; }
     public void setArrival(int arrival) { this.arrival = arrival; }
+    public String getAssignee() { return assignee; }
+    public void setAssignee(String assignee) { this.assignee = assignee; }
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
 }

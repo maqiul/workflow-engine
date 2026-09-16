@@ -40,4 +40,11 @@ public interface TaskListener {
      * @param reason 取消来源：{@code terminated} / {@code jumped} / {@code sign-removed}
      */
     default void onCancelled(TaskInstance task, String reason) {}
+
+    /**
+     * 任务被认领 / 指派办理人时触发（{@code claim} / {@code setAssignee}）。
+     *
+     * <p>接入方据此更新待办投影的可见性列 —— 认领后仅 assignee 可办。
+     */
+    default void onAssigned(TaskInstance task, String assignee) {}
 }

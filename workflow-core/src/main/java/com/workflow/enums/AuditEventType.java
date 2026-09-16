@@ -37,5 +37,7 @@ public enum AuditEventType {
     /** 实例迁移 - 运行中实例迁移到新版本流程定义 */
     INSTANCE_MIGRATED,
     /** 流程变量变更 - 运行期通过引擎 API 修改变量 */
-    VARIABLE_UPDATED
+    VARIABLE_UPDATED,
+    /** 任务认领 / 指派 - assignee 变更（claim / setAssignee） */
+    TASK_ASSIGNED
 }

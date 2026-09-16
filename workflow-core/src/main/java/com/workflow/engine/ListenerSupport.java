@@ -228,4 +228,17 @@ public class ListenerSupport {
             }
         }
     }
+
+    /**
+     * 触发任务认领 / 指派事件（assignee 变更）。
+     */
+    public void fireTaskAssigned(TaskInstance task, String assignee) {
+        for (TaskListener l : taskListeners) {
+            try {
+                l.onAssigned(task, assignee);
+            } catch (Exception e) {
+                log.warn("[监听器] onAssigned 异常", e);
+            }
+        }
+    }
 }

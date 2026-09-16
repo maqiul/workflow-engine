@@ -54,6 +54,9 @@ public class WfTaskEntity {
     @TableField("arrival")
     private int arrival;
 
+    @TableField("assignee")
+    private String assignee;
+
     /**
      * 乐观锁版本号，由 MyBatis-Plus 的乐观锁插件维护（见 V9__optimistic_lock.sql）。
      *
@@ -86,6 +89,8 @@ public class WfTaskEntity {
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
     public int getArrival() { return arrival; }
     public void setArrival(int arrival) { this.arrival = arrival; }
+    public String getAssignee() { return assignee; }
+    public void setAssignee(String assignee) { this.assignee = assignee; }
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
 }

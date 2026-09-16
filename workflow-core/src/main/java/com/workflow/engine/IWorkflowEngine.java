@@ -120,6 +120,23 @@ public interface IWorkflowEngine {
     void transferTask(String taskId, String fromUserId, String toUserId);
 
     /**
+     * 认领任务 —— 候选人把待办锁定到自己名下，之后<b>仅该人可办</b>，taskId 不变。
+     *
+     * <p>区别于 {@link #transferTask}（转办会关闭原任务、新建单人任务）：认领在同一任务上
+     * 设置 {@code assignee}，是"从候选池中一人独占"的语义。触发 {@code onAssigned} 事件。
+     *
+     * @param userId 认领人，必须是该任务当前候选人之一
+     */
+    void claim(String taskId, String userId);
+
+    /**
+     * 直接指派办理人 —— 不校验是否候选人（供管理员 / 系统改派用），之后仅该人可办。
+     *
+     * <p>taskId 不变，触发 {@code onAssigned} 事件。
+     */
+    void setAssignee(String taskId, String userId);
+
+    /**
      * 管理员强制改派 —— 绕过候选人校验的兜底通道。
      *
      * <p>用于候选人离职/长期不在、或组织架构故障导致没人能接手的窘境。

@@ -74,6 +74,7 @@ public class JpaTaskRepository implements TaskRepository {
                 }
                 entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
+                entity.setAssignee(task.getAssignee());
                 entity.setStatus(task.getStatus());
                 em.persist(entity);
             } else {
@@ -92,6 +93,7 @@ public class JpaTaskRepository implements TaskRepository {
                 }
                 entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
+                entity.setAssignee(task.getAssignee());
                 entity.setStatus(task.getStatus());
             }
             em.flush();  // 立刻 flush,跨事务的 SELECT 可见
@@ -136,6 +138,7 @@ public class JpaTaskRepository implements TaskRepository {
                     }
                     entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
+                entity.setAssignee(task.getAssignee());
                 entity.setStatus(task.getStatus());
                     em.persist(entity);
                 } else {
@@ -154,6 +157,7 @@ public class JpaTaskRepository implements TaskRepository {
                     }
                     entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
+                entity.setAssignee(task.getAssignee());
                 entity.setStatus(task.getStatus());
                 }
             }
@@ -351,7 +355,7 @@ public class JpaTaskRepository implements TaskRepository {
         // TaskQuery.orderByCreateTime() 只能退化成按 id 排序。
         return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
                 e.getNodeId(), candidate, completed, e.getStatus(),
-                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival());
+                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival(), e.getAssignee());
     }
 
     /** 插入行的初始版本号（与内存仓储 save 后的版本号对齐） */

@@ -44,6 +44,13 @@ public final class TaskInstance {
     private String tenantId;
     /** 所属 Token 的到达代次：区分同一节点多轮到达（循环回边支持） */
     private int arrival;
+    /**
+     * 当前办理人（assignee）。{@code null} = 未指派/未认领，此时按 candidate 候选池决定谁能办。
+     *
+     * <p>claim/setAssignee 的一等公民：认领后锁定到该人、<b>taskId 不变</b>，
+     * 区别于 {@link #transferTo} 的"关闭本任务、另建单人任务"简化模拟。
+     */
+    private volatile String assignee;
 
     public TaskInstance(String instanceId, String tokenId, String nodeId, Candidate candidate) {
         this(instanceId, tokenId, nodeId, candidate, System.currentTimeMillis());
@@ -62,6 +69,7 @@ public final class TaskInstance {
         this.createTime = createTime;
         this.tenantId = null;  // 默认无租户
         this.arrival = 0;
+        this.assignee = null;
     }
 
     /**
@@ -83,6 +91,18 @@ public final class TaskInstance {
                                            Set<String> completedApprovers,
                                            TaskStatus status, long revision, long createTime,
                                            String tenantId, int arrival) {
+        return reconstruct(id, instanceId, tokenId, nodeId, candidate, completedApprovers,
+                status, revision, createTime, tenantId, arrival, null);
+    }
+
+    /**
+     * 持久化层专用 - 完整版（含 assignee 一等公民）。
+     */
+    public static TaskInstance reconstruct(String id, String instanceId, String tokenId,
+                                           String nodeId, Candidate candidate,
+                                           Set<String> completedApprovers,
+                                           TaskStatus status, long revision, long createTime,
+                                           String tenantId, int arrival, String assignee) {
         TaskInstance t = new TaskInstance(instanceId, tokenId, nodeId, candidate, createTime);
         t.setIdViaReflection(id);
         t.completedApprovers.clear();
@@ -93,6 +113,7 @@ public final class TaskInstance {
         t.revision = revision;
         t.tenantId = tenantId;
         t.arrival = arrival;
+        t.assignee = assignee;
         return t;
     }
 
@@ -118,7 +139,7 @@ public final class TaskInstance {
      */
     public TaskInstance copy() {
         return reconstruct(id, instanceId, tokenId, nodeId, candidate,
-                new HashSet<>(completedApprovers), status, revision, createTime, tenantId, arrival);
+                new HashSet<>(completedApprovers), status, revision, createTime, tenantId, arrival, assignee);
     }
 
     private void setIdViaReflection(String value) {
@@ -153,12 +174,33 @@ public final class TaskInstance {
     public int getArrival() { return arrival; }
     public void setArrival(int arrival) { this.arrival = arrival; }
 
+    /** 当前办理人；null 表示未指派/未认领（按候选池决定谁能办）。 */
+    public String getAssignee() { return assignee; }
+
+    /**
+     * 指派 / 认领办理人 —— 在同一任务上设置，<b>不新建任务、taskId 不变</b>。
+     * 与 {@link #transferTo} 的"关闭本任务 + 另建单人任务"简化模拟相对。
+     */
+    public void assignTo(String userId) {
+        this.assignee = Objects.requireNonNull(userId);
+    }
+
     /**
      * 记录一个审批人的完成操作
      * @return true 表示此操作使整个任务完成(会签完成 或 或签命中)
      */
     public boolean recordCompletion(String userId) {
         Objects.requireNonNull(userId);
+        // 已指派/认领：assignee 独占，办完即完成（单人语义），非 assignee 一律拒绝。
+        if (assignee != null) {
+            if (!assignee.equals(userId)) {
+                throw new IllegalArgumentException(
+                        "任务已指派/认领给 " + assignee + "，" + userId + " 无权办理");
+            }
+            completedApprovers.add(userId);
+            this.status = TaskStatus.COMPLETED;
+            return true;
+        }
         if (!candidate.getUserIds().contains(userId)) {
             throw new IllegalArgumentException(candidate.explainRejection(userId));
         }
