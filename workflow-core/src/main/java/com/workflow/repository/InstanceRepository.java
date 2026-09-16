@@ -3,6 +3,7 @@ package com.workflow.repository;
 import com.workflow.enums.InstanceStatus;
 import com.workflow.runtime.ProcessInstance;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -45,6 +46,22 @@ public interface InstanceRepository {
     default List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
         throw new UnsupportedOperationException("findByProcessKeyAndVersion not implemented");
     }
+
+    /**
+     * 按 id 集合批量查实例 —— 对账「拿一批 id 取真相源」的必需出口。
+     *
+     * <p>返回其中存在的实例（引擎里没有的静默跳过，对账据此发现"投影有但引擎没有"的多余行）；
+     * 入参为空返回空列表。<b>刻意用抽象方法</b>强制三套仓储各自实现（{@code default} 抛异常会让
+     * 真库缺席、内存测试全绿 —— 这个坑已踩过两次）。
+     */
+    List<ProcessInstance> findByIds(Collection<String> instanceIds);
+
+    /**
+     * 增量扫描 —— 返回 {@code createTime > sinceMillis} 的实例，按创建时间升序。
+     *
+     * <p>对账的时间窗扫描出口（只扫最近变更，不每次全表）。用严格 {@code >} 避免边界毫秒被重复扫。
+     */
+    List<ProcessInstance> findByStartedAfter(long sinceMillis);
 
     /**
      * 按「流程 key + 状态」分组计数。

@@ -12,10 +12,12 @@ import com.workflow.runtime.Token;
 import jakarta.persistence.EntityManager;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * JPA 版 InstanceRepository
@@ -223,6 +225,31 @@ public class JpaInstanceRepository implements InstanceRepository {
                 .getResultList().stream()
                 .map(e -> rebuild(e, em))
                 .collect(java.util.stream.Collectors.toList()));
+    }
+
+    @Override
+    public List<ProcessInstance> findByIds(Collection<String> instanceIds) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            return List.of();
+        }
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e WHERE e.id IN :ids ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .setParameter("ids", instanceIds)
+                .getResultList().stream()
+                .map(e -> rebuild(e, em))
+                .collect(Collectors.toList()));
+    }
+
+    @Override
+    public List<ProcessInstance> findByStartedAfter(long sinceMillis) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e WHERE e.createTime > :since ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .setParameter("since", sinceMillis)
+                .getResultList().stream()
+                .map(e -> rebuild(e, em))
+                .collect(Collectors.toList()));
     }
 
     @Override

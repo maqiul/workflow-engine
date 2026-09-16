@@ -14,9 +14,11 @@ import com.workflow.repository.InstanceRepository;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
 import com.workflow.runtime.Token;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import org.apache.ibatis.session.SqlSession;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -191,6 +193,21 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 .eq("process_key", processKey)
                 .eq("process_version", version)
                 .orderByAsc("create_time"));
+    }
+
+    @Override
+    public List<ProcessInstance> findByIds(Collection<String> instanceIds) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            return List.of();
+        }
+        return queryInstances(new QueryWrapper<WfInstanceEntity>()
+                .in("id", instanceIds).orderByAsc("create_time"));
+    }
+
+    @Override
+    public List<ProcessInstance> findByStartedAfter(long sinceMillis) {
+        return queryInstances(new QueryWrapper<WfInstanceEntity>()
+                .gt("create_time", sinceMillis).orderByAsc("create_time"));
     }
 
     @Override

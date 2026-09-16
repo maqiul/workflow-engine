@@ -6,6 +6,8 @@ import com.workflow.runtime.ProcessInstance;
 import com.workflow.tx.TransactionContext;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -112,6 +114,26 @@ public class InMemoryInstanceRepository implements InstanceRepository {
     public List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
         return store.values().stream()
                 .filter(i -> processKey.equals(i.getProcessKey()) && i.getProcessVersion() == version)
+                .map(ProcessInstance::snapshot)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ProcessInstance> findByIds(Collection<String> instanceIds) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            return List.of();
+        }
+        return store.values().stream()
+                .filter(i -> instanceIds.contains(i.getId()))
+                .map(ProcessInstance::snapshot)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ProcessInstance> findByStartedAfter(long sinceMillis) {
+        return store.values().stream()
+                .filter(i -> i.getCreateTime() > sinceMillis)
+                .sorted(Comparator.comparingLong(ProcessInstance::getCreateTime))
                 .map(ProcessInstance::snapshot)
                 .collect(Collectors.toList());
     }

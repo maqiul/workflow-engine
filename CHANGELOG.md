@@ -26,6 +26,7 @@
 - **`TaskListener.onCancelled(task, reason)`**（G-05）：实例终止 / 改道跳转（`jumpToNode`、`jumpTokenToNode`）/ 减签 四类"待办被销毁但非办结"路径统一派发，`reason` 取 `terminated`/`jumped`/`sign-removed`；接入方据此清理待办投影，消除"任务消失但待办仍显示可办"的脏行。撤回仍走既有 `onWithdrawn`。
 - **`TaskListener.onAssigned(task, assignee)`**：认领 / 指派事件。
 - **`HistoryRepository.deleteInstance(instanceId)`**（G-14）：按实例精确删活动 + 历史任务（管理员清理误提交实例），三套实现 + 跨三套一致性测试；**不删审批意见**（意见是审批证据，独立于历史保留策略）。
+- **实例读出口 `findByIds` / `findByStartedAfter`**（G-03-R，v2 清单新增）：对账的真相源查询 —— 按 id 集合批量取实例、按创建时间增量扫描。抽象方法强制三套实现，`InstanceReadQueryTest` 跨三套一致。
 
 ### 修复
 - **监听器注销静默失效**（G-07）：`removeExecutionListener/removeTaskListener` 此前对 `getExecutionListeners()` 返回的**副本**调 `remove`，注销完全无效（监听器一直挂着 → 长跑内存泄漏 + 重复触发）。改为 `ListenerSupport` 操作内部列表。
