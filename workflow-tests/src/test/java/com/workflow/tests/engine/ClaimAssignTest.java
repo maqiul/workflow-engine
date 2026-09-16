@@ -119,4 +119,45 @@ class ClaimAssignTest extends EngineTestBase {
 
         assertThat(who).containsExactly("u1");
     }
+
+    @Test
+    @DisplayName("委派回签：u1 委派 u2 代办，u2 回签后回 u1、不推进；u1 再办结")
+    void delegate_then_resolve_returns_to_origin() {
+        register(claimFlow());
+        String id = engine.start("claim-flow", Map.of());
+        String taskId = firstTaskId(id);
+
+        engine.delegateTask(taskId, "u1", "u2");
+        TaskInstance t = engine.getTask(taskId);
+        assertThat(t.getStatus()).isEqualTo(TaskStatus.DELEGATED);
+        assertThat(t.getAssignee()).isEqualTo("u2");
+        assertThat(t.getDelegatedFrom()).isEqualTo("u1");
+
+        // 被委派人不能直接办结（须回签）
+        assertThatThrownBy(() -> engine.completeTask(taskId, "u2", true))
+                .isInstanceOf(IllegalStateException.class);
+
+        engine.resolveTask(taskId, "u2");
+        TaskInstance back = engine.getTask(taskId);
+        assertThat(back.getStatus()).isEqualTo(TaskStatus.PENDING);
+        assertThat(back.getAssignee()).isEqualTo("u1");
+        assertThat(back.getDelegatedFrom()).isNull();
+        assertThat(engine.getInstance(id).getStatus()).as("回签不推进流程").isEqualTo(InstanceStatus.RUNNING);
+
+        // 原办理人办结才推进
+        engine.completeTask(taskId, "u1", true);
+        assertThat(engine.getInstance(id).getStatus()).isEqualTo(InstanceStatus.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("非被委派人不能回签")
+    void only_delegatee_can_resolve() {
+        register(claimFlow());
+        String id = engine.start("claim-flow", Map.of());
+        String taskId = firstTaskId(id);
+        engine.delegateTask(taskId, "u1", "u2");
+
+        assertThatThrownBy(() -> engine.resolveTask(taskId, "u1"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

@@ -63,6 +63,7 @@ public class MybatisTaskRepository implements TaskRepository {
                 entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
                 entity.setAssignee(task.getAssignee());
+                entity.setDelegatedFrom(task.getDelegatedFrom());
                 entity.setStatus(task.getStatus());
                 mapper.insert(entity);
             } else {
@@ -82,6 +83,7 @@ public class MybatisTaskRepository implements TaskRepository {
                 entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
                 entity.setAssignee(task.getAssignee());
+                entity.setDelegatedFrom(task.getDelegatedFrom());
                 entity.setStatus(task.getStatus());
                 requireCas(mapper.updateById(entity), task.getId());
             }
@@ -120,6 +122,7 @@ public class MybatisTaskRepository implements TaskRepository {
                     entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
                 entity.setAssignee(task.getAssignee());
+                entity.setDelegatedFrom(task.getDelegatedFrom());
                 entity.setStatus(task.getStatus());
                     mapper.insert(entity);
                 } else {
@@ -139,6 +142,7 @@ public class MybatisTaskRepository implements TaskRepository {
                     entity.setTenantId(task.getTenantId());
                 entity.setArrival(task.getArrival());
                 entity.setAssignee(task.getAssignee());
+                entity.setDelegatedFrom(task.getDelegatedFrom());
                 entity.setStatus(task.getStatus());
                     requireCas(mapper.updateById(entity), task.getId());
                 }
@@ -322,7 +326,7 @@ public class MybatisTaskRepository implements TaskRepository {
         // 并把 create_time 读回来（此前丢弃导致按创建时间排序退化成按 id 排序）。
         return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
                 e.getNodeId(), candidate, completed, e.getStatus(),
-                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival(), e.getAssignee());
+                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival(), e.getAssignee(), e.getDelegatedFrom());
     }
 
     /** 插入行的初始版本号（与内存仓储 save 后的版本号对齐） */

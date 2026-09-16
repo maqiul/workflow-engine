@@ -15,5 +15,7 @@ public enum TaskStatus {
     /** 被终止 */
     TERMINATED,
     /** 已撤回 - 发起人撤回了未审批的申请 */
-    WITHDRAWN
+    WITHDRAWN,
+    /** 已委派 - 办理人把任务委派给他人代办；他人 resolveTask 后回原办理人继续（G-09 回签） */
+    DELEGATED
 }

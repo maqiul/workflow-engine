@@ -39,5 +39,9 @@ public enum AuditEventType {
     /** 流程变量变更 - 运行期通过引擎 API 修改变量 */
     VARIABLE_UPDATED,
     /** 任务认领 / 指派 - assignee 变更（claim / setAssignee） */
-    TASK_ASSIGNED
+    TASK_ASSIGNED,
+    /** 任务委派 - 交给他人代办，待回签（G-09） */
+    TASK_DELEGATED,
+    /** 委派回签 - 被委派人办完，任务回原办理人（G-09） */
+    TASK_RESOLVED
 }

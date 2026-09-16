@@ -967,6 +967,57 @@ public class WorkflowEngine implements IWorkflowEngine {
     }
 
     @Override
+    public void delegateTask(String taskId, String fromUserId, String toUserId) {
+        exclusiveVoidByTask(taskId, "delegateTask", () -> {
+            TaskInstance task = taskRepo.findById(taskId);
+            ensureRunning(task);   // 仅 PENDING 可委派
+            if (!fromUserId.equals(task.getAssignee())
+                    && !task.getCandidate().getUserIds().contains(fromUserId)) {
+                throw new IllegalArgumentException("只有当前办理人/候选人可委派，" + fromUserId + " "
+                        + task.getCandidate().explainRejection(fromUserId));
+            }
+            task.setDelegatedFrom(fromUserId);
+            task.assignTo(toUserId);
+            task.setStatus(TaskStatus.DELEGATED);
+            taskRepo.save(task);
+            ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
+            syncTaskInInstance(instance, task);
+            instanceRepo.save(instance);
+            log.info("[引擎] 委派 task={} {}->{}", taskId, fromUserId, toUserId);
+            audit(AuditEventType.TASK_DELEGATED, instance.getId(), taskId, fromUserId,
+                    "委派给 " + toUserId + " 代办");
+            listenerSupport.fireTaskAssigned(task, toUserId);
+        });
+    }
+
+    @Override
+    public void resolveTask(String taskId, String toUserId) {
+        exclusiveVoidByTask(taskId, "resolveTask", () -> {
+            TaskInstance task = taskRepo.findById(taskId);
+            if (task.getStatus() != TaskStatus.DELEGATED) {
+                throw new IllegalStateException("仅 DELEGATED 任务可回签,当前: " + task.getStatus());
+            }
+            if (!toUserId.equals(task.getAssignee())) {
+                throw new IllegalArgumentException("只有被委派人 " + task.getAssignee()
+                        + " 能回签，" + toUserId + " 无权");
+            }
+            String origin = task.getDelegatedFrom();
+            task.assignTo(origin);
+            task.setDelegatedFrom(null);
+            task.setStatus(TaskStatus.PENDING);
+            taskRepo.save(task);
+            ProcessInstance instance = instanceRepo.findById(task.getInstanceId());
+            syncTaskInInstance(instance, task);
+            instanceRepo.save(instance);
+            log.info("[引擎] 回签 task={} 回到 {}", taskId, origin);
+            audit(AuditEventType.TASK_RESOLVED, instance.getId(), taskId, toUserId,
+                    "回签给 " + origin);
+            listenerSupport.fireTaskAssigned(task, origin);
+            // 关键：不推进流程 —— 任务回到原办理人继续（PENDING），由其 completeTask 才办结
+        });
+    }
+
+    @Override
     public void transferTask(String taskId, String fromUserId, String toUserId) {
         exclusiveVoidByTask(taskId, "transferTask",
                 () -> transferTaskInternal(taskId, fromUserId, toUserId));

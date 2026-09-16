@@ -51,6 +51,8 @@ public final class TaskInstance {
      * 区别于 {@link #transferTo} 的"关闭本任务、另建单人任务"简化模拟。
      */
     private volatile String assignee;
+    /** 委派回签的原办理人（G-09）：delegateTask 时记录，resolveTask 后任务回到此人。null=未被委派。 */
+    private volatile String delegatedFrom;
 
     public TaskInstance(String instanceId, String tokenId, String nodeId, Candidate candidate) {
         this(instanceId, tokenId, nodeId, candidate, System.currentTimeMillis());
@@ -103,6 +105,17 @@ public final class TaskInstance {
                                            Set<String> completedApprovers,
                                            TaskStatus status, long revision, long createTime,
                                            String tenantId, int arrival, String assignee) {
+        return reconstruct(id, instanceId, tokenId, nodeId, candidate, completedApprovers,
+                status, revision, createTime, tenantId, arrival, assignee, null);
+    }
+
+    /** 持久化层专用 - 完整版（含委派回签的 delegatedFrom）。 */
+    public static TaskInstance reconstruct(String id, String instanceId, String tokenId,
+                                           String nodeId, Candidate candidate,
+                                           Set<String> completedApprovers,
+                                           TaskStatus status, long revision, long createTime,
+                                           String tenantId, int arrival, String assignee,
+                                           String delegatedFrom) {
         TaskInstance t = new TaskInstance(instanceId, tokenId, nodeId, candidate, createTime);
         t.setIdViaReflection(id);
         t.completedApprovers.clear();
@@ -114,6 +127,7 @@ public final class TaskInstance {
         t.tenantId = tenantId;
         t.arrival = arrival;
         t.assignee = assignee;
+        t.delegatedFrom = delegatedFrom;
         return t;
     }
 
@@ -139,7 +153,7 @@ public final class TaskInstance {
      */
     public TaskInstance copy() {
         return reconstruct(id, instanceId, tokenId, nodeId, candidate,
-                new HashSet<>(completedApprovers), status, revision, createTime, tenantId, arrival, assignee);
+                new HashSet<>(completedApprovers), status, revision, createTime, tenantId, arrival, assignee, delegatedFrom);
     }
 
     private void setIdViaReflection(String value) {
@@ -184,6 +198,10 @@ public final class TaskInstance {
     public void assignTo(String userId) {
         this.assignee = Objects.requireNonNull(userId);
     }
+
+    /** 委派回签的原办理人（G-09）。 */
+    public String getDelegatedFrom() { return delegatedFrom; }
+    public void setDelegatedFrom(String delegatedFrom) { this.delegatedFrom = delegatedFrom; }
 
     /**
      * 记录一个审批人的完成操作

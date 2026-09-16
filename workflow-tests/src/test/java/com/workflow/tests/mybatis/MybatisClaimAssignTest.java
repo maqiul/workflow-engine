@@ -3,6 +3,7 @@ package com.workflow.tests.mybatis;
 import com.workflow.builder.ProcessBuilder;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
+import com.workflow.enums.TaskStatus;
 import com.workflow.runtime.TaskInstance;
 import com.workflow.tests.MybatisEngineTestBase;
 import org.junit.jupiter.api.DisplayName;
@@ -58,5 +59,25 @@ class MybatisClaimAssignTest extends MybatisEngineTestBase {
         engine.claim(taskId, "u2");
 
         assertThat(engine.getTask(taskId).getAssignee()).as("update 分支也要写 assignee").isEqualTo("u2");
+    }
+
+    @Test
+    @DisplayName("委派回签跨持久化：DELEGATED + delegated_from 落库，回签后还原")
+    void delegate_resolve_persists() {
+        register(flow());
+        String id = engine.start("mb-claim", Map.of());
+        String taskId = firstTaskId(id);
+
+        engine.delegateTask(taskId, "u1", "u2");
+        TaskInstance t = engine.getTask(taskId);
+        assertThat(t.getStatus()).isEqualTo(TaskStatus.DELEGATED);
+        assertThat(t.getDelegatedFrom()).as("delegated_from 列落库").isEqualTo("u1");
+        assertThat(t.getAssignee()).isEqualTo("u2");
+
+        engine.resolveTask(taskId, "u2");
+        TaskInstance back = engine.getTask(taskId);
+        assertThat(back.getStatus()).isEqualTo(TaskStatus.PENDING);
+        assertThat(back.getAssignee()).isEqualTo("u1");
+        assertThat(back.getDelegatedFrom()).as("回签后 delegated_from 清空").isNull();
     }
 }

@@ -145,6 +145,22 @@ public interface IWorkflowEngine {
     void setAssignee(String taskId, String userId);
 
     /**
+     * 委派任务（G-09 回签）：当前办理人 {@code fromUserId} 把任务交给 {@code toUserId} 代办。
+     *
+     * <p>与 {@link #transferTask} 的区别：转办是"给别人就归别人办结"；委派是"别人代办完
+     * <b>回原办理人</b>继续"。委派后任务置 {@code DELEGATED}、{@code assignee=toUserId}、
+     * 记 {@code delegatedFrom=fromUserId}，流程不推进。{@code toUserId} 须 {@link #resolveTask}
+     * 回签，原办理人再 {@link #completeTask} 才办结。taskId 不变。
+     */
+    void delegateTask(String taskId, String fromUserId, String toUserId);
+
+    /**
+     * 回签：被委派人 {@code toUserId} 办完委派任务，任务回到 {@code delegatedFrom}、
+     * 状态回 {@code PENDING}，<b>不推进流程</b>（原办理人继续）。
+     */
+    void resolveTask(String taskId, String toUserId);
+
+    /**
      * 管理员强制改派 —— 绕过候选人校验的兜底通道。
      *
      * <p>用于候选人离职/长期不在、或组织架构故障导致没人能接手的窘境。
