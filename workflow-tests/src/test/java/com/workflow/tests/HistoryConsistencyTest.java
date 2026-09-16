@@ -506,4 +506,36 @@ class HistoryConsistencyTest {
             engine.shutdown();
         }
     }
+
+    // ---------- 8. 按实例删除历史（G-14）----------
+
+    @Test
+    @DisplayName("deleteInstance 精确删该实例活动+任务历史，三套一致，且不碰其它实例")
+    void deleteInstanceAcrossRepositories() {
+        for (String which : ALL) {
+            Suite s = suite(which);
+            registerTwoStep(s);
+            WorkflowEngine engine = engineOf(s);
+
+            String a = engine.start("hist-cons", Map.of());
+            engine.completeTask(pendingTask(s, a, "apply"), "u1", true);
+            engine.completeTask(pendingTask(s, a, "manager"), "u2", true);   // a 有活动 + 任务历史
+
+            String b = engine.start("hist-cons", Map.of());
+            engine.completeTask(pendingTask(s, b, "apply"), "u1", true);
+            engine.completeTask(pendingTask(s, b, "manager"), "u2", true);   // b 同样完整
+
+            assertThat(s.histRepo().findByInstanceId(a)).as("%s: a 应有活动", which).isNotEmpty();
+            assertThat(s.histRepo().findTasksByInstanceId(a)).as("%s: a 应有任务历史", which).isNotEmpty();
+
+            int removed = s.histRepo().deleteInstance(a);
+            assertThat(removed).as("%s: 删除条数应为正", which).isGreaterThan(0);
+
+            assertThat(s.histRepo().findByInstanceId(a)).as("%s: a 活动应清空", which).isEmpty();
+            assertThat(s.histRepo().findTasksByInstanceId(a)).as("%s: a 任务历史应清空", which).isEmpty();
+            assertThat(s.histRepo().findByInstanceId(b)).as("%s: b 活动不受影响", which).isNotEmpty();
+            assertThat(s.histRepo().findTasksByInstanceId(b)).as("%s: b 任务历史不受影响", which).isNotEmpty();
+            engine.shutdown();
+        }
+    }
 }

@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.24.0**
+项目状态：**v3.25.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -13,6 +13,26 @@
 - v3.22.0 — 任务查询条件下推（TaskFilter + 三套仓储下推 + 粗筛精筛分离 + 清掉孤儿方法）
 - v3.23.0 — 按候选组查待办（findPendingByGroup）+ 依赖与 CI 守卫（Dependabot / dependency-review）
 - v3.24.0 — 依赖安全补丁与 CI 守卫修复（6 项依赖升级含 3 个 CVE 修复 / actions 升 node24 运行时 / Dependabot ignore 策略）
+- v3.25.0 — 接入缺口补齐（监听口进接口 + 修 remove 静默失效 / onCancelled 事件 / claim·setAssignee 一等公民 / deleteInstance）
+
+---
+
+## [3.25.0] - 2026-09-16
+
+定位：**核实《接入缺口清单》后，补齐引擎侧"独立、明确、无争议"的缺口**。源自对 OA 侧 377 个 Flowable 调用点普查清单的逐条代码核实 —— 清单准确度很高，但订正掉伪缺口（G-11 identityLink 其实可读）与需产品决策项（G-12 自由任务、G-04 变量检索路线）后，先做能干净落地的。数据模型大改（businessKey / initiator 列、实例查询下推）留待替换 PoC，不在本次。
+
+### 新增
+- **任务办理人 `assignee` 一等公民**（G-06）：`claim(taskId, userId)`（候选人认领，校验在候选池内）、`setAssignee(taskId, userId)`（直接指派，可非候选人）—— **taskId 不变**，认领/指派后由 assignee 独占办理、办完即完成；`assignee == null` 完全走原候选池逻辑（向后兼容）。区别于 `transferTask` 的"关闭原任务 + 新建单人任务"简化模拟。Flyway **V11** 给 `wf_task` 加 `assignee` 列，三套仓储读写映射（含 update 分支）均有往返测试。
+- **`TaskListener.onCancelled(task, reason)`**（G-05）：实例终止 / 改道跳转（`jumpToNode`、`jumpTokenToNode`）/ 减签 四类"待办被销毁但非办结"路径统一派发，`reason` 取 `terminated`/`jumped`/`sign-removed`；接入方据此清理待办投影，消除"任务消失但待办仍显示可办"的脏行。撤回仍走既有 `onWithdrawn`。
+- **`TaskListener.onAssigned(task, assignee)`**：认领 / 指派事件。
+- **`HistoryRepository.deleteInstance(instanceId)`**（G-14）：按实例精确删活动 + 历史任务（管理员清理误提交实例），三套实现 + 跨三套一致性测试；**不删审批意见**（意见是审批证据，独立于历史保留策略）。
+
+### 修复
+- **监听器注销静默失效**（G-07）：`removeExecutionListener/removeTaskListener` 此前对 `getExecutionListeners()` 返回的**副本**调 `remove`，注销完全无效（监听器一直挂着 → 长跑内存泄漏 + 重复触发）。改为 `ListenerSupport` 操作内部列表。
+- **监听注册口提升进 `IWorkflowEngine`**（G-07）：`add/removeExecutionListener`、`add/removeTaskListener` 从只在具体类 `WorkflowEngine` 提到接口，接入方无需 `((WorkflowEngine) engine)` 强转即可面向接口注册。
+
+### 验证
+全量 `gradle build` 绿。新增 `ClaimAssignTest`(InMemory 5) + `Jpa/MybatisClaimAssignTest`(各 2，覆盖 insert/update 分支持久化往返) + `HistoryConsistencyTest.deleteInstanceAcrossRepositories`(三套) + `Phase1ListenerQueryTest` remove 回归(2)。`assignee` 默认 null 保证零回归。
 
 ---
 
