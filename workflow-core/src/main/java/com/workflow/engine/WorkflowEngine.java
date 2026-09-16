@@ -525,14 +525,14 @@ public class WorkflowEngine implements IWorkflowEngine {
      * 移除执行监听器 - 委托给 ListenerSupport
      */
     public void removeExecutionListener(ExecutionListener listener) {
-        listenerSupport.getExecutionListeners().remove(listener);
+        listenerSupport.removeExecutionListener(listener);
     }
 
     /**
      * 移除任务监听器 - 委托给 ListenerSupport
      */
     public void removeTaskListener(TaskListener listener) {
-        listenerSupport.getTaskListeners().remove(listener);
+        listenerSupport.removeTaskListener(listener);
     }
 
     // ========== 流程发起 ==========

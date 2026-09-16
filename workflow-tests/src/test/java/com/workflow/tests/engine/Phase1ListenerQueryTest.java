@@ -202,6 +202,42 @@ class Phase1ListenerQueryTest extends EngineTestBase {
         assertThat(taskListener.transferredToUsers).containsExactly("u2");
     }
 
+    @Test
+    void removeTaskListener_should_stop_firing() {
+        // 钉死历史 bug：removeTaskListener 曾对 getTaskListeners() 返回的副本 remove，
+        // 注销后监听器仍会触发。方法提升到接口后，直接用 engine 调用（无需强转）。
+        ProcessDefinition def = ProcessBuilder.create("task-remove", "注销任务监听")
+                .start("start")
+                .userTask("apply", "申请", any("u1"))
+                .end("end")
+                .connect("start", "apply")
+                .connect("apply", "end")
+                .build();
+        register(def);
+
+        engine.removeTaskListener(taskListener);
+        engine.start("task-remove", Map.of());
+
+        assertThat(taskListener.createdTasks).isEmpty();
+    }
+
+    @Test
+    void removeExecutionListener_should_stop_firing() {
+        ProcessDefinition def = ProcessBuilder.create("exec-remove", "注销执行监听")
+                .start("start")
+                .userTask("apply", "申请", any("u1"))
+                .end("end")
+                .connect("start", "apply")
+                .connect("apply", "end")
+                .build();
+        register(def);
+
+        engine.removeExecutionListener(execListener);
+        engine.start("exec-remove", Map.of());
+
+        assertThat(execListener.startedInstances).isEmpty();
+    }
+
     // ========== 查询 API 测试 ==========
 
     @Test

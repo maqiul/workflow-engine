@@ -50,6 +50,23 @@ public class ListenerSupport {
     }
 
     /**
+     * 移除执行监听器。
+     *
+     * <p>必须操作内部列表本身。曾经误写成对 {@link #getExecutionListeners()} 返回的
+     * <b>副本</b> 调 remove —— 那是"看着注销了、其实没注销"的静默失效。
+     */
+    public void removeExecutionListener(ExecutionListener listener) {
+        executionListeners.remove(listener);
+    }
+
+    /**
+     * 移除任务监听器（同 removeExecutionListener，操作内部列表而非副本）。
+     */
+    public void removeTaskListener(TaskListener listener) {
+        taskListeners.remove(listener);
+    }
+
+    /**
      * 获取执行监听器列表（只读）
      */
     public List<ExecutionListener> getExecutionListeners() {

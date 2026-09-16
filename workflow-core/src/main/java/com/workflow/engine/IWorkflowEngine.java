@@ -1,6 +1,8 @@
 package com.workflow.engine;
 
 import com.workflow.enums.CommentType;
+import com.workflow.listener.ExecutionListener;
+import com.workflow.listener.TaskListener;
 import com.workflow.monitor.DashboardMetrics;
 import com.workflow.repository.TaskFilter;
 import com.workflow.runtime.CarbonCopy;
@@ -431,4 +433,29 @@ public interface IWorkflowEngine {
         // 默认忽略租户(向后兼容)；WorkflowEngine 覆写为真正的租户过滤
         return dashboard(bottleneckTopN);
     }
+
+    // ========== 监听器管理 ==========
+
+    /**
+     * 注册流程实例级监听器。
+     *
+     * <p>提升到接口：此前只在具体类 {@code WorkflowEngine} 上提供，接入方被迫
+     * {@code ((WorkflowEngine) engine).addExecutionListener(...)} 强转才能注册，
+     * 面向接口编程的接入层拿不到这个能力。
+     */
+    void addExecutionListener(ExecutionListener listener);
+
+    /**
+     * 注销流程实例级监听器。
+     *
+     * <p>实现须从<b>内部列表</b>移除，而非 {@code getExecutionListeners()} 返回的副本 ——
+     * 曾有对副本 remove 导致"看着注销、其实没注销"的静默 bug。
+     */
+    void removeExecutionListener(ExecutionListener listener);
+
+    /** 注册任务级监听器（created/completed/rejected/transferred/withdrawn）。 */
+    void addTaskListener(TaskListener listener);
+
+    /** 注销任务级监听器（同 removeExecutionListener，须操作内部列表）。 */
+    void removeTaskListener(TaskListener listener);
 }
