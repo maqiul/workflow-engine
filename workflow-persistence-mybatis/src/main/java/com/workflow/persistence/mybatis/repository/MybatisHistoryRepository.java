@@ -192,6 +192,17 @@ public class MybatisHistoryRepository implements HistoryRepository {
                 .delete(new QueryWrapper<WfHistTaskEntity>().lt("end_time", cutoffMillis)));
     }
 
+    @Override
+    public int deleteInstance(String instanceId) {
+        return mb.inSession(session -> {
+            int activities = session.getMapper(WfHistActivityMapper.class)
+                    .delete(new QueryWrapper<WfHistActivityEntity>().eq("instance_id", instanceId));
+            int tasks = session.getMapper(WfHistTaskMapper.class)
+                    .delete(new QueryWrapper<WfHistTaskEntity>().eq("instance_id", instanceId));
+            return activities + tasks;
+        });
+    }
+
     /** 人员列表以 {@code ,u1,u2,} 形式落库，便于 LIKE 精确匹配。 */
     private static String toCsv(java.util.Collection<String> users) {
         if (users == null || users.isEmpty()) {

@@ -200,6 +200,21 @@ public class JpaHistoryRepository implements HistoryRepository {
                 .executeUpdate());
     }
 
+    @Override
+    public int deleteInstance(String instanceId) {
+        return jpa.inTransaction(em -> {
+            int activities = em.createQuery(
+                            "DELETE FROM WfHistActivityEntity e WHERE e.instanceId = :iid")
+                    .setParameter("iid", instanceId)
+                    .executeUpdate();
+            int tasks = em.createQuery(
+                            "DELETE FROM WfHistTaskEntity e WHERE e.instanceId = :iid")
+                    .setParameter("iid", instanceId)
+                    .executeUpdate();
+            return activities + tasks;
+        });
+    }
+
     /** 人员列表以 {@code ,u1,u2,} 形式落库，便于 LIKE 精确匹配。 */
     private static String toCsv(java.util.Collection<String> users) {
         if (users == null || users.isEmpty()) {

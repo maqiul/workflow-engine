@@ -83,4 +83,15 @@ public interface HistoryRepository {
 
     /** 删除结束时间早于 {@code cutoffMillis} 的历史任务，返回删除条数。 */
     int deleteTasksBefore(long cutoffMillis);
+
+    /**
+     * 删除某个实例的<b>全部历史</b>（活动 + 历史任务），返回删除条数合计。
+     *
+     * <p>用于管理员清理误提交 / 测试实例。与按时间保留策略的
+     * {@link #deleteClosedBefore} / {@link #deleteTasksBefore} 不同，这里按 {@code instanceId} 精确删。
+     *
+     * <p><b>不删审批意见</b> —— 意见是审批证据、独立于历史保留策略（见 {@code CommentRepository}
+     * 契约）。是否连意见一并清除，由调用方单独决策。
+     */
+    int deleteInstance(String instanceId);
 }

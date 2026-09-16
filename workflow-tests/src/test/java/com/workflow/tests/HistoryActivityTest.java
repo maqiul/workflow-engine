@@ -282,4 +282,31 @@ class HistoryActivityTest {
         assertThat(before).isEqualTo(2);
         engine.shutdown();
     }
+
+    @Test
+    @DisplayName("deleteInstance 精确删该实例的活动+历史任务，不碰其它实例")
+    void deleteInstanceRemovesOnlyThatInstance() {
+        WorkflowEngine engine = newEngine(true);
+        registerSerial(engine);
+
+        String a = engine.start("hist-serial", Map.of());
+        engine.completeTask(pendingTaskId(a, "apply"), "u1", true);
+        engine.completeTask(pendingTaskId(a, "manager"), "u2", true);
+
+        String b = engine.start("hist-serial", Map.of());
+        engine.completeTask(pendingTaskId(b, "apply"), "u1", true);
+        engine.completeTask(pendingTaskId(b, "manager"), "u2", true);
+
+        assertThat(histRepo.findByInstanceId(a)).isNotEmpty();
+        assertThat(histRepo.findTasksByInstanceId(a)).isNotEmpty();
+
+        int removed = histRepo.deleteInstance(a);
+        assertThat(removed).as("活动 + 历史任务合计").isGreaterThan(0);
+
+        assertThat(histRepo.findByInstanceId(a)).as("a 的活动应清空").isEmpty();
+        assertThat(histRepo.findTasksByInstanceId(a)).as("a 的历史任务应清空").isEmpty();
+        assertThat(histRepo.findByInstanceId(b)).as("b 的活动不受影响").isNotEmpty();
+        assertThat(histRepo.findTasksByInstanceId(b)).as("b 的历史任务不受影响").isNotEmpty();
+        engine.shutdown();
+    }
 }

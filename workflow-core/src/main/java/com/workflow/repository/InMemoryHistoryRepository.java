@@ -176,6 +176,32 @@ public class InMemoryHistoryRepository implements HistoryRepository {
         return removed;
     }
 
+    @Override
+    public int deleteInstance(String instanceId) {
+        int removed = 0;
+        List<String> actVictims = byId.values().stream()
+                .filter(a -> a.getInstanceId().equals(instanceId))
+                .map(HistoricActivityInstance::getId)
+                .collect(Collectors.toList());
+        for (String id : actVictims) {
+            TransactionContext.recordUndo(UNDO_PREFIX + id, restoreAction(id, byId.get(id)));
+            if (byId.remove(id) != null) {
+                removed++;
+            }
+        }
+        List<String> taskVictims = taskById.values().stream()
+                .filter(t -> t.getInstanceId().equals(instanceId))
+                .map(HistoricTaskInstance::getTaskId)
+                .collect(Collectors.toList());
+        for (String id : taskVictims) {
+            TransactionContext.recordUndo(TASK_UNDO_PREFIX + id, taskRestoreAction(id, taskById.get(id)));
+            if (taskById.remove(id) != null) {
+                removed++;
+            }
+        }
+        return removed;
+    }
+
     private static Comparator<HistoricTaskInstance> byEndTime() {
         // 同毫秒完成的任务靠随机 UUID 定序会让审批链顺序失真，必须用 seq
         return Comparator.comparingLong(HistoricTaskInstance::getEndTime)
