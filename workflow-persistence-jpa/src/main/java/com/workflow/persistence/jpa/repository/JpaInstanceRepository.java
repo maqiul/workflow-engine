@@ -76,6 +76,8 @@ public class JpaInstanceRepository implements InstanceRepository {
             entity.setParentNodeId(instance.getParentNodeId());
             // getRootInstanceId() 永不为 null（未设置时回退自身 id），库里因此总有可用值
             entity.setRootInstanceId(instance.getRootInstanceId());
+            entity.setBusinessKey(instance.getBusinessKey());
+            entity.setInitiator(instance.getInitiator());
             em.merge(entity);
 
             // Token 差量同步。
@@ -149,6 +151,8 @@ public class JpaInstanceRepository implements InstanceRepository {
                 entity.setParentTokenId(instance.getParentTokenId());
                 entity.setParentNodeId(instance.getParentNodeId());
                 entity.setRootInstanceId(instance.getRootInstanceId());
+            entity.setBusinessKey(instance.getBusinessKey());
+            entity.setInitiator(instance.getInitiator());
                 em.merge(entity);
 
                 // Token 批量插入
@@ -253,6 +257,33 @@ public class JpaInstanceRepository implements InstanceRepository {
     }
 
     @Override
+    public List<ProcessInstance> findByBusinessKey(String businessKey) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e WHERE e.businessKey = :bk ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .setParameter("bk", businessKey)
+                .getResultList().stream().map(e -> rebuild(e, em)).collect(Collectors.toList()));
+    }
+
+    @Override
+    public List<ProcessInstance> findByBusinessKeyContains(String keyword) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e WHERE e.businessKey LIKE :pat ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .setParameter("pat", "%" + keyword + "%")
+                .getResultList().stream().map(e -> rebuild(e, em)).collect(Collectors.toList()));
+    }
+
+    @Override
+    public List<ProcessInstance> findByInitiator(String initiator) {
+        return runInOrOpenTx(em -> em.createQuery(
+                        "SELECT e FROM WfInstanceEntity e WHERE e.initiator = :ini ORDER BY e.createTime",
+                        WfInstanceEntity.class)
+                .setParameter("ini", initiator)
+                .getResultList().stream().map(e -> rebuild(e, em)).collect(Collectors.toList()));
+    }
+
+    @Override
     public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus() {
         return countGroupByProcessAndStatus(null);
     }
@@ -304,6 +335,8 @@ public class JpaInstanceRepository implements InstanceRepository {
         // 流程树根必须原样读回：丢了会让父子各持一把锁，ABBA 防护失效。
         // 该行为由 InstanceRootPersistenceTest 守着，并经变异校验确认抽掉即红。
         instance.assignRootInstanceId(e.getRootInstanceId());
+        instance.setBusinessKey(e.getBusinessKey());
+        instance.setInitiator(e.getInitiator());
         // 乐观锁版本必须读回：重试路径要靠它判断"本次写入基于哪一版"
         instance.setRevision(e.getRevision());
         // status 是非 final 字段,用反射或直接赋值都行

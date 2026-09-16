@@ -27,6 +27,7 @@
 - **`TaskListener.onAssigned(task, assignee)`**：认领 / 指派事件。
 - **`HistoryRepository.deleteInstance(instanceId)`**（G-14）：按实例精确删活动 + 历史任务（管理员清理误提交实例），三套实现 + 跨三套一致性测试；**不删审批意见**（意见是审批证据，独立于历史保留策略）。
 - **实例读出口 `findByIds` / `findByStartedAfter`**（G-03-R，v2 清单新增）：对账的真相源查询 —— 按 id 集合批量取实例、按创建时间增量扫描。抽象方法强制三套实现，`InstanceReadQueryTest` 跨三套一致。
+- **`businessKey` / `initiator` 一等公民列**（G-01 / G-02）：`start(key, businessKey, initiator, vars)` 新重载；`wf_instance` 加两列 + 索引（Flyway **V12**，多方言安全、无 `IF NOT EXISTS`），三套读写映射；`findByBusinessKey` / `findByBusinessKeyContains` / `findByInitiator` 三套查询出口。`initiator` 与 `__initiator` 变量双写、向后兼容。
 
 ### 修复
 - **监听器注销静默失效**（G-07）：`removeExecutionListener/removeTaskListener` 此前对 `getExecutionListeners()` 返回的**副本**调 `remove`，注销完全无效（监听器一直挂着 → 长跑内存泄漏 + 重复触发）。改为 `ListenerSupport` 操作内部列表。

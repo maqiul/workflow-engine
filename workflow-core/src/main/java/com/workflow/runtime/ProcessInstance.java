@@ -48,6 +48,10 @@ public final class ProcessInstance {
     private String tenantId;
     /** 乐观锁版本号；仓储 CAS 写入用。0 表示未启用（如 InMemory 无版本场景）。 */
     private long revision;
+    /** 业务主键（G-01）：关联外部业务单据号，可为 null。启动时传入。 */
+    private String businessKey;
+    /** 发起人（G-02）：与 {@code __initiator} 变量双写，独立列供按发起人查实例。 */
+    private String initiator;
 
     public ProcessInstance(String processKey) {
         this(processKey, 0);
@@ -135,6 +139,31 @@ public final class ProcessInstance {
                                               String rootInstanceId,
                                               long revision,
                                               String tenantId) {
+        return reconstruct(id, processKey, processVersion, createTime, endTime, status,
+                activeTokens, tasks, variables, parentInstanceId, parentTokenId, parentNodeId,
+                rootInstanceId, revision, tenantId, null, null);
+    }
+
+    /**
+     * 持久化层专用 - 完整版（含 businessKey / initiator 一等公民列）。
+     */
+    public static ProcessInstance reconstruct(String id,
+                                              String processKey,
+                                              int processVersion,
+                                              long createTime,
+                                              Long endTime,
+                                              InstanceStatus status,
+                                              Map<String, Token> activeTokens,
+                                              List<TaskInstance> tasks,
+                                              Map<String, Object> variables,
+                                              String parentInstanceId,
+                                              String parentTokenId,
+                                              String parentNodeId,
+                                              String rootInstanceId,
+                                              long revision,
+                                              String tenantId,
+                                              String businessKey,
+                                              String initiator) {
         ProcessInstance instance = new ProcessInstance(processKey, processVersion,
                 parentInstanceId, parentTokenId, parentNodeId);
         // 通过反射写 final 字段 - 这里 ProcessInstance 自己掌握,避免外部依赖反射 hack
@@ -149,6 +178,8 @@ public final class ProcessInstance {
         instance.rootInstanceId = rootInstanceId;
         instance.revision = revision;
         instance.tenantId = tenantId;
+        instance.businessKey = businessKey;
+        instance.initiator = initiator;
         if (endTime != null) {
             instance.endTime = endTime;
         }
@@ -212,6 +243,14 @@ public final class ProcessInstance {
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
 
+    /** 业务主键（G-01）。 */
+    public String getBusinessKey() { return businessKey; }
+    public void setBusinessKey(String businessKey) { this.businessKey = businessKey; }
+
+    /** 发起人（G-02），与 __initiator 变量双写。 */
+    public String getInitiator() { return initiator; }
+    public void setInitiator(String initiator) { this.initiator = initiator; }
+
     /**
      * 深拷贝快照（保持同一 id / 同一流程树结构）—— 事务 before-image 用。
      *
@@ -230,7 +269,8 @@ public final class ProcessInstance {
         return reconstruct(id, processKey, processVersion, createTime,
                 endTime == 0L ? null : endTime, status,
                 tokenCopies, taskCopies, new LinkedHashMap<>(variables),
-                parentInstanceId, parentTokenId, parentNodeId, rootInstanceId, revision, tenantId);
+                parentInstanceId, parentTokenId, parentNodeId, rootInstanceId, revision, tenantId,
+                businessKey, initiator);
     }
     public Map<String, Token> getActiveTokens() {
         return Collections.unmodifiableMap(activeTokens);

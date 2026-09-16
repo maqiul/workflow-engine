@@ -63,6 +63,15 @@ public interface InstanceRepository {
      */
     List<ProcessInstance> findByStartedAfter(long sinceMillis);
 
+    /** 按业务主键精确查实例（G-01，幂等定位）。抽象方法强制三套实现。 */
+    List<ProcessInstance> findByBusinessKey(String businessKey);
+
+    /** 按业务主键包含匹配查实例（G-01，监控模糊搜索）。 */
+    List<ProcessInstance> findByBusinessKeyContains(String keyword);
+
+    /** 按发起人查实例（G-02，「我发起的」）。 */
+    List<ProcessInstance> findByInitiator(String initiator);
+
     /**
      * 按「流程 key + 状态」分组计数。
      *

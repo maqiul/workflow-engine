@@ -139,6 +139,28 @@ public class InMemoryInstanceRepository implements InstanceRepository {
     }
 
     @Override
+    public List<ProcessInstance> findByBusinessKey(String businessKey) {
+        return store.values().stream()
+                .filter(i -> businessKey != null && businessKey.equals(i.getBusinessKey()))
+                .map(ProcessInstance::snapshot).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ProcessInstance> findByBusinessKeyContains(String keyword) {
+        return store.values().stream()
+                .filter(i -> keyword != null && i.getBusinessKey() != null
+                        && i.getBusinessKey().contains(keyword))
+                .map(ProcessInstance::snapshot).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ProcessInstance> findByInitiator(String initiator) {
+        return store.values().stream()
+                .filter(i -> initiator != null && initiator.equals(i.getInitiator()))
+                .map(ProcessInstance::snapshot).collect(Collectors.toList());
+    }
+
+    @Override
     public List<ProcessStatusCount> countGroupByProcessAndStatus() {
         return countGroupByProcessAndStatus(null);
     }

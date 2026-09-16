@@ -126,4 +126,31 @@ class InstanceReadQueryTest {
             engine.shutdown();
         }
     }
+
+    @Test
+    @DisplayName("start 带 businessKey/initiator → 列往返 + 三套查询出口一致")
+    void businessKeyAndInitiatorAcrossRepositories() {
+        for (String which : List.of("InMemory", "JPA", "MyBatis")) {
+            Suite s = suite(which);
+            register(s);
+            WorkflowEngine engine = engineOf(s);
+
+            String id = engine.start("read-q", "BK-001", "alice", Map.of());
+
+            ProcessInstance reloaded = s.instRepo().findById(id);
+            assertThat(reloaded.getBusinessKey()).as("%s: businessKey 列往返", which).isEqualTo("BK-001");
+            assertThat(reloaded.getInitiator()).as("%s: initiator 列往返", which).isEqualTo("alice");
+
+            assertThat(s.instRepo().findByBusinessKey("BK-001"))
+                    .as("%s: 按业务主键精确查", which).extracting(ProcessInstance::getId).containsExactly(id);
+            assertThat(s.instRepo().findByBusinessKeyContains("BK-0"))
+                    .as("%s: 按业务主键包含查", which).extracting(ProcessInstance::getId).containsExactly(id);
+            assertThat(s.instRepo().findByInitiator("alice"))
+                    .as("%s: 按发起人查", which).extracting(ProcessInstance::getId).containsExactly(id);
+            assertThat(s.instRepo().findByBusinessKey("no-such-key"))
+                    .as("%s: 未命中返回空", which).isEmpty();
+
+            engine.shutdown();
+        }
+    }
 }

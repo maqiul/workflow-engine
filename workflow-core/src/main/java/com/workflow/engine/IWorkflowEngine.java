@@ -41,6 +41,14 @@ public interface IWorkflowEngine {
     String start(String processKey, int version, String initiator, Map<String, Object> variables);
 
     /**
+     * 发起新流程 - 指定业务主键 + 发起人（G-01 / G-02）。
+     *
+     * <p>{@code businessKey} 落 {@code wf_instance.business_key} 独立列（幂等 / 按单号定位实例），
+     * {@code initiator} 同时写 {@code initiator} 列与 {@code __initiator} 变量。二者均可 null。
+     */
+    String start(String processKey, String businessKey, String initiator, Map<String, Object> variables);
+
+    /**
      * 批量发起流程 - 一次启动多个实例（优化：单事务内批量插入）
      *
      * @param processKey 流程 key

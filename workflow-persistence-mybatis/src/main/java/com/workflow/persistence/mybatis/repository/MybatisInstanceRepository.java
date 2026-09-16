@@ -60,6 +60,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 entity.setParentNodeId(instance.getParentNodeId());
                 // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
                 entity.setRootInstanceId(instance.getRootInstanceId());
+                entity.setBusinessKey(instance.getBusinessKey());
+                entity.setInitiator(instance.getInitiator());
                 entity.setRevision(FIRST_REVISION);
                 instanceMapper.insert(entity);
             } else {
@@ -74,6 +76,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 entity.setParentNodeId(instance.getParentNodeId());
                 // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
                 entity.setRootInstanceId(instance.getRootInstanceId());
+                entity.setBusinessKey(instance.getBusinessKey());
+                entity.setInitiator(instance.getInitiator());
                 requireCas(instanceMapper.updateById(entity), instance.getId());
             }
 
@@ -117,6 +121,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
                     entity.setParentTokenId(instance.getParentTokenId());
                     entity.setParentNodeId(instance.getParentNodeId());
                     entity.setRootInstanceId(instance.getRootInstanceId());
+                entity.setBusinessKey(instance.getBusinessKey());
+                entity.setInitiator(instance.getInitiator());
                     entity.setRevision(FIRST_REVISION);
                     instanceMapper.insert(entity);
                 } else {
@@ -130,6 +136,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
                     entity.setParentTokenId(instance.getParentTokenId());
                     entity.setParentNodeId(instance.getParentNodeId());
                     entity.setRootInstanceId(instance.getRootInstanceId());
+                entity.setBusinessKey(instance.getBusinessKey());
+                entity.setInitiator(instance.getInitiator());
                     requireCas(instanceMapper.updateById(entity), instance.getId());
                 }
 
@@ -211,6 +219,24 @@ public class MybatisInstanceRepository implements InstanceRepository {
     }
 
     @Override
+    public List<ProcessInstance> findByBusinessKey(String businessKey) {
+        return queryInstances(new QueryWrapper<WfInstanceEntity>()
+                .eq("business_key", businessKey).orderByAsc("create_time"));
+    }
+
+    @Override
+    public List<ProcessInstance> findByBusinessKeyContains(String keyword) {
+        return queryInstances(new QueryWrapper<WfInstanceEntity>()
+                .like("business_key", keyword).orderByAsc("create_time"));
+    }
+
+    @Override
+    public List<ProcessInstance> findByInitiator(String initiator) {
+        return queryInstances(new QueryWrapper<WfInstanceEntity>()
+                .eq("initiator", initiator).orderByAsc("create_time"));
+    }
+
+    @Override
     public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus() {
         return countGroupByProcessAndStatus(null);
     }
@@ -281,6 +307,8 @@ public class MybatisInstanceRepository implements InstanceRepository {
         setFinal(instance, "parentNodeId", e.getParentNodeId());
         // 读回流程树根，保持与写入库的值一致
         instance.assignRootInstanceId(e.getRootInstanceId());
+        instance.setBusinessKey(e.getBusinessKey());
+        instance.setInitiator(e.getInitiator());
         // 乐观锁版本必须读回：重试路径要靠它判断"本次写入基于哪一版"
         instance.setRevision(e.getRevision());
         try {

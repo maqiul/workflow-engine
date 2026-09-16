@@ -84,6 +84,12 @@ public class WfInstanceEntity {
     @Column(name = "revision", nullable = false)
     private long revision;
 
+    @Column(name = "business_key", length = 255)
+    private String businessKey;
+
+    @Column(name = "initiator", length = 64)
+    private String initiator;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getProcessKey() { return processKey; }
@@ -110,6 +116,11 @@ public class WfInstanceEntity {
 
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
+
+    public String getBusinessKey() { return businessKey; }
+    public void setBusinessKey(String businessKey) { this.businessKey = businessKey; }
+    public String getInitiator() { return initiator; }
+    public void setInitiator(String initiator) { this.initiator = initiator; }
 
     public Instant getCreateTimeAsInstant() {
         return Instant.ofEpochMilli(createTime);

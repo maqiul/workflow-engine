@@ -74,6 +74,12 @@ public class WfInstanceEntity {
     @TableField("revision")
     private long revision;
 
+    @TableField("business_key")
+    private String businessKey;
+
+    @TableField("initiator")
+    private String initiator;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
     public String getProcessKey() { return processKey; }
@@ -101,4 +107,9 @@ public class WfInstanceEntity {
 
     public long getRevision() { return revision; }
     public void setRevision(long revision) { this.revision = revision; }
+
+    public String getBusinessKey() { return businessKey; }
+    public void setBusinessKey(String businessKey) { this.businessKey = businessKey; }
+    public String getInitiator() { return initiator; }
+    public void setInitiator(String initiator) { this.initiator = initiator; }
 }

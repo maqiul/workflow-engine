@@ -559,7 +559,18 @@ public class WorkflowEngine implements IWorkflowEngine {
         return startWithDefinition(def, initiator, variables);
     }
 
+    @Override
+    public String start(String processKey, String businessKey, String initiator, Map<String, Object> variables) {
+        ProcessDefinition def = processRepo.findByKey(processKey);
+        return startWithDefinition(def, initiator, variables, businessKey);
+    }
+
     private String startWithDefinition(ProcessDefinition def, String initiator, Map<String, Object> variables) {
+        return startWithDefinition(def, initiator, variables, null);
+    }
+
+    private String startWithDefinition(ProcessDefinition def, String initiator,
+                                       Map<String, Object> variables, String businessKey) {
         // 变量校验（如果定义了变量 schema）
         VariableValidator.validate(def, variables);
 
@@ -571,9 +582,14 @@ public class WorkflowEngine implements IWorkflowEngine {
         if (variables != null) {
             variables.forEach(instance::setVariable);
         }
-        // 记录发起人（用于撤回校验）
+        // 记录发起人（用于撤回校验）；同时写 initiator 独立列（G-02，与 __initiator 变量双写）
         if (initiator != null && !initiator.isBlank()) {
             instance.setVariable(INITIATOR_VAR, initiator);
+            instance.setInitiator(initiator);
+        }
+        // 业务主键（G-01）：落独立列，供幂等 / 按单号定位实例
+        if (businessKey != null && !businessKey.isBlank()) {
+            instance.setBusinessKey(businessKey);
         }
         // 设置租户 ID（从流程定义或上下文获取）
         String tenantId = def.getTenantId() != null ? def.getTenantId() : TenantContext.getTenantId();
