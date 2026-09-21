@@ -23,7 +23,7 @@ val junitVersion = "5.10.2"
 // 否则 :workflow-core:test / :workflow-rest:test 会以
 // "Failed to load JUnit Platform" 失败。1.10.2 与 junit-jupiter 5.10.2 配套，
 // 升级 junitVersion 时须同步调整。
-val junitPlatformLauncherVersion = "1.10.2"
+val junitPlatformLauncherVersion = "6.1.3"
 val assertjVersion = "3.27.7"
 
 // 对外发布的「库」模块。sample 是 Demo、tests 是测试模块，都不发布。
