@@ -36,7 +36,7 @@ dependencies {
     compileOnly("com.zaxxer:HikariCP:7.1.0")
 
     // 日志实现 - 让 MyBatis 模块运行时能输出 SQL
-    implementation("ch.qos.logback:logback-classic:1.6.3")
+    implementation("ch.qos.logback:logback-classic:1.6.4")
 
     // 测试
     testImplementation(project(":workflow-tests"))
