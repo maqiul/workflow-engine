@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 > 一个**纯代码 DSL**、**零第三方工作流框架依赖**、**国产基础库 + Java 17** 的轻量级审批流引擎。
-> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）/ **动态 assignee**（运行时从变量取办理人）/ **serviceTask 自动节点**（自动执行 delegate）/ **拓扑自省**（节点/连线 + 实例 Token 高亮只读视图）/ **实例版本迁移**，
+> 支持串行 / 并行网关 / 会签（ANY/ALL）/ 驳回 / 转办 / 暂停-恢复 / 终止 / 退回到任意节点 / **循环回边**（排他网关回边式循环）/ **动态 assignee**（运行时从变量取办理人）/ **serviceTask 自动节点**（自动执行 delegate）/ **拓扑自省**（节点/连线 + 实例 Token 高亮只读视图）/ **实例版本迁移** / **任务认领·委派回签**（assignee 一等公民）/ **businessKey 启动幂等**，
 > 事件网关（消息·信号·定时器）· DMN 决策表 · 监控仪表盘 · 多租户隔离 · 批处理与批量启动 · 通知服务 · **审批意见**（一等存储，不随历史保留策略清理）,
 > 三仓储实现（InMemory + JPA + MyBatis-Plus）。
 >
@@ -44,6 +44,9 @@
 - [27. Flowable BPMN 导入兼容性](#27-flowable-bpmn-导入兼容性)
 - [28. 审批意见](#28-审批意见v320)
 - [29. 运行期变量写入](#29-运行期变量写入v321)
+- [30. 任务查询条件下推](#30-任务查询条件下推v322)
+- [31. 按候选组查待办](#31-按候选组查待办v323)
+- [32. 引擎侧接入缺口补齐](#32-引擎侧接入缺口补齐v325)
 
 ---
 
@@ -1955,6 +1958,44 @@ TaskQuery.create().candidateGroup("finance").list(engine);
 
 存量依赖的漏洞告警是**仓库级开关**（Settings → Code security → Dependabot alerts），
 文件配不了，需要人工开启一次。
+
+---
+
+## 32. 引擎侧接入缺口补齐（v3.25）
+
+对消费方系统 Flowable 调用点普查清单逐条核实后，补齐引擎侧「独立、明确」的缺口。
+读路径（复杂查询 / 投影）由消费方投影表承担，不进引擎；这里只补引擎该有的一等能力。
+
+### 32.1 businessKey / initiator 一等公民 + 启动幂等
+
+`wf_instance` 加 `business_key` / `initiator` 列（Flyway V12，多方言安全）。`start(key, businessKey, initiator, vars)` 新重载；`initiator` 与 `__initiator` 变量双写。**启动幂等**：同 `businessKey` 已有 RUNNING 实例则拒绝重复提交（办结后可重发）。查重与落库用 businessKey 级锁（`bk:` 前缀，锁顺序 bk→instance 单向、无反向嵌套 → 不死锁）串行化，消除并发同单号双提交竞态（进程内；多节点需分布式锁）。
+
+```java
+engine.start("leave", "ORDER-2026-001", "alice", vars);   // 带业务单号
+// 并发再来一次同单号 → IllegalStateException 拒绝，不会建出重复实例
+```
+
+### 32.2 assignee 一等公民：claim / setAssignee / 委派回签
+
+任务原本只有候选池（`Candidate`），转办靠「关闭原任务 + 新建单人任务」模拟。v3.25 引入 `assignee` 独立列（Flyway V11）：
+
+- `claim(taskId, userId)` —— 候选人认领，**taskId 不变**，之后仅该人可办；
+- `setAssignee(taskId, userId)` —— 直接指派（可非候选人）；
+- `delegateTask(taskId, from, to)` / `resolveTask(taskId, to)` —— **委派回签**：他人代办完 `resolveTask` 后任务**回原办理人**继续、不推进流程（Flowable 委派语义，区别于转办）；
+- `assignee == null` 完全走原候选池逻辑，向后兼容。
+
+### 32.3 投影事件补全：onCancelled / onAssigned
+
+- `TaskListener.onCancelled(task, reason)` —— 实例终止 / 改道跳转 / 减签 导致待办被销毁时派发（`reason` = `terminated`/`jumped`/`sign-removed`），供接入方清投影脏行；
+- `TaskListener.onAssigned(task, assignee)` —— 认领 / 指派 / 回签时派发。
+
+### 32.4 历史与实例读出口
+
+- `HistoryRepository.deleteInstance(instanceId)` —— 按实例删历史（**不碰审批意见**，意见是证据）；
+- `InstanceRepository` 补 `findByIds` / `findByStartedAfter`（对账真相源）+ `findByBusinessKey` / `findByBusinessKeyContains` / `findByInitiator`；
+- 监听注册口 `add/removeExecutionListener`、`add/removeTaskListener` 提升进 `IWorkflowEngine`（此前只在具体类，面向接口的接入方要强转才能注册），并修掉 `remove` 对副本操作导致「注销失效」的 bug。
+
+> 全部改动三套仓储（InMemory / JPA / MyBatis）一致 + 全量测试绿；v3.25.1 追加 businessKey 并发幂等锁 + WfAuditLogEntity 显式登记。多实例节点「整体进出」改道语义由 `MultiInstanceJumpTest` 回归覆盖（Flowable 的「只移部分 MI execution」属模型差异，由 facade 层组合承担）。
 
 ---
 
