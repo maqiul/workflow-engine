@@ -5,6 +5,7 @@ import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.WorkflowEngine;
 import com.workflow.engine.WorkflowEngineBuilder;
+import com.workflow.enums.InstanceStatus;
 import com.workflow.repository.InMemoryInstanceRepository;
 import com.workflow.repository.InMemoryProcessRepository;
 import com.workflow.repository.InMemoryTaskRepository;
@@ -14,6 +15,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -87,5 +93,40 @@ class BusinessKeyIdempotencyTest {
         engine.start("leave", "x1", Map.of());
         engine.start("leave", "x2", Map.of());
         assertThat(instRepo.findAll()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("并发同 businessKey 双提交：恰好一个成功、其余幂等拒绝（bk 锁消除竞态）")
+    void concurrentSameBusinessKey_onlyOneWins() throws Exception {
+        int n = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(n);
+        CountDownLatch ready = new CountDownLatch(n);
+        CountDownLatch go = new CountDownLatch(1);
+        AtomicInteger ok = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
+        for (int i = 0; i < n; i++) {
+            pool.submit(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    engine.start("leave", "BK-RACE", "alice", Map.of());
+                    ok.incrementAndGet();
+                } catch (IllegalStateException dup) {
+                    rejected.incrementAndGet();   // 幂等拒绝
+                } catch (Exception e) {
+                    rejected.incrementAndGet();
+                }
+            });
+        }
+        ready.await();
+        go.countDown();          // 齐发，最大化竞态窗口
+        pool.shutdown();
+        assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(ok.get()).as("恰好一个成功建实例").isEqualTo(1);
+        assertThat(rejected.get()).as("其余被幂等拒绝").isEqualTo(n - 1);
+        assertThat(instRepo.findByBusinessKey("BK-RACE").stream()
+                .filter(i -> i.getStatus() == InstanceStatus.RUNNING).count())
+                .as("只剩一个进行中实例，无重复").isEqualTo(1);
     }
 }

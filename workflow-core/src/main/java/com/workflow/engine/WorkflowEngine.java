@@ -590,16 +590,6 @@ public class WorkflowEngine implements IWorkflowEngine {
         // 业务主键（G-01）：落独立列，供幂等 / 按单号定位实例
         if (businessKey != null && !businessKey.isBlank()) {
             instance.setBusinessKey(businessKey);
-            // 启动幂等（G-01）：同 businessKey 已有进行中的实例 → 拒绝，防重复提交建重复实例。
-            // 仅 RUNNING 算冲突：办结/终止后允许同单号重新发起。
-            // 注：应用层查重覆盖顺序重复提交（绝大多数场景）；并发同 key 的极端竞态需 DB 唯一约束兜，
-            //     属后续增强。
-            boolean dupRunning = instanceRepo.findByBusinessKey(businessKey).stream()
-                    .anyMatch(i -> i.getStatus() == InstanceStatus.RUNNING);
-            if (dupRunning) {
-                throw new IllegalStateException(
-                        "businessKey 已存在进行中的流程实例，拒绝重复提交: " + businessKey);
-            }
         }
         // 设置租户 ID（从流程定义或上下文获取）
         String tenantId = def.getTenantId() != null ? def.getTenantId() : TenantContext.getTenantId();
@@ -608,11 +598,33 @@ public class WorkflowEngine implements IWorkflowEngine {
         Token token = new Token(instance.getId(), def.getStartNodeId());
         instance.addToken(token);
 
+        // 启动幂等（G-01）：businessKey 非空时，用 businessKey 级锁把「查重 + 落库」串行化，
+        // 消除并发同单号双提交的竞态（进程内有效；多节点需分布式锁，属集群话题）。
+        // 锁顺序恒为 bk→instance 单向、无反向嵌套 → 不死锁。仅 RUNNING 算冲突：
+        // 办结/终止后允许同单号重新发起。
+        if (businessKey != null && !businessKey.isBlank()) {
+            final String bk = businessKey;
+            return locks.executeLocked("bk:" + bk, () -> {
+                boolean dupRunning = instanceRepo.findByBusinessKey(bk).stream()
+                        .anyMatch(i -> i.getStatus() == InstanceStatus.RUNNING);
+                if (dupRunning) {
+                    throw new IllegalStateException(
+                            "businessKey 已存在进行中的流程实例，拒绝重复提交: " + bk);
+                }
+                return startInstance(instance, def, initiator, tenantId, token);
+            });
+        }
+        return startInstance(instance, def, initiator, tenantId, token);
+    }
+
+    /** start 的落库 + 推进主体，须在实例锁临界区（{@link #exclusive}）内执行。 */
+    private String startInstance(ProcessInstance instance, ProcessDefinition def,
+                                 String initiator, String tenantId, Token token) {
         // 实例 id 此刻尚未落库，resolveRoot 会退化为「自身即根」——正是我们要的锁粒度
         return exclusive(instance.getId(), "start", () -> {
             instanceRepo.save(instance);
 
-            log.info("[引擎] 发起流程 instance={} key={} v{} initiator={} tenant={}", 
+            log.info("[引擎] 发起流程 instance={} key={} v{} initiator={} tenant={}",
                     instance.getId(), def.getKey(), def.getVersion(), initiator, tenantId);
             audit(AuditEventType.PROCESS_STARTED, instance.getId(), null, initiator != null ? initiator : "system",
                     "发起流程 key=" + def.getKey() + " v" + def.getVersion());

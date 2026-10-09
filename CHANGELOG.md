@@ -21,7 +21,7 @@
 ## [3.25.1] - 2026-09-16
 
 ### 补全 / 修复
-- **businessKey 启动幂等**（G-01 补全）：v3.25.0 加了 `business_key` 列与 `findByBusinessKey`，但 `start` 没做重复校验 —— 同单号重复提交仍会建重复实例。现补：`start(key, businessKey, ...)` 若同 `businessKey` 已有 **RUNNING** 实例则抛 `IllegalStateException` 拒绝；办结/终止后允许同单号重新发起（仅 RUNNING 算冲突）。`BusinessKeyIdempotencyTest` 覆盖四态。注：应用层查重覆盖顺序重复提交；并发同 key 极端竞态需 DB 唯一约束兜，属后续增强。
+- **businessKey 启动幂等**（G-01 补全）：v3.25.0 加了 `business_key` 列与 `findByBusinessKey`，但 `start` 没做重复校验 —— 同单号重复提交仍会建重复实例。现补：`start(key, businessKey, ...)` 若同 `businessKey` 已有 **RUNNING** 实例则抛 `IllegalStateException` 拒绝；办结/终止后允许同单号重新发起（仅 RUNNING 算冲突）。`BusinessKeyIdempotencyTest` 覆盖四态 + 并发。查重与落库用 **businessKey 级锁**（`bk:` 前缀，锁顺序 bk→instance 单向、无反向嵌套 → 不死锁）串行化，消除并发同单号双提交竞态（进程内有效；多节点仍需分布式锁，属集群话题）。
 - **WfAuditLogEntity 显式登记**（技术债 J15）：此前不在 `persistence.xml` 的 `<class>` 列表、靠 Hibernate 自动扫描才生效，走的路径与其它显式登记实体不同，扫描行为一旦变化会静默丢审计。补进登记列表。
 
 ---
