@@ -590,6 +590,16 @@ public class WorkflowEngine implements IWorkflowEngine {
         // 业务主键（G-01）：落独立列，供幂等 / 按单号定位实例
         if (businessKey != null && !businessKey.isBlank()) {
             instance.setBusinessKey(businessKey);
+            // 启动幂等（G-01）：同 businessKey 已有进行中的实例 → 拒绝，防重复提交建重复实例。
+            // 仅 RUNNING 算冲突：办结/终止后允许同单号重新发起。
+            // 注：应用层查重覆盖顺序重复提交（绝大多数场景）；并发同 key 的极端竞态需 DB 唯一约束兜，
+            //     属后续增强。
+            boolean dupRunning = instanceRepo.findByBusinessKey(businessKey).stream()
+                    .anyMatch(i -> i.getStatus() == InstanceStatus.RUNNING);
+            if (dupRunning) {
+                throw new IllegalStateException(
+                        "businessKey 已存在进行中的流程实例，拒绝重复提交: " + businessKey);
+            }
         }
         // 设置租户 ID（从流程定义或上下文获取）
         String tenantId = def.getTenantId() != null ? def.getTenantId() : TenantContext.getTenantId();

@@ -17,6 +17,7 @@
         <class>com.workflow.persistence.jpa.entity.WfEventEntity</class>
         <class>com.workflow.persistence.jpa.entity.WfDecisionTableEntity</class>
         <class>com.workflow.persistence.jpa.entity.WfDecisionHistoryEntity</class>
+        <class>com.workflow.persistence.jpa.entity.WfAuditLogEntity</class>
 
         <properties>
             <!-- H2 内存数据库(测试/演示) -->

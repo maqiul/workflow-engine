@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.25.0**
+项目状态：**v3.25.1**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -14,6 +14,15 @@
 - v3.23.0 — 按候选组查待办（findPendingByGroup）+ 依赖与 CI 守卫（Dependabot / dependency-review）
 - v3.24.0 — 依赖安全补丁与 CI 守卫修复（6 项依赖升级含 3 个 CVE 修复 / actions 升 node24 运行时 / Dependabot ignore 策略）
 - v3.25.0 — 接入缺口补齐（监听口进接口 + 修 remove 静默失效 / onCancelled 事件 / claim·setAssignee 一等公民 / deleteInstance）
+- v3.25.1 — businessKey 启动幂等（补 v3.25.0 的语义尾巴）+ WfAuditLogEntity 显式登记（消除隐式扫描隐患）
+
+---
+
+## [3.25.1] - 2026-09-16
+
+### 补全 / 修复
+- **businessKey 启动幂等**（G-01 补全）：v3.25.0 加了 `business_key` 列与 `findByBusinessKey`，但 `start` 没做重复校验 —— 同单号重复提交仍会建重复实例。现补：`start(key, businessKey, ...)` 若同 `businessKey` 已有 **RUNNING** 实例则抛 `IllegalStateException` 拒绝；办结/终止后允许同单号重新发起（仅 RUNNING 算冲突）。`BusinessKeyIdempotencyTest` 覆盖四态。注：应用层查重覆盖顺序重复提交；并发同 key 极端竞态需 DB 唯一约束兜，属后续增强。
+- **WfAuditLogEntity 显式登记**（技术债 J15）：此前不在 `persistence.xml` 的 `<class>` 列表、靠 Hibernate 自动扫描才生效，走的路径与其它显式登记实体不同，扫描行为一旦变化会静默丢审计。补进登记列表。
 
 ---
 
