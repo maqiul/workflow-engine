@@ -3,6 +3,7 @@ package com.workflow.persistence.mybatis.entity;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.workflow.enums.AuditEventType;
 
 /**
  * 审计日志实体
@@ -20,7 +21,7 @@ public class WfAuditLogEntity {
     private String taskId;
 
     @TableField("event_type")
-    private com.workflow.enums.AuditEventType eventType;
+    private AuditEventType eventType;
 
     @TableField("operator")
     private String operator;
@@ -37,8 +38,8 @@ public class WfAuditLogEntity {
     public void setInstanceId(String instanceId) { this.instanceId = instanceId; }
     public String getTaskId() { return taskId; }
     public void setTaskId(String taskId) { this.taskId = taskId; }
-    public com.workflow.enums.AuditEventType getEventType() { return eventType; }
-    public void setEventType(com.workflow.enums.AuditEventType eventType) { this.eventType = eventType; }
+    public AuditEventType getEventType() { return eventType; }
+    public void setEventType(AuditEventType eventType) { this.eventType = eventType; }
     public String getOperator() { return operator; }
     public void setOperator(String operator) { this.operator = operator; }
     public long getTimestamp() { return timestamp; }

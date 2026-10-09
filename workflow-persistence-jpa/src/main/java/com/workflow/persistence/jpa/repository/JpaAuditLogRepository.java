@@ -4,10 +4,13 @@ import com.workflow.enums.AuditEventType;
 import com.workflow.persistence.jpa.JpaPersistence;
 import com.workflow.persistence.jpa.entity.WfAuditLogEntity;
 import com.workflow.repository.AuditLogRepository;
+import com.workflow.repository.EventTypeCount;
 import com.workflow.runtime.AuditLog;
 import jakarta.persistence.EntityManager;
 
+import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -86,28 +89,28 @@ public class JpaAuditLogRepository implements AuditLogRepository {
     }
 
     @Override
-    public java.util.List<com.workflow.repository.EventTypeCount> countGroupByEventTypePrefix(String prefix) {
+    public List<EventTypeCount> countGroupByEventTypePrefix(String prefix) {
         return runInOrOpenTx(em -> {
             // eventType 是枚举字段，不能直接 LIKE 字符串，需要列出匹配的枚举值
-            java.util.List<AuditEventType> matchedTypes = new java.util.ArrayList<>();
+            List<AuditEventType> matchedTypes = new ArrayList<>();
             for (AuditEventType t : AuditEventType.values()) {
                 if (t.name().startsWith(prefix)) {
                     matchedTypes.add(t);
                 }
             }
             if (matchedTypes.isEmpty()) {
-                return java.util.List.of();
+                return List.of();
             }
             @SuppressWarnings("unchecked")
-            java.util.List<Object[]> rows = em.createQuery(
+            List<Object[]> rows = em.createQuery(
                     "SELECT a.eventType, COUNT(a) FROM WfAuditLogEntity a"
                             + " WHERE a.eventType IN :types"
                             + " GROUP BY a.eventType")
                     .setParameter("types", matchedTypes)
                     .getResultList();
-            java.util.List<com.workflow.repository.EventTypeCount> out = new java.util.ArrayList<>();
+            List<EventTypeCount> out = new ArrayList<>();
             for (Object[] row : rows) {
-                out.add(new com.workflow.repository.EventTypeCount(
+                out.add(new EventTypeCount(
                         (AuditEventType) row[0],
                         ((Number) row[1]).longValue()));
             }
@@ -125,11 +128,11 @@ public class JpaAuditLogRepository implements AuditLogRepository {
         );
         // 反射设置 id 和 timestamp
         try {
-            java.lang.reflect.Field idField = AuditLog.class.getDeclaredField("id");
+            Field idField = AuditLog.class.getDeclaredField("id");
             idField.setAccessible(true);
             idField.set(log, e.getId());
 
-            java.lang.reflect.Field tsField = AuditLog.class.getDeclaredField("timestamp");
+            Field tsField = AuditLog.class.getDeclaredField("timestamp");
             tsField.setAccessible(true);
             tsField.set(log, Instant.ofEpochMilli(e.getTimestamp()));
         } catch (Exception ex) {

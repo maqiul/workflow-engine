@@ -8,11 +8,15 @@ import com.workflow.persistence.mybatis.mapper.WfHistActivityMapper;
 import com.workflow.persistence.mybatis.mapper.WfHistTaskMapper;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.runtime.HistoricActivityInstance;
+import com.workflow.runtime.HistoricTaskInstance;
 import org.apache.ibatis.session.SqlSession;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalDouble;
+import java.util.function.Consumer;
 
 /**
  * MyBatis-Plus 版历史活动仓储。
@@ -104,8 +108,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
                         .lt("start_time", cutoffMillis)));
     }
 
-    private List<HistoricActivityInstance> query(
-            java.util.function.Consumer<QueryWrapper<WfHistActivityEntity>> filter) {
+    private List<HistoricActivityInstance> query(Consumer<QueryWrapper<WfHistActivityEntity>> filter) {
         return mb.inSession(session -> {
             QueryWrapper<WfHistActivityEntity> qw = new QueryWrapper<>();
             filter.accept(qw);
@@ -129,7 +132,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
     // ========== 历史任务 ==========
 
     @Override
-    public void saveTask(com.workflow.runtime.HistoricTaskInstance t) {
+    public void saveTask(HistoricTaskInstance t) {
         Objects.requireNonNull(t);
         mb.inSession(session -> {
             WfHistTaskMapper mapper = session.getMapper(WfHistTaskMapper.class);
@@ -160,7 +163,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
     }
 
     @Override
-    public List<com.workflow.runtime.HistoricTaskInstance> findTasksByInstanceId(String instanceId) {
+    public List<HistoricTaskInstance> findTasksByInstanceId(String instanceId) {
         return mb.inSession(session -> session.getMapper(WfHistTaskMapper.class)
                 .selectList(new QueryWrapper<WfHistTaskEntity>()
                         .eq("instance_id", instanceId)
@@ -169,7 +172,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
     }
 
     @Override
-    public List<com.workflow.runtime.HistoricTaskInstance> findTasksInvolving(String userId) {
+    public List<HistoricTaskInstance> findTasksInvolving(String userId) {
         // 逗号包裹存储让 like 天然生成 '%,u1,%'，不会把 u1 误配到 u11
         String token = "," + userId + ",";
         return mb.inSession(session -> session.getMapper(WfHistTaskMapper.class)
@@ -206,7 +209,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
     }
 
     /** 人员列表以 {@code ,u1,u2,} 形式落库，便于 LIKE 精确匹配。 */
-    private static String toCsv(java.util.Collection<String> users) {
+    private static String toCsv(Collection<String> users) {
         if (users == null || users.isEmpty()) {
             return ",";
         }
@@ -221,11 +224,11 @@ public class MybatisHistoryRepository implements HistoryRepository {
         if (body.startsWith(",")) body = body.substring(1);
         if (body.endsWith(",")) body = body.substring(0, body.length() - 1);
         if (body.isEmpty()) return List.of();
-        return java.util.Arrays.stream(body.split(",")).filter(s -> !s.isEmpty()).toList();
+        return Arrays.stream(body.split(",")).filter(s -> !s.isEmpty()).toList();
     }
 
-    private static com.workflow.runtime.HistoricTaskInstance toTaskDomain(WfHistTaskEntity e) {
-        return com.workflow.runtime.HistoricTaskInstance.reconstruct(
+    private static HistoricTaskInstance toTaskDomain(WfHistTaskEntity e) {
+        return HistoricTaskInstance.reconstruct(
                 e.getTaskId(), e.getInstanceId(), e.getProcessKey(), e.getProcessVersion(),
                 e.getNodeId(), fromCsv(e.getCandidateUsers()), fromCsv(e.getCompletedBy()),
                 e.getStartTime(), e.getEndTime(), e.getEndReason(), e.getSeq());

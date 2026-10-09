@@ -1,5 +1,6 @@
 package com.workflow.persistence.jpa.entity;
 
+import com.workflow.enums.InstanceStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -40,7 +41,7 @@ public class WfInstanceEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 16, nullable = false)
-    private com.workflow.enums.InstanceStatus status;
+    private InstanceStatus status;
 
     @Column(name = "create_time", nullable = false)
     private long createTime;
@@ -96,8 +97,8 @@ public class WfInstanceEntity {
     public void setProcessKey(String processKey) { this.processKey = processKey; }
     public int getProcessVersion() { return processVersion; }
     public void setProcessVersion(int processVersion) { this.processVersion = processVersion; }
-    public com.workflow.enums.InstanceStatus getStatus() { return status; }
-    public void setStatus(com.workflow.enums.InstanceStatus status) { this.status = status; }
+    public InstanceStatus getStatus() { return status; }
+    public void setStatus(InstanceStatus status) { this.status = status; }
     public long getCreateTime() { return createTime; }
     public void setCreateTime(long createTime) { this.createTime = createTime; }
     public Long getEndTime() { return endTime; }

@@ -2,7 +2,9 @@ package com.workflow.persistence.mybatis.repository;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.TypeReference;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.workflow.concurrency.WorkflowConflictException;
+import com.workflow.enums.InstanceStatus;
 import com.workflow.persistence.mybatis.MybatisPersistence;
 import com.workflow.persistence.mybatis.entity.WfInstanceEntity;
 import com.workflow.persistence.mybatis.entity.WfTaskEntity;
@@ -11,12 +13,13 @@ import com.workflow.persistence.mybatis.mapper.WfInstanceMapper;
 import com.workflow.persistence.mybatis.mapper.WfTaskMapper;
 import com.workflow.persistence.mybatis.mapper.WfTokenMapper;
 import com.workflow.repository.InstanceRepository;
+import com.workflow.repository.ProcessStatusCount;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
 import com.workflow.runtime.Token;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import org.apache.ibatis.session.SqlSession;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -49,35 +52,11 @@ public class MybatisInstanceRepository implements InstanceRepository {
             if (entity == null) {
                 entity = new WfInstanceEntity();
                 entity.setId(instance.getId());
-                entity.setProcessKey(instance.getProcessKey());
-                entity.setProcessVersion(instance.getProcessVersion());
-                entity.setStatus(instance.getStatus());
-                entity.setCreateTime(instance.getCreateTime());
-                entity.setEndTime(instance.getEndTime() > 0 ? instance.getEndTime() : null);
-                entity.setVariablesJson(JSON.toJSONString(instance.getVariables()));
-                entity.setParentInstanceId(instance.getParentInstanceId());
-                entity.setParentTokenId(instance.getParentTokenId());
-                entity.setParentNodeId(instance.getParentNodeId());
-                // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
-                entity.setRootInstanceId(instance.getRootInstanceId());
-                entity.setBusinessKey(instance.getBusinessKey());
-                entity.setInitiator(instance.getInitiator());
+                fillInstanceEntity(entity, instance);
                 entity.setRevision(FIRST_REVISION);
                 instanceMapper.insert(entity);
             } else {
-                entity.setProcessKey(instance.getProcessKey());
-                entity.setProcessVersion(instance.getProcessVersion());
-                entity.setStatus(instance.getStatus());
-                entity.setCreateTime(instance.getCreateTime());
-                entity.setEndTime(instance.getEndTime() > 0 ? instance.getEndTime() : null);
-                entity.setVariablesJson(JSON.toJSONString(instance.getVariables()));
-                entity.setParentInstanceId(instance.getParentInstanceId());
-                entity.setParentTokenId(instance.getParentTokenId());
-                entity.setParentNodeId(instance.getParentNodeId());
-                // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
-                entity.setRootInstanceId(instance.getRootInstanceId());
-                entity.setBusinessKey(instance.getBusinessKey());
-                entity.setInitiator(instance.getInitiator());
+                fillInstanceEntity(entity, instance);
                 requireCas(instanceMapper.updateById(entity), instance.getId());
             }
 
@@ -96,6 +75,23 @@ public class MybatisInstanceRepository implements InstanceRepository {
         });
     }
 
+    /** 把 domain 实例字段刷进实体（save 的新/旧分支共用，消除重复）。 */
+    private static void fillInstanceEntity(WfInstanceEntity entity, ProcessInstance instance) {
+        entity.setProcessKey(instance.getProcessKey());
+        entity.setProcessVersion(instance.getProcessVersion());
+        entity.setStatus(instance.getStatus());
+        entity.setCreateTime(instance.getCreateTime());
+        entity.setEndTime(instance.getEndTime() > 0 ? instance.getEndTime() : null);
+        entity.setVariablesJson(JSON.toJSONString(instance.getVariables()));
+        entity.setParentInstanceId(instance.getParentInstanceId());
+        entity.setParentTokenId(instance.getParentTokenId());
+        entity.setParentNodeId(instance.getParentNodeId());
+        // 流程树根必须落库：否则重建后丢失，父子各持一把锁，ABBA 防护失效
+        entity.setRootInstanceId(instance.getRootInstanceId());
+        entity.setBusinessKey(instance.getBusinessKey());
+        entity.setInitiator(instance.getInitiator());
+    }
+
     @Override
     public void saveBatch(List<ProcessInstance> instances) {
         if (instances == null || instances.isEmpty()) {
@@ -111,33 +107,11 @@ public class MybatisInstanceRepository implements InstanceRepository {
                 if (entity == null) {
                     entity = new WfInstanceEntity();
                     entity.setId(instance.getId());
-                    entity.setProcessKey(instance.getProcessKey());
-                    entity.setProcessVersion(instance.getProcessVersion());
-                    entity.setStatus(instance.getStatus());
-                    entity.setCreateTime(instance.getCreateTime());
-                    entity.setEndTime(instance.getEndTime() > 0 ? instance.getEndTime() : null);
-                    entity.setVariablesJson(JSON.toJSONString(instance.getVariables()));
-                    entity.setParentInstanceId(instance.getParentInstanceId());
-                    entity.setParentTokenId(instance.getParentTokenId());
-                    entity.setParentNodeId(instance.getParentNodeId());
-                    entity.setRootInstanceId(instance.getRootInstanceId());
-                entity.setBusinessKey(instance.getBusinessKey());
-                entity.setInitiator(instance.getInitiator());
+                    fillInstanceEntity(entity, instance);
                     entity.setRevision(FIRST_REVISION);
                     instanceMapper.insert(entity);
                 } else {
-                    entity.setProcessKey(instance.getProcessKey());
-                    entity.setProcessVersion(instance.getProcessVersion());
-                    entity.setStatus(instance.getStatus());
-                    entity.setCreateTime(instance.getCreateTime());
-                    entity.setEndTime(instance.getEndTime() > 0 ? instance.getEndTime() : null);
-                    entity.setVariablesJson(JSON.toJSONString(instance.getVariables()));
-                    entity.setParentInstanceId(instance.getParentInstanceId());
-                    entity.setParentTokenId(instance.getParentTokenId());
-                    entity.setParentNodeId(instance.getParentNodeId());
-                    entity.setRootInstanceId(instance.getRootInstanceId());
-                entity.setBusinessKey(instance.getBusinessKey());
-                entity.setInitiator(instance.getInitiator());
+                    fillInstanceEntity(entity, instance);
                     requireCas(instanceMapper.updateById(entity), instance.getId());
                 }
 
@@ -175,29 +149,25 @@ public class MybatisInstanceRepository implements InstanceRepository {
     // 避开「新增列忘了写进 SELECT 导致读回丢字段」那个老坑。
 
     @Override
-    public java.util.List<ProcessInstance> findByProcessKey(String processKey) {
-        return queryInstances(new com.baomidou.mybatisplus.core.conditions.query
-                        .QueryWrapper<WfInstanceEntity>()
+    public List<ProcessInstance> findByProcessKey(String processKey) {
+        return queryInstances(new QueryWrapper<WfInstanceEntity>()
                 .eq("process_key", processKey).orderByAsc("create_time"));
     }
 
     @Override
-    public java.util.List<ProcessInstance> findByStatus(com.workflow.enums.InstanceStatus status) {
-        return queryInstances(new com.baomidou.mybatisplus.core.conditions.query
-                        .QueryWrapper<WfInstanceEntity>()
+    public List<ProcessInstance> findByStatus(InstanceStatus status) {
+        return queryInstances(new QueryWrapper<WfInstanceEntity>()
                 .eq("status", status.name()).orderByAsc("create_time"));
     }
 
     @Override
-    public java.util.List<ProcessInstance> findAll() {
-        return queryInstances(new com.baomidou.mybatisplus.core.conditions.query
-                .QueryWrapper<WfInstanceEntity>().orderByAsc("create_time"));
+    public List<ProcessInstance> findAll() {
+        return queryInstances(new QueryWrapper<WfInstanceEntity>().orderByAsc("create_time"));
     }
 
     @Override
-    public java.util.List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
-        return queryInstances(new com.baomidou.mybatisplus.core.conditions.query
-                        .QueryWrapper<WfInstanceEntity>()
+    public List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
+        return queryInstances(new QueryWrapper<WfInstanceEntity>()
                 .eq("process_key", processKey)
                 .eq("process_version", version)
                 .orderByAsc("create_time"));
@@ -237,38 +207,36 @@ public class MybatisInstanceRepository implements InstanceRepository {
     }
 
     @Override
-    public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus() {
+    public List<ProcessStatusCount> countGroupByProcessAndStatus() {
         return countGroupByProcessAndStatus(null);
     }
 
     @Override
-    public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
+    public List<ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
         return mb.inSession(session -> {
-            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfInstanceEntity> qw =
-                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+            QueryWrapper<WfInstanceEntity> qw = new QueryWrapper<>();
             qw.select("process_key", "status", "COUNT(1) AS cnt")
               .groupBy("process_key", "status");
             if (tenantId != null) {
                 qw.eq("tenant_id", tenantId);
             }
-            java.util.List<java.util.Map<String, Object>> maps =
-                    session.getMapper(WfInstanceMapper.class).selectMaps(qw);
-            java.util.List<com.workflow.repository.ProcessStatusCount> out = new java.util.ArrayList<>();
-            for (java.util.Map<String, Object> m : maps) {
+            List<Map<String, Object>> maps = session.getMapper(WfInstanceMapper.class).selectMaps(qw);
+            List<ProcessStatusCount> out = new ArrayList<>();
+            for (Map<String, Object> m : maps) {
                 // H2 会把结果集列标签大写，取键时两种大小写都兜住
                 Object pk = pick(m, "process_key", "PROCESS_KEY");
                 Object st = pick(m, "status", "STATUS");
                 Object cn = pick(m, "cnt", "CNT");
-                out.add(new com.workflow.repository.ProcessStatusCount(
+                out.add(new ProcessStatusCount(
                         (String) pk,
-                        com.workflow.enums.InstanceStatus.valueOf(String.valueOf(st)),
+                        InstanceStatus.valueOf(String.valueOf(st)),
                         ((Number) cn).longValue()));
             }
             return out;
         });
     }
 
-    private static Object pick(java.util.Map<String, Object> m, String... keys) {
+    private static Object pick(Map<String, Object> m, String... keys) {
         for (String k : keys) {
             if (m.containsKey(k)) {
                 return m.get(k);
@@ -277,12 +245,10 @@ public class MybatisInstanceRepository implements InstanceRepository {
         return null;
     }
 
-    private java.util.List<ProcessInstance> queryInstances(
-            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfInstanceEntity> qw) {
+    private List<ProcessInstance> queryInstances(QueryWrapper<WfInstanceEntity> qw) {
         return mb.inSession(session -> {
-            java.util.List<WfInstanceEntity> entities = session.getMapper(WfInstanceMapper.class)
-                    .selectList(qw);
-            java.util.List<ProcessInstance> out = new java.util.ArrayList<>(entities.size());
+            List<WfInstanceEntity> entities = session.getMapper(WfInstanceMapper.class).selectList(qw);
+            List<ProcessInstance> out = new ArrayList<>(entities.size());
             for (WfInstanceEntity e : entities) {
                 out.add(rebuild(e, session));
             }
@@ -312,7 +278,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
         // 乐观锁版本必须读回：重试路径要靠它判断"本次写入基于哪一版"
         instance.setRevision(e.getRevision());
         try {
-            java.lang.reflect.Field statusField = ProcessInstance.class.getDeclaredField("status");
+            Field statusField = ProcessInstance.class.getDeclaredField("status");
             statusField.setAccessible(true);
             statusField.set(instance, e.getStatus());
         } catch (Exception ex) {
@@ -341,7 +307,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
         Map<String, Object> variables = new LinkedHashMap<>();
         if (e.getVariablesJson() != null && !e.getVariablesJson().isEmpty()) {
             Map<String, Object> parsed = JSON.parseObject(e.getVariablesJson(),
-                    new TypeReference<Map<String, Object>>() {});
+                    new TypeReference<Map<String, Object>>() { });
             if (parsed != null) variables.putAll(parsed);
         }
         setFinal(instance, "variables", variables);
@@ -365,7 +331,7 @@ public class MybatisInstanceRepository implements InstanceRepository {
     /** 反射写 final 字段 - JDK 17 setAccessible + set 可用 */
     private static void setFinal(Object target, String fieldName, Object value) {
         try {
-            java.lang.reflect.Field f = target.getClass().getDeclaredField(fieldName);
+            Field f = target.getClass().getDeclaredField(fieldName);
             f.setAccessible(true);
             f.set(target, value);
         } catch (Exception ex) {

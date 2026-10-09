@@ -1,17 +1,26 @@
 package com.workflow.persistence.jpa;
 
 import com.workflow.concurrency.WorkflowConflictException;
+import com.workflow.dmn.DecisionHistoryRepository;
+import com.workflow.dmn.DecisionRepository;
 import com.workflow.persistence.jpa.repository.JpaAuditLogRepository;
 import com.workflow.persistence.jpa.repository.JpaCommentRepository;
+import com.workflow.persistence.jpa.repository.JpaDecisionHistoryRepository;
+import com.workflow.persistence.jpa.repository.JpaDecisionRepository;
+import com.workflow.persistence.jpa.repository.JpaEventRepository;
+import com.workflow.persistence.jpa.repository.JpaHistoryRepository;
 import com.workflow.persistence.jpa.repository.JpaInstanceRepository;
 import com.workflow.persistence.jpa.repository.JpaProcessRepository;
 import com.workflow.persistence.jpa.repository.JpaTaskRepository;
 import com.workflow.persistence.migrate.FlywayMigrator;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.CommentRepository;
+import com.workflow.repository.EventRepository;
+import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
+import com.workflow.tx.TransactionContext;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.EntityTransaction;
@@ -24,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * JPA 持久化入口 - 单例工厂类
@@ -230,8 +240,8 @@ public class JpaPersistence {
     }
 
     /** 提供 HistoryRepository（历史活动区间，见 README §18）。 */
-    public com.workflow.repository.HistoryRepository historyRepo() {
-        return new com.workflow.persistence.jpa.repository.JpaHistoryRepository(this);
+    public HistoryRepository historyRepo() {
+        return new JpaHistoryRepository(this);
     }
 
     /**
@@ -245,18 +255,18 @@ public class JpaPersistence {
     }
 
     /** 提供 EventRepository（事件网关：消息/信号/定时器）。 */
-    public com.workflow.repository.EventRepository eventRepo() {
-        return new com.workflow.persistence.jpa.repository.JpaEventRepository(this);
+    public EventRepository eventRepo() {
+        return new JpaEventRepository(this);
     }
 
     /** 提供 DecisionRepository（DMN 决策表）。 */
-    public com.workflow.dmn.DecisionRepository decisionRepo() {
-        return new com.workflow.persistence.jpa.repository.JpaDecisionRepository(this);
+    public DecisionRepository decisionRepo() {
+        return new JpaDecisionRepository(this);
     }
 
     /** 提供 DecisionHistoryRepository（DMN 决策历史）。 */
-    public com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo() {
-        return new com.workflow.persistence.jpa.repository.JpaDecisionHistoryRepository(this);
+    public DecisionHistoryRepository decisionHistoryRepo() {
+        return new JpaDecisionHistoryRepository(this);
     }
 
     /**
@@ -279,15 +289,15 @@ public class JpaPersistence {
      * <p>共享 EM 由 {@link TransactionContext} 挂载，首个使用者（即引擎动作内的第一个
      * 仓储调用）负责开启并登记提交/回滚钩子；后续仓储复用同一实例。
      */
-    public <T> T inTransaction(java.util.function.Function<EntityManager, T> work) {
-        if (com.workflow.tx.TransactionContext.isActive()) {
+    public <T> T inTransaction(Function<EntityManager, T> work) {
+        if (TransactionContext.isActive()) {
             return inSharedTransaction(work);
         }
         return inStandaloneTransaction(work);
     }
 
     /** 独立短事务：供引擎之外的手工调用（如测试清表）使用。 */
-    private <T> T inStandaloneTransaction(java.util.function.Function<EntityManager, T> work) {
+    private <T> T inStandaloneTransaction(Function<EntityManager, T> work) {
         EntityManager em = newEntityManager();
         EntityTransaction tx = em.getTransaction();
         try {
@@ -304,16 +314,16 @@ public class JpaPersistence {
     }
 
     /** 加入引擎已开启的事务，复用本线程本事务的 EntityManager。 */
-    private <T> T inSharedTransaction(java.util.function.Function<EntityManager, T> work) {
-        ManagedEm holder = com.workflow.tx.TransactionContext.attached(ManagedEm.class);
+    private <T> T inSharedTransaction(Function<EntityManager, T> work) {
+        ManagedEm holder = TransactionContext.attached(ManagedEm.class);
         if (holder == null) {
             final EntityManager em = newEntityManager();
             em.getTransaction().begin();
             holder = new ManagedEm(em);
-            com.workflow.tx.TransactionContext.attachIfAbsent(holder);
+            TransactionContext.attachIfAbsent(holder);
             final ManagedEm bound = holder;
             // 提交：先落盘再结束数据库事务，无论如何都要关掉 EM 防泄漏
-            com.workflow.tx.TransactionContext.beforeCommit(() -> {
+            TransactionContext.beforeCommit(() -> {
                 try {
                     em.flush();
                     if (em.getTransaction().isActive()) {
@@ -331,7 +341,7 @@ public class JpaPersistence {
                 }
             });
             // 回滚：撤销数据库改动并释放 EM
-            com.workflow.tx.TransactionContext.onRollback(() -> {
+            TransactionContext.onRollback(() -> {
                 try {
                     if (em.getTransaction().isActive()) {
                         em.getTransaction().rollback();

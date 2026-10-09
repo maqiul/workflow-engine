@@ -9,15 +9,28 @@ import com.workflow.persistence.mybatis.mapper.WfAuditLogMapper;
 import com.workflow.persistence.mybatis.mapper.WfCommentMapper;
 import com.workflow.persistence.mybatis.mapper.WfProcessDefMapper;
 import com.workflow.persistence.mybatis.mapper.WfInstanceMapper;
+import com.workflow.persistence.mybatis.mapper.WfDecisionHistoryMapper;
+import com.workflow.persistence.mybatis.mapper.WfDecisionTableMapper;
+import com.workflow.persistence.mybatis.mapper.WfEventMapper;
+import com.workflow.persistence.mybatis.mapper.WfHistActivityMapper;
+import com.workflow.persistence.mybatis.mapper.WfHistTaskMapper;
 import com.workflow.persistence.mybatis.mapper.WfTaskMapper;
 import com.workflow.persistence.mybatis.mapper.WfTokenMapper;
 import com.workflow.persistence.mybatis.repository.MybatisAuditLogRepository;
 import com.workflow.persistence.mybatis.repository.MybatisCommentRepository;
 import com.workflow.persistence.mybatis.repository.MybatisInstanceRepository;
+import com.workflow.dmn.DecisionHistoryRepository;
+import com.workflow.dmn.DecisionRepository;
+import com.workflow.persistence.mybatis.repository.MybatisDecisionHistoryRepository;
+import com.workflow.persistence.mybatis.repository.MybatisDecisionRepository;
+import com.workflow.persistence.mybatis.repository.MybatisEventRepository;
+import com.workflow.persistence.mybatis.repository.MybatisHistoryRepository;
 import com.workflow.persistence.mybatis.repository.MybatisProcessRepository;
 import com.workflow.persistence.mybatis.repository.MybatisTaskRepository;
 import com.workflow.repository.AuditLogRepository;
 import com.workflow.repository.CommentRepository;
+import com.workflow.repository.EventRepository;
+import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
@@ -219,13 +232,13 @@ public final class MybatisPersistence {
         // 审批意见：与历史同样地，漏掉这行不会编译报错，只在 getMapper 时抛运行时异常
         configuration.addMapper(WfCommentMapper.class);
         // 历史活动：漏掉这行不会编译报错，只在 getMapper 时抛运行时异常
-        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistActivityMapper.class);
-        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfHistTaskMapper.class);
+        configuration.addMapper(WfHistActivityMapper.class);
+        configuration.addMapper(WfHistTaskMapper.class);
         // 事件网关
-        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfEventMapper.class);
+        configuration.addMapper(WfEventMapper.class);
         // DMN 决策表和历史
-        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfDecisionTableMapper.class);
-        configuration.addMapper(com.workflow.persistence.mybatis.mapper.WfDecisionHistoryMapper.class);
+        configuration.addMapper(WfDecisionTableMapper.class);
+        configuration.addMapper(WfDecisionHistoryMapper.class);
         // 驼峰映射默认开启
         configuration.setMapUnderscoreToCamelCase(true);
         // 乐观锁插件：把 @Version 实体上的 updateById 改写成
@@ -429,8 +442,8 @@ public final class MybatisPersistence {
     }
 
     /** 提供 HistoryRepository（历史活动区间，见 README §18）。 */
-    public com.workflow.repository.HistoryRepository historyRepo() {
-        return new com.workflow.persistence.mybatis.repository.MybatisHistoryRepository(this);
+    public HistoryRepository historyRepo() {
+        return new MybatisHistoryRepository(this);
     }
 
     /**
@@ -444,17 +457,17 @@ public final class MybatisPersistence {
     }
 
     /** 提供 EventRepository（事件网关：消息/信号/定时器）。 */
-    public com.workflow.repository.EventRepository eventRepo() {
-        return new com.workflow.persistence.mybatis.repository.MybatisEventRepository(this);
+    public EventRepository eventRepo() {
+        return new MybatisEventRepository(this);
     }
 
     /** 提供 DecisionRepository（DMN 决策表）。 */
-    public com.workflow.dmn.DecisionRepository decisionRepo() {
-        return new com.workflow.persistence.mybatis.repository.MybatisDecisionRepository(this);
+    public DecisionRepository decisionRepo() {
+        return new MybatisDecisionRepository(this);
     }
 
     /** 提供 DecisionHistoryRepository（DMN 决策历史）。 */
-    public com.workflow.dmn.DecisionHistoryRepository decisionHistoryRepo() {
-        return new com.workflow.persistence.mybatis.repository.MybatisDecisionHistoryRepository(this);
+    public DecisionHistoryRepository decisionHistoryRepo() {
+        return new MybatisDecisionHistoryRepository(this);
     }
 }

@@ -14,6 +14,7 @@ import com.workflow.repository.TaskFilter;
 import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.TaskInstance;
 
+import java.lang.reflect.Field;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -41,54 +42,44 @@ public class MybatisTaskRepository implements TaskRepository {
         mb.inSession(session -> {
             WfTaskMapper mapper = session.getMapper(WfTaskMapper.class);
             WfTaskEntity entity = mapper.selectById(task.getId());
-            if (entity == null) {
+            boolean isNew = (entity == null);
+            if (isNew) {
                 entity = new WfTaskEntity();
                 entity.setId(task.getId());
                 entity.setRevision(FIRST_REVISION);
                 entity.setCreateTime(task.getCreateTime());
-                entity.setInstanceId(task.getInstanceId());
-                entity.setTokenId(task.getTokenId());
-                entity.setNodeId(task.getNodeId());
-                entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
-                // 直接序列化底层 HashSet,避免 unmodifiableSet 包装类型的序列化问题
-                try {
-                    java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                    f.setAccessible(true);
-                    @SuppressWarnings("unchecked")
-                    Set<String> approvers = (Set<String>) f.get(task);
-                    entity.setCompletedApproversJson(JSON.toJSONString(approvers));
-                } catch (Exception e) {
-                    throw new RuntimeException("序列化 completedApprovers 失败", e);
-                }
-                entity.setTenantId(task.getTenantId());
-                entity.setArrival(task.getArrival());
-                entity.setAssignee(task.getAssignee());
-                entity.setDelegatedFrom(task.getDelegatedFrom());
-                entity.setStatus(task.getStatus());
+            }
+            fillTaskEntity(entity, task);
+            if (isNew) {
                 mapper.insert(entity);
             } else {
-                entity.setInstanceId(task.getInstanceId());
-                entity.setTokenId(task.getTokenId());
-                entity.setNodeId(task.getNodeId());
-                entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
-                try {
-                    java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                    f.setAccessible(true);
-                    @SuppressWarnings("unchecked")
-                    Set<String> approvers = (Set<String>) f.get(task);
-                    entity.setCompletedApproversJson(JSON.toJSONString(approvers));
-                } catch (Exception e) {
-                    throw new RuntimeException("序列化 completedApprovers 失败", e);
-                }
-                entity.setTenantId(task.getTenantId());
-                entity.setArrival(task.getArrival());
-                entity.setAssignee(task.getAssignee());
-                entity.setDelegatedFrom(task.getDelegatedFrom());
-                entity.setStatus(task.getStatus());
                 requireCas(mapper.updateById(entity), task.getId());
             }
             return null;
         });
+    }
+
+    /** 把 domain 任务字段刷进实体（save 的新/旧分支共用，消除重复）。 */
+    private static void fillTaskEntity(WfTaskEntity entity, TaskInstance task) {
+        entity.setInstanceId(task.getInstanceId());
+        entity.setTokenId(task.getTokenId());
+        entity.setNodeId(task.getNodeId());
+        entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
+        // 直接序列化底层 HashSet,避免 unmodifiableSet 包装类型的序列化问题
+        try {
+            Field f = TaskInstance.class.getDeclaredField("completedApprovers");
+            f.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Set<String> approvers = (Set<String>) f.get(task);
+            entity.setCompletedApproversJson(JSON.toJSONString(approvers));
+        } catch (Exception e) {
+            throw new RuntimeException("序列化 completedApprovers 失败", e);
+        }
+        entity.setTenantId(task.getTenantId());
+        entity.setArrival(task.getArrival());
+        entity.setAssignee(task.getAssignee());
+        entity.setDelegatedFrom(task.getDelegatedFrom());
+        entity.setStatus(task.getStatus());
     }
 
     @Override
@@ -101,49 +92,17 @@ public class MybatisTaskRepository implements TaskRepository {
             WfTaskMapper mapper = session.getMapper(WfTaskMapper.class);
             for (TaskInstance task : tasks) {
                 WfTaskEntity entity = mapper.selectById(task.getId());
-                if (entity == null) {
+                boolean isNew = (entity == null);
+                if (isNew) {
                     entity = new WfTaskEntity();
                     entity.setId(task.getId());
                     entity.setRevision(FIRST_REVISION);
                     entity.setCreateTime(task.getCreateTime());
-                    entity.setInstanceId(task.getInstanceId());
-                    entity.setTokenId(task.getTokenId());
-                    entity.setNodeId(task.getNodeId());
-                    entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
-                    try {
-                        java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                        f.setAccessible(true);
-                        @SuppressWarnings("unchecked")
-                        Set<String> approvers = (Set<String>) f.get(task);
-                        entity.setCompletedApproversJson(JSON.toJSONString(approvers));
-                    } catch (Exception e) {
-                        throw new RuntimeException("序列化 completedApprovers 失败", e);
-                    }
-                    entity.setTenantId(task.getTenantId());
-                entity.setArrival(task.getArrival());
-                entity.setAssignee(task.getAssignee());
-                entity.setDelegatedFrom(task.getDelegatedFrom());
-                entity.setStatus(task.getStatus());
+                }
+                fillTaskEntity(entity, task);
+                if (isNew) {
                     mapper.insert(entity);
                 } else {
-                    entity.setInstanceId(task.getInstanceId());
-                    entity.setTokenId(task.getTokenId());
-                    entity.setNodeId(task.getNodeId());
-                    entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
-                    try {
-                        java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                        f.setAccessible(true);
-                        @SuppressWarnings("unchecked")
-                        Set<String> approvers = (Set<String>) f.get(task);
-                        entity.setCompletedApproversJson(JSON.toJSONString(approvers));
-                    } catch (Exception e) {
-                        throw new RuntimeException("序列化 completedApprovers 失败", e);
-                    }
-                    entity.setTenantId(task.getTenantId());
-                entity.setArrival(task.getArrival());
-                entity.setAssignee(task.getAssignee());
-                entity.setDelegatedFrom(task.getDelegatedFrom());
-                entity.setStatus(task.getStatus());
                     requireCas(mapper.updateById(entity), task.getId());
                 }
             }
@@ -272,21 +231,18 @@ public class MybatisTaskRepository implements TaskRepository {
 
     @Override
     public List<TaskInstance> findAll() {
-        return queryBy(new com.baomidou.mybatisplus.core.conditions.query
-                .QueryWrapper<WfTaskEntity>().orderByAsc("create_time"));
+        return queryBy(new QueryWrapper<WfTaskEntity>().orderByAsc("create_time"));
     }
 
     @Override
     public List<TaskInstance> findByNodeId(String nodeId) {
-        return queryBy(new com.baomidou.mybatisplus.core.conditions.query
-                .QueryWrapper<WfTaskEntity>()
+        return queryBy(new QueryWrapper<WfTaskEntity>()
                 .eq("node_id", nodeId).orderByAsc("create_time"));
     }
 
     @Override
     public List<TaskInstance> findByStatus(TaskStatus status) {
-        return queryBy(new com.baomidou.mybatisplus.core.conditions.query
-                .QueryWrapper<WfTaskEntity>()
+        return queryBy(new QueryWrapper<WfTaskEntity>()
                 .eq("status", status.name()).orderByAsc("create_time"));
     }
 
@@ -298,11 +254,8 @@ public class MybatisTaskRepository implements TaskRepository {
     @Override
     public long countPending(String tenantId) {
         return mb.inSession(session -> {
-            com.baomidou.mybatisplus.core.conditions.query
-                    .QueryWrapper<WfTaskEntity> qw =
-                    new com.baomidou.mybatisplus.core.conditions.query
-                            .QueryWrapper<WfTaskEntity>()
-                            .eq("status", TaskStatus.PENDING.name());
+            QueryWrapper<WfTaskEntity> qw = new QueryWrapper<WfTaskEntity>()
+                    .eq("status", TaskStatus.PENDING.name());
             if (tenantId != null) {
                 qw.eq("tenant_id", tenantId);
             }
@@ -311,8 +264,7 @@ public class MybatisTaskRepository implements TaskRepository {
         });
     }
 
-    private List<TaskInstance> queryBy(
-            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<WfTaskEntity> qw) {
+    private List<TaskInstance> queryBy(QueryWrapper<WfTaskEntity> qw) {
         return mb.inSession(session -> session.getMapper(WfTaskMapper.class)
                 .selectList(qw).stream()
                 .map(MybatisTaskRepository::toDomain)
@@ -326,7 +278,8 @@ public class MybatisTaskRepository implements TaskRepository {
         // 并把 create_time 读回来（此前丢弃导致按创建时间排序退化成按 id 排序）。
         return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
                 e.getNodeId(), candidate, completed, e.getStatus(),
-                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival(), e.getAssignee(), e.getDelegatedFrom());
+                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival(),
+                e.getAssignee(), e.getDelegatedFrom());
     }
 
     /** 插入行的初始版本号（与内存仓储 save 后的版本号对齐） */

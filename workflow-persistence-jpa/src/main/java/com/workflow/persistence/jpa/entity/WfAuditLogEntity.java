@@ -1,13 +1,12 @@
 package com.workflow.persistence.jpa.entity;
 
+import com.workflow.enums.AuditEventType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-
-import java.time.Instant;
 
 /**
  * 审计日志实体
@@ -38,7 +37,7 @@ public class WfAuditLogEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "event_type", length = 32, nullable = false)
-    private com.workflow.enums.AuditEventType eventType;
+    private AuditEventType eventType;
 
     @Column(name = "operator", length = 64, nullable = false)
     private String operator;
@@ -55,8 +54,8 @@ public class WfAuditLogEntity {
     public void setInstanceId(String instanceId) { this.instanceId = instanceId; }
     public String getTaskId() { return taskId; }
     public void setTaskId(String taskId) { this.taskId = taskId; }
-    public com.workflow.enums.AuditEventType getEventType() { return eventType; }
-    public void setEventType(com.workflow.enums.AuditEventType eventType) { this.eventType = eventType; }
+    public AuditEventType getEventType() { return eventType; }
+    public void setEventType(AuditEventType eventType) { this.eventType = eventType; }
     public String getOperator() { return operator; }
     public void setOperator(String operator) { this.operator = operator; }
     public long getTimestamp() { return timestamp; }

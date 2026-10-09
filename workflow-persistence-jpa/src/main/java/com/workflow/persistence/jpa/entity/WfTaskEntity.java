@@ -1,5 +1,6 @@
 package com.workflow.persistence.jpa.entity;
 
+import com.workflow.enums.TaskStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -50,7 +51,7 @@ public class WfTaskEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 16, nullable = false)
-    private com.workflow.enums.TaskStatus status;
+    private TaskStatus status;
 
     @Column(name = "create_time", nullable = false)
     private long createTime;
@@ -91,8 +92,8 @@ public class WfTaskEntity {
     public void setCompletedApproversJson(String completedApproversJson) {
         this.completedApproversJson = completedApproversJson;
     }
-    public com.workflow.enums.TaskStatus getStatus() { return status; }
-    public void setStatus(com.workflow.enums.TaskStatus status) { this.status = status; }
+    public TaskStatus getStatus() { return status; }
+    public void setStatus(TaskStatus status) { this.status = status; }
     public long getCreateTime() { return createTime; }
     public void setCreateTime(long createTime) { this.createTime = createTime; }
     public String getTenantId() { return tenantId; }

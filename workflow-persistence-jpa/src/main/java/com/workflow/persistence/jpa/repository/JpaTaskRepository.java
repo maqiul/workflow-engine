@@ -12,7 +12,9 @@ import com.workflow.repository.TaskRepository;
 import com.workflow.runtime.TaskInstance;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
+import jakarta.persistence.TypedQuery;
 
+import java.lang.reflect.Field;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -57,50 +59,38 @@ public class JpaTaskRepository implements TaskRepository {
                 entity = new WfTaskEntity();
                 entity.setId(task.getId());
                 entity.setRevision(FIRST_REVISION);
-                                    entity.setCreateTime(task.getCreateTime());
-                entity.setInstanceId(task.getInstanceId());
-                entity.setTokenId(task.getTokenId());
-                entity.setNodeId(task.getNodeId());
-                entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
-                // 直接序列化底层 HashSet,避免 unmodifiableSet 包装类型的序列化问题
-                try {
-                    java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                    f.setAccessible(true);
-                    @SuppressWarnings("unchecked")
-                    Set<String> approvers = (Set<String>) f.get(task);
-                    entity.setCompletedApproversJson(JSON.toJSONString(approvers));
-                } catch (Exception e) {
-                    throw new RuntimeException("序列化 completedApprovers 失败", e);
-                }
-                entity.setTenantId(task.getTenantId());
-                entity.setArrival(task.getArrival());
-                entity.setAssignee(task.getAssignee());
-                entity.setDelegatedFrom(task.getDelegatedFrom());
-                entity.setStatus(task.getStatus());
+                entity.setCreateTime(task.getCreateTime());
+                fillTaskEntity(entity, task);
                 em.persist(entity);
             } else {
-                entity.setInstanceId(task.getInstanceId());
-                entity.setTokenId(task.getTokenId());
-                entity.setNodeId(task.getNodeId());
-                entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
-                try {
-                    java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                    f.setAccessible(true);
-                    @SuppressWarnings("unchecked")
-                    Set<String> approvers = (Set<String>) f.get(task);
-                    entity.setCompletedApproversJson(JSON.toJSONString(approvers));
-                } catch (Exception e) {
-                    throw new RuntimeException("序列化 completedApprovers 失败", e);
-                }
-                entity.setTenantId(task.getTenantId());
-                entity.setArrival(task.getArrival());
-                entity.setAssignee(task.getAssignee());
-                entity.setDelegatedFrom(task.getDelegatedFrom());
-                entity.setStatus(task.getStatus());
+                fillTaskEntity(entity, task);
             }
             em.flush();  // 立刻 flush,跨事务的 SELECT 可见
             return null;
         });
+    }
+
+    /** 把 domain 任务字段刷进实体（save 的新/旧分支共用，消除重复）。 */
+    private static void fillTaskEntity(WfTaskEntity entity, TaskInstance task) {
+        entity.setInstanceId(task.getInstanceId());
+        entity.setTokenId(task.getTokenId());
+        entity.setNodeId(task.getNodeId());
+        entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
+        // 直接序列化底层 HashSet,避免 unmodifiableSet 包装类型的序列化问题
+        try {
+            Field f = TaskInstance.class.getDeclaredField("completedApprovers");
+            f.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Set<String> approvers = (Set<String>) f.get(task);
+            entity.setCompletedApproversJson(JSON.toJSONString(approvers));
+        } catch (Exception e) {
+            throw new RuntimeException("序列化 completedApprovers 失败", e);
+        }
+        entity.setTenantId(task.getTenantId());
+        entity.setArrival(task.getArrival());
+        entity.setAssignee(task.getAssignee());
+        entity.setDelegatedFrom(task.getDelegatedFrom());
+        entity.setStatus(task.getStatus());
     }
 
     @Override
@@ -124,45 +114,11 @@ public class JpaTaskRepository implements TaskRepository {
                     entity = new WfTaskEntity();
                     entity.setId(task.getId());
                     entity.setRevision(FIRST_REVISION);
-                                        entity.setCreateTime(task.getCreateTime());
-                    entity.setInstanceId(task.getInstanceId());
-                    entity.setTokenId(task.getTokenId());
-                    entity.setNodeId(task.getNodeId());
-                    entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
-                    try {
-                        java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                        f.setAccessible(true);
-                        @SuppressWarnings("unchecked")
-                        Set<String> approvers = (Set<String>) f.get(task);
-                        entity.setCompletedApproversJson(JSON.toJSONString(approvers));
-                    } catch (Exception e) {
-                        throw new RuntimeException("序列化 completedApprovers 失败", e);
-                    }
-                    entity.setTenantId(task.getTenantId());
-                entity.setArrival(task.getArrival());
-                entity.setAssignee(task.getAssignee());
-                entity.setDelegatedFrom(task.getDelegatedFrom());
-                entity.setStatus(task.getStatus());
+                    entity.setCreateTime(task.getCreateTime());
+                    fillTaskEntity(entity, task);
                     em.persist(entity);
                 } else {
-                    entity.setInstanceId(task.getInstanceId());
-                    entity.setTokenId(task.getTokenId());
-                    entity.setNodeId(task.getNodeId());
-                    entity.setCandidateJson(CandidateCodec.toJson(task.getCandidate()));
-                    try {
-                        java.lang.reflect.Field f = TaskInstance.class.getDeclaredField("completedApprovers");
-                        f.setAccessible(true);
-                        @SuppressWarnings("unchecked")
-                        Set<String> approvers = (Set<String>) f.get(task);
-                        entity.setCompletedApproversJson(JSON.toJSONString(approvers));
-                    } catch (Exception e) {
-                        throw new RuntimeException("序列化 completedApprovers 失败", e);
-                    }
-                    entity.setTenantId(task.getTenantId());
-                entity.setArrival(task.getArrival());
-                entity.setAssignee(task.getAssignee());
-                entity.setDelegatedFrom(task.getDelegatedFrom());
-                entity.setStatus(task.getStatus());
+                    fillTaskEntity(entity, task);
                 }
             }
             em.flush();  // 批量 flush
@@ -359,7 +315,8 @@ public class JpaTaskRepository implements TaskRepository {
         // TaskQuery.orderByCreateTime() 只能退化成按 id 排序。
         return TaskInstance.reconstruct(e.getId(), e.getInstanceId(), e.getTokenId(),
                 e.getNodeId(), candidate, completed, e.getStatus(),
-                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival(), e.getAssignee(), e.getDelegatedFrom());
+                e.getRevision(), e.getCreateTime(), e.getTenantId(), e.getArrival(),
+                e.getAssignee(), e.getDelegatedFrom());
     }
 
     /** 插入行的初始版本号（与内存仓储 save 后的版本号对齐） */
@@ -377,7 +334,7 @@ public class JpaTaskRepository implements TaskRepository {
             if (tenantId != null) {
                 jpql += " AND e.tenantId = :tenantId";
             }
-            jakarta.persistence.TypedQuery<Long> query = em.createQuery(jpql, Long.class)
+            TypedQuery<Long> query = em.createQuery(jpql, Long.class)
                     .setParameter("st", TaskStatus.PENDING);
             if (tenantId != null) {
                 query.setParameter("tenantId", tenantId);

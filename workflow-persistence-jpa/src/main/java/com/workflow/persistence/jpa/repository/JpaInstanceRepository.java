@@ -1,16 +1,21 @@
 package com.workflow.persistence.jpa.repository;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.TypeReference;
+import com.workflow.enums.InstanceStatus;
 import com.workflow.persistence.jpa.JpaPersistence;
 import com.workflow.persistence.jpa.entity.WfInstanceEntity;
 import com.workflow.persistence.jpa.entity.WfTaskEntity;
 import com.workflow.persistence.jpa.entity.WfTokenEntity;
 import com.workflow.repository.InstanceRepository;
+import com.workflow.repository.ProcessStatusCount;
 import com.workflow.runtime.ProcessInstance;
 import com.workflow.runtime.TaskInstance;
 import com.workflow.runtime.Token;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.TypedQuery;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -151,8 +156,8 @@ public class JpaInstanceRepository implements InstanceRepository {
                 entity.setParentTokenId(instance.getParentTokenId());
                 entity.setParentNodeId(instance.getParentNodeId());
                 entity.setRootInstanceId(instance.getRootInstanceId());
-            entity.setBusinessKey(instance.getBusinessKey());
-            entity.setInitiator(instance.getInitiator());
+                entity.setBusinessKey(instance.getBusinessKey());
+                entity.setInitiator(instance.getInitiator());
                 em.merge(entity);
 
                 // Token 批量插入
@@ -187,39 +192,39 @@ public class JpaInstanceRepository implements InstanceRepository {
     // 接上真实数据库即失效。补在这里，并靠下面的跨仓储一致性用例守住了。
 
     @Override
-    public java.util.List<ProcessInstance> findByProcessKey(String processKey) {
+    public List<ProcessInstance> findByProcessKey(String processKey) {
         return runInOrOpenTx(em -> em.createQuery(
                         "SELECT e FROM WfInstanceEntity e WHERE e.processKey = :pk ORDER BY e.createTime",
                         WfInstanceEntity.class)
                 .setParameter("pk", processKey)
                 .getResultList().stream()
                 .map(e -> rebuild(e, em))
-                .collect(java.util.stream.Collectors.toList()));
+                .collect(Collectors.toList()));
     }
 
     @Override
-    public java.util.List<ProcessInstance> findByStatus(com.workflow.enums.InstanceStatus status) {
+    public List<ProcessInstance> findByStatus(InstanceStatus status) {
         return runInOrOpenTx(em -> em.createQuery(
                         "SELECT e FROM WfInstanceEntity e WHERE e.status = :st ORDER BY e.createTime",
                         WfInstanceEntity.class)
                 .setParameter("st", status)
                 .getResultList().stream()
                 .map(e -> rebuild(e, em))
-                .collect(java.util.stream.Collectors.toList()));
+                .collect(Collectors.toList()));
     }
 
     @Override
-    public java.util.List<ProcessInstance> findAll() {
+    public List<ProcessInstance> findAll() {
         return runInOrOpenTx(em -> em.createQuery(
                         "SELECT e FROM WfInstanceEntity e ORDER BY e.createTime",
                         WfInstanceEntity.class)
                 .getResultList().stream()
                 .map(e -> rebuild(e, em))
-                .collect(java.util.stream.Collectors.toList()));
+                .collect(Collectors.toList()));
     }
 
     @Override
-    public java.util.List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
+    public List<ProcessInstance> findByProcessKeyAndVersion(String processKey, int version) {
         return runInOrOpenTx(em -> em.createQuery(
                         "SELECT e FROM WfInstanceEntity e WHERE e.processKey = :pk"
                                 + " AND e.processVersion = :v ORDER BY e.createTime",
@@ -228,7 +233,7 @@ public class JpaInstanceRepository implements InstanceRepository {
                 .setParameter("v", version)
                 .getResultList().stream()
                 .map(e -> rebuild(e, em))
-                .collect(java.util.stream.Collectors.toList()));
+                .collect(Collectors.toList()));
     }
 
     @Override
@@ -284,29 +289,28 @@ public class JpaInstanceRepository implements InstanceRepository {
     }
 
     @Override
-    public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus() {
+    public List<ProcessStatusCount> countGroupByProcessAndStatus() {
         return countGroupByProcessAndStatus(null);
     }
 
     @Override
-    public java.util.List<com.workflow.repository.ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
+    public List<ProcessStatusCount> countGroupByProcessAndStatus(String tenantId) {
         return runInOrOpenTx(em -> {
             String jpql = "SELECT e.processKey, e.status, COUNT(e) FROM WfInstanceEntity e";
             if (tenantId != null) {
                 jpql += " WHERE e.tenantId = :tenantId";
             }
             jpql += " GROUP BY e.processKey, e.status";
-            jakarta.persistence.TypedQuery<Object[]> query = em.createQuery(jpql, Object[].class);
+            TypedQuery<Object[]> query = em.createQuery(jpql, Object[].class);
             if (tenantId != null) {
                 query.setParameter("tenantId", tenantId);
             }
-            @SuppressWarnings("unchecked")
-            java.util.List<Object[]> rows = query.getResultList();
-            java.util.List<com.workflow.repository.ProcessStatusCount> out = new java.util.ArrayList<>();
+            List<Object[]> rows = query.getResultList();
+            List<ProcessStatusCount> out = new ArrayList<>();
             for (Object[] a : rows) {
-                out.add(new com.workflow.repository.ProcessStatusCount(
+                out.add(new ProcessStatusCount(
                         (String) a[0],
-                        (com.workflow.enums.InstanceStatus) a[1],
+                        (InstanceStatus) a[1],
                         ((Number) a[2]).longValue()));
             }
             return out;
@@ -341,7 +345,7 @@ public class JpaInstanceRepository implements InstanceRepository {
         instance.setRevision(e.getRevision());
         // status 是非 final 字段,用反射或直接赋值都行
         try {
-            java.lang.reflect.Field statusField = ProcessInstance.class.getDeclaredField("status");
+            Field statusField = ProcessInstance.class.getDeclaredField("status");
             statusField.setAccessible(true);
             statusField.set(instance, e.getStatus());
         } catch (Exception ex) {
@@ -371,7 +375,7 @@ public class JpaInstanceRepository implements InstanceRepository {
         Map<String, Object> variables = new LinkedHashMap<>();
         if (e.getVariablesJson() != null && !e.getVariablesJson().isEmpty()) {
             Map<String, Object> parsed = JSON.parseObject(e.getVariablesJson(),
-                    new com.alibaba.fastjson2.TypeReference<Map<String, Object>>() {});
+                    new TypeReference<Map<String, Object>>() {});
             if (parsed != null) variables.putAll(parsed);
         }
         setFinal(instance, "variables", variables);
@@ -397,7 +401,7 @@ public class JpaInstanceRepository implements InstanceRepository {
     /** 反射写 final 字段 - JDK 17 setAccessible + set 可用 */
     private static void setFinal(Object target, String fieldName, Object value) {
         try {
-            java.lang.reflect.Field f = target.getClass().getDeclaredField(fieldName);
+            Field f = target.getClass().getDeclaredField(fieldName);
             f.setAccessible(true);
             f.set(target, value);
         } catch (Exception ex) {

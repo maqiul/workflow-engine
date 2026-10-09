@@ -1,5 +1,6 @@
 package com.workflow.persistence.jpa.entity;
 
+import com.workflow.enums.TokenStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -36,7 +37,7 @@ public class WfTokenEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 16, nullable = false)
-    private com.workflow.enums.TokenStatus status;
+    private TokenStatus status;
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -46,6 +47,6 @@ public class WfTokenEntity {
     public void setCurrentNodeId(String currentNodeId) { this.currentNodeId = currentNodeId; }
     public int getArrival() { return arrival; }
     public void setArrival(int arrival) { this.arrival = arrival; }
-    public com.workflow.enums.TokenStatus getStatus() { return status; }
-    public void setStatus(com.workflow.enums.TokenStatus status) { this.status = status; }
+    public TokenStatus getStatus() { return status; }
+    public void setStatus(TokenStatus status) { this.status = status; }
 }

@@ -5,11 +5,16 @@ import com.workflow.persistence.jpa.entity.WfHistActivityEntity;
 import com.workflow.persistence.jpa.entity.WfHistTaskEntity;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.runtime.HistoricActivityInstance;
+import com.workflow.runtime.HistoricTaskInstance;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.TypedQuery;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalDouble;
+import java.util.function.Function;
 
 /**
  * JPA 版历史活动仓储。
@@ -121,8 +126,7 @@ public class JpaHistoryRepository implements HistoryRepository {
     }
 
     private List<HistoricActivityInstance> query(
-            java.util.function.Function<EntityManager,
-                    jakarta.persistence.TypedQuery<WfHistActivityEntity>> q) {
+            Function<EntityManager, TypedQuery<WfHistActivityEntity>> q) {
         return jpa.inTransaction(em -> q.apply(em).getResultList().stream()
                 .map(JpaHistoryRepository::toDomain)
                 .toList());
@@ -139,7 +143,7 @@ public class JpaHistoryRepository implements HistoryRepository {
     // ========== 历史任务 ==========
 
     @Override
-    public void saveTask(com.workflow.runtime.HistoricTaskInstance t) {
+    public void saveTask(HistoricTaskInstance t) {
         Objects.requireNonNull(t);
         jpa.inTransaction(em -> {
             WfHistTaskEntity e = em.find(WfHistTaskEntity.class, t.getTaskId());
@@ -165,7 +169,7 @@ public class JpaHistoryRepository implements HistoryRepository {
     }
 
     @Override
-    public java.util.List<com.workflow.runtime.HistoricTaskInstance> findTasksByInstanceId(String instanceId) {
+    public List<HistoricTaskInstance> findTasksByInstanceId(String instanceId) {
         return jpa.inTransaction(em -> em.createQuery(
                         "SELECT e FROM WfHistTaskEntity e WHERE e.instanceId = :iid"
                                 + " ORDER BY e.endTime, e.seq", WfHistTaskEntity.class)
@@ -174,7 +178,7 @@ public class JpaHistoryRepository implements HistoryRepository {
     }
 
     @Override
-    public java.util.List<com.workflow.runtime.HistoricTaskInstance> findTasksInvolving(String userId) {
+    public List<HistoricTaskInstance> findTasksInvolving(String userId) {
         // 逗号包裹存储正是为了这一句：'%,u1,%' 不会把 u1 误配到 u11 上
         String pattern = "%," + userId + ",%";
         return jpa.inTransaction(em -> em.createQuery(
@@ -220,26 +224,26 @@ public class JpaHistoryRepository implements HistoryRepository {
     }
 
     /** 人员列表以 {@code ,u1,u2,} 形式落库，便于 LIKE 精确匹配。 */
-    private static String toCsv(java.util.Collection<String> users) {
+    private static String toCsv(Collection<String> users) {
         if (users == null || users.isEmpty()) {
             return ",";
         }
         return "," + String.join(",", users) + ",";
     }
 
-    private static java.util.List<String> fromCsv(String csv) {
+    private static List<String> fromCsv(String csv) {
         if (csv == null || csv.length() <= 1) {
-            return java.util.List.of();
+            return List.of();
         }
         String body = csv;
         if (body.startsWith(",")) body = body.substring(1);
         if (body.endsWith(",")) body = body.substring(0, body.length() - 1);
-        if (body.isEmpty()) return java.util.List.of();
-        return java.util.Arrays.stream(body.split(",")).filter(s -> !s.isEmpty()).toList();
+        if (body.isEmpty()) return List.of();
+        return Arrays.stream(body.split(",")).filter(s -> !s.isEmpty()).toList();
     }
 
-    private static com.workflow.runtime.HistoricTaskInstance toTaskDomain(WfHistTaskEntity e) {
-        return com.workflow.runtime.HistoricTaskInstance.reconstruct(
+    private static HistoricTaskInstance toTaskDomain(WfHistTaskEntity e) {
+        return HistoricTaskInstance.reconstruct(
                 e.getTaskId(), e.getInstanceId(), e.getProcessKey(), e.getProcessVersion(),
                 e.getNodeId(), fromCsv(e.getCandidateUsers()), fromCsv(e.getCompletedBy()),
                 e.getStartTime(), e.getEndTime(), e.getEndReason(), e.getSeq());
