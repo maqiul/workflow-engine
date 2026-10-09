@@ -35,6 +35,8 @@ import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.function.Function;
 
@@ -382,6 +384,20 @@ public final class MybatisPersistence {
 
     public SqlSessionFactory sqlSessionFactory() {
         return sqlSessionFactory;
+    }
+
+    /** 读 {@code wf_sequence} 当前值（不消耗；测试/观测用，验证 seq 确由 DB 序列分配）。 */
+    public long sequenceValue(String name) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT next_val FROM wf_sequence WHERE name = ?")) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : 0L;
+            }
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException("读取序列值失败: " + name, e);
+        }
     }
 
     public ProcessRepository processRepo() {

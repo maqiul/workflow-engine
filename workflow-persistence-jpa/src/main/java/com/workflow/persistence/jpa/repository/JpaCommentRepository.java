@@ -4,6 +4,7 @@ import com.workflow.persistence.jpa.JpaPersistence;
 import com.workflow.persistence.jpa.entity.WfCommentEntity;
 import com.workflow.repository.CommentRepository;
 import com.workflow.runtime.Comment;
+import jakarta.persistence.EntityManager;
 
 import java.util.List;
 import java.util.Objects;
@@ -30,9 +31,11 @@ public class JpaCommentRepository implements CommentRepository {
         Objects.requireNonNull(comment);
         jpa.inTransaction(em -> {
             WfCommentEntity e = em.find(WfCommentEntity.class, comment.getId());
-            if (e == null) {
+            boolean isNew = (e == null);
+            if (isNew) {
                 e = new WfCommentEntity();
                 e.setId(comment.getId());
+                e.setSeq(nextSeq(em, "comment"));   // 新行：DB 序列，跨重启/节点单调
             }
             e.setInstanceId(comment.getInstanceId());
             e.setTaskId(comment.getTaskId());
@@ -41,7 +44,7 @@ public class JpaCommentRepository implements CommentRepository {
             e.setType(comment.getType());
             e.setMessage(comment.getMessage());
             e.setCreateTime(comment.getCreateTime());
-            e.setSeq(comment.getSeq());
+            // seq 仅新行分配；意见不可变，实际不会走 update 分支
             em.merge(e);
             return null;
         });
@@ -86,5 +89,14 @@ public class JpaCommentRepository implements CommentRepository {
     private static Comment toDomain(WfCommentEntity e) {
         return Comment.reconstruct(e.getId(), e.getInstanceId(), e.getTaskId(), e.getNodeId(),
                 e.getUserId(), e.getType(), e.getMessage(), e.getCreateTime(), e.getSeq());
+    }
+
+    /** 从 wf_sequence 取全局单调序号；须在同一事务内调用（与业务写入原子）。 */
+    private static long nextSeq(EntityManager em, String name) {
+        em.createNativeQuery("UPDATE wf_sequence SET next_val = next_val + 1 WHERE name = ?1")
+                .setParameter(1, name).executeUpdate();
+        Number v = (Number) em.createNativeQuery("SELECT next_val FROM wf_sequence WHERE name = ?1")
+                .setParameter(1, name).getSingleResult();
+        return v.longValue();
     }
 }

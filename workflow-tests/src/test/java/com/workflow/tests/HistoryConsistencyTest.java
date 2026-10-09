@@ -538,4 +538,42 @@ class HistoryConsistencyTest {
             engine.shutdown();
         }
     }
+
+    // ---------- 9. seq 来自数据库序列（J13 修复）----------
+
+    @Test
+    @DisplayName("历史 seq 由 wf_sequence 分配（JPA/MyBatis），非进程内计数 —— 跨重启/节点单调")
+    void seqSourcedFromDbSequence() {
+        for (String which : List.of("JPA", "MyBatis")) {
+            Suite s = suite(which);
+            registerTwoStep(s);
+            WorkflowEngine engine = engineOf(s);
+
+            long before = seqVal(which, "hist_activity");
+            String id = engine.start("hist-cons", Map.of());
+            engine.completeTask(pendingTask(s, id, "apply"), "u1", true);
+            engine.completeTask(pendingTask(s, id, "manager"), "u2", true);
+            long after = seqVal(which, "hist_activity");
+
+            assertThat(after).as("%s: 序列被推进", which).isGreaterThan(before);
+            List<HistoricActivityInstance> acts = s.histRepo().findByInstanceId(id);
+            assertThat(acts).as("%s: 有活动", which).isNotEmpty();
+            assertThat(acts).extracting(HistoricActivityInstance::getSeq)
+                    .as("%s: 每条活动 seq 均落在序列区间内", which)
+                    .allMatch(seq -> seq > before && seq <= after);
+            assertThat(acts).extracting(HistoricActivityInstance::getSeq)
+                    .as("%s: seq 互不相同（序列分配，非进程内撞号）", which)
+                    .doesNotHaveDuplicates();
+            engine.shutdown();
+        }
+    }
+
+    private long seqVal(String which, String name) {
+        if ("JPA".equals(which)) {
+            return ((Number) jpa.inTransaction(em -> em.createNativeQuery(
+                    "SELECT next_val FROM wf_sequence WHERE name = ?1")
+                    .setParameter(1, name).getSingleResult())).longValue();
+        }
+        return mb.sequenceValue(name);
+    }
 }

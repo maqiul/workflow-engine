@@ -36,9 +36,11 @@ public class JpaHistoryRepository implements HistoryRepository {
         Objects.requireNonNull(activity);
         jpa.inTransaction(em -> {
             WfHistActivityEntity e = em.find(WfHistActivityEntity.class, activity.getId());
-            if (e == null) {
+            boolean isNew = (e == null);
+            if (isNew) {
                 e = new WfHistActivityEntity();
                 e.setId(activity.getId());
+                e.setSeq(nextSeq(em, "hist_activity"));   // 新行：DB 序列，跨重启/节点单调
             }
             e.setInstanceId(activity.getInstanceId());
             e.setProcessKey(activity.getProcessKey());
@@ -48,7 +50,7 @@ public class JpaHistoryRepository implements HistoryRepository {
             e.setTokenId(activity.getTokenId());
             e.setTaskId(activity.getTaskId());
             e.setStartTime(activity.getStartTime());
-            e.setSeq(activity.getSeq());
+            // update（如 UserTask 活动 close）不重设 seq，保留插入时的值，避免定序键漂移
             e.setEndTime(activity.getEndTime());
             e.setPerformer(activity.getPerformer());
             em.merge(e);
@@ -141,9 +143,11 @@ public class JpaHistoryRepository implements HistoryRepository {
         Objects.requireNonNull(t);
         jpa.inTransaction(em -> {
             WfHistTaskEntity e = em.find(WfHistTaskEntity.class, t.getTaskId());
-            if (e == null) {
+            boolean isNew = (e == null);
+            if (isNew) {
                 e = new WfHistTaskEntity();
                 e.setTaskId(t.getTaskId());
+                e.setSeq(nextSeq(em, "hist_task"));
             }
             e.setInstanceId(t.getInstanceId());
             e.setProcessKey(t.getProcessKey());
@@ -153,7 +157,7 @@ public class JpaHistoryRepository implements HistoryRepository {
             e.setCompletedBy(toCsv(t.getCompletedBy()));
             e.setStartTime(t.getStartTime());
             e.setEndTime(t.getEndTime());
-            e.setSeq(t.getSeq());
+            // seq 仅新行分配；update 保留原值
             e.setEndReason(t.getEndReason());
             em.merge(e);
             return null;
@@ -239,5 +243,14 @@ public class JpaHistoryRepository implements HistoryRepository {
                 e.getTaskId(), e.getInstanceId(), e.getProcessKey(), e.getProcessVersion(),
                 e.getNodeId(), fromCsv(e.getCandidateUsers()), fromCsv(e.getCompletedBy()),
                 e.getStartTime(), e.getEndTime(), e.getEndReason(), e.getSeq());
+    }
+
+    /** 从 wf_sequence 取全局单调序号；须在同一事务内调用（与业务写入原子）。 */
+    private static long nextSeq(EntityManager em, String name) {
+        em.createNativeQuery("UPDATE wf_sequence SET next_val = next_val + 1 WHERE name = ?1")
+                .setParameter(1, name).executeUpdate();
+        Number v = (Number) em.createNativeQuery("SELECT next_val FROM wf_sequence WHERE name = ?1")
+                .setParameter(1, name).getSingleResult();
+        return v.longValue();
     }
 }

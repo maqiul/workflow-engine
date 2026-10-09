@@ -41,6 +41,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
             if (isNew) {
                 e = new WfHistActivityEntity();
                 e.setId(a.getId());
+                e.setSeq(MybatisSequenceSupport.nextSeq(session, "hist_activity"));
             }
             e.setInstanceId(a.getInstanceId());
             e.setProcessKey(a.getProcessKey());
@@ -50,7 +51,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
             e.setTokenId(a.getTokenId());
             e.setTaskId(a.getTaskId());
             e.setStartTime(a.getStartTime());
-            e.setSeq(a.getSeq());
+            // update（如活动 close）不重设 seq，保留插入值，避免定序键漂移
             e.setEndTime(a.getEndTime());
             e.setPerformer(a.getPerformer());
             if (isNew) {
@@ -137,6 +138,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
             if (isNew) {
                 e = new WfHistTaskEntity();
                 e.setTaskId(t.getTaskId());
+                e.setSeq(MybatisSequenceSupport.nextSeq(session, "hist_task"));
             }
             e.setInstanceId(t.getInstanceId());
             e.setProcessKey(t.getProcessKey());
@@ -146,7 +148,7 @@ public class MybatisHistoryRepository implements HistoryRepository {
             e.setCompletedBy(toCsv(t.getCompletedBy()));
             e.setStartTime(t.getStartTime());
             e.setEndTime(t.getEndTime());
-            e.setSeq(t.getSeq());
+            // seq 仅新行分配；update 保留原值
             e.setEndReason(t.getEndReason());
             if (isNew) {
                 mapper.insert(e);

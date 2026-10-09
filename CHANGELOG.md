@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.25.1**
+项目状态：**v3.25.2**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -15,6 +15,14 @@
 - v3.24.0 — 依赖安全补丁与 CI 守卫修复（6 项依赖升级含 3 个 CVE 修复 / actions 升 node24 运行时 / Dependabot ignore 策略）
 - v3.25.0 — 接入缺口补齐（监听口进接口 + 修 remove 静默失效 / onCancelled 事件 / claim·setAssignee 一等公民 / deleteInstance）
 - v3.25.1 — businessKey 启动幂等（补 v3.25.0 的语义尾巴）+ WfAuditLogEntity 显式登记（消除隐式扫描隐患）
+- v3.25.2 — 历史/意见 seq 改用数据库序列（技术债 J13，跨重启/节点单调）
+
+---
+
+## [3.25.2] - 2026-09-16
+
+### 变更
+- **历史/意见 seq 改用数据库序列**（技术债 J13）：此前 `HistoricActivityInstance` / `HistoricTaskInstance` / `Comment` 各持一个进程内 `AtomicLong`，重启归零、集群下同实例跨节点推进 + 同毫秒会撞号导致定序错乱（domain 注释早标注"多实例部署须改用数据库序列"）。新增 `wf_sequence` 序列表（Flyway **V14**，跨库通用，不依赖各库原生 `SEQUENCE` 语法）；JPA/MyBatis 仓储 save 时**新行取号、update 保留**（活动 close 不重设 seq，避免定序键漂移），取号与业务写入同事务。InMemory 保持进程内（单机无碍）。`HistoryConsistencyTest.seqSourcedFromDbSequence` 断言 seq 落在序列区间且无重复。
 
 ---
 

@@ -41,6 +41,7 @@ public class MybatisCommentRepository implements CommentRepository {
             if (isNew) {
                 e = new WfCommentEntity();
                 e.setId(comment.getId());
+                e.setSeq(MybatisSequenceSupport.nextSeq(session, "comment"));
             }
             e.setInstanceId(comment.getInstanceId());
             e.setTaskId(comment.getTaskId());
@@ -49,7 +50,7 @@ public class MybatisCommentRepository implements CommentRepository {
             e.setType(comment.getType());
             e.setMessage(comment.getMessage());
             e.setCreateTime(comment.getCreateTime());
-            e.setSeq(comment.getSeq());
+            // seq 仅新行分配；意见不可变，实际不会走 update 分支
             if (isNew) {
                 mapper.insert(e);
             } else {
