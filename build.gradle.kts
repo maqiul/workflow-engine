@@ -17,7 +17,7 @@ version = projectVersion
 
 // 统一依赖版本
 val fastjson2Version = "2.0.65"
-val slf4jVersion = "2.0.19"
+val slf4jVersion = "2.0.20"
 val junitVersion = "5.10.2"
 // Gradle 9 起，测试运行时不再隐式提供 JUnit Platform Launcher，必须显式声明，
 // 否则 :workflow-core:test / :workflow-rest:test 会以

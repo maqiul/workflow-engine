@@ -21,10 +21,10 @@ dependencies {
     // 若挂在 implementation 上，POM 里会变成 runtime scope，
     // 消费方编译自己那行 lambda 就会报 "cannot access EntityManager"。
     api("jakarta.persistence:jakarta.persistence-api:3.1.0")
-    implementation("org.hibernate.orm:hibernate-core:6.6.56.Final")
+    implementation("org.hibernate.orm:hibernate-core:6.6.58.Final")
 
     // H2 内存数据库(测试/演示用,生产替换为 MySQL/PostgreSQL)
-    implementation("com.h2database:h2:2.5.250")
+    implementation("com.h2database:h2:2.5.252")
 
     // HikariCP 连接池
     implementation("com.zaxxer:HikariCP:7.1.0")
@@ -33,7 +33,7 @@ dependencies {
     // - fastjson2
 
     // 日志实现 - 让 JPA 模块运行时能输出 SQL
-    implementation("ch.qos.logback:logback-classic:1.6.3")
+    implementation("ch.qos.logback:logback-classic:1.6.5")
 
     // 测试
     testImplementation(project(":workflow-tests"))
