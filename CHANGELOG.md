@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.25.2**
+项目状态：**v3.26.0**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -16,6 +16,35 @@
 - v3.25.0 — 接入缺口补齐（监听口进接口 + 修 remove 静默失效 / onCancelled 事件 / claim·setAssignee 一等公民 / deleteInstance）
 - v3.25.1 — businessKey 启动幂等（补 v3.25.0 的语义尾巴）+ WfAuditLogEntity 显式登记（消除隐式扫描隐患）
 - v3.25.2 — 历史/意见 seq 改用数据库序列（技术债 J13，跨重启/节点单调）
+
+---
+
+## [3.26.0] - 2026-10-09
+
+定位：**补齐持久化异步作业执行器** —— 这是与 Flowable 等成熟引擎相比最实在的一块缺口
+（Flowable 有 async executor：作业持久化 + 重试 + 死信 + 跨重启；本项目此前只有内存定时器）。
+本次**不新建第二套机制**：作业执行器是底座，超时只是其中一种作业类型。
+
+### 新增
+- **`Job` 作业领域对象 + `JobRepository`（InMemory / JPA / MyBatis 三套）**：
+  作业落库（`wf_job` 表，Flyway **V15**，多方言安全）→ 进程重启后作业仍在，
+  不必再靠「扫描任务 + 按 createTime 重算到期时刻」这种派生式恢复。
+  仓储接口是**抽象**方法而非 default —— 缺实现必须编译期暴露（内存绿、真库炸的老坑）。
+- **`JobExecutor`**：轮询 + **原子领取**（带条件 UPDATE，影响行数 > 0 才算领到）+ **租约**
+  （节点崩溃后作业可被别人接管，不丢）+ **退避重试**（base × 2^n，封顶）
+  + **死信**（重试耗尽转 `FAILED`，行保留可查，不静默丢失）+ 优雅停机 + 死信观测。
+- **`PersistentJobTimeoutScheduler`**：实现既有 `TimeoutScheduler` 接口 → **引擎 30+ 调用点零改动**，
+  换实现只是换一行注入。作业 id = taskId，任务完成/驳回/转办时取消超时 = 按 id 删作业，天然幂等。
+
+### 解决的问题
+- **内存调度器回调抛异常 = 超时永久丢失**（只打一行 error log，此后该任务永不超时、审批静默卡死）→ 现在会重试，最终进死信可查。
+- **多节点各自扫描恢复 → 重复触发**（原先靠"回调前重查任务状态"幂等兜底，浪费且有竞态）→ 现在靠原子领取，作业只被一个节点执行。
+- **无任何可见性**（"哪些作业待处理/失败了"答不上来）→ `JobExecutor.deadLetters()` + `JobRepository.countByState`。
+
+### 验证
+`JobExecutorTest`(8：执行后删除/未到期不执行/退避重试/重试耗尽进死信/多节点并发领取只成功一次/租约过期可接管/重启后仍在/无处理器直接死信)
++ `JobRepositoryConsistencyTest`(3，三套一致，含**真库并发领取互斥**与租约接管)
++ `PersistentTimeoutJobTest`(2：超时报作业/完成后取消作业)。全量 `gradle build` 绿。
 
 ---
 

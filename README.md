@@ -47,6 +47,7 @@
 - [30. 任务查询条件下推](#30-任务查询条件下推v322)
 - [31. 按候选组查待办](#31-按候选组查待办v323)
 - [32. 引擎侧接入缺口补齐](#32-引擎侧接入缺口补齐v325)
+- [33. 持久化异步作业执行器](#33-持久化异步作业执行器v326)
 
 ---
 
@@ -1996,6 +1997,56 @@ engine.start("leave", "ORDER-2026-001", "alice", vars);   // 带业务单号
 - 监听注册口 `add/removeExecutionListener`、`add/removeTaskListener` 提升进 `IWorkflowEngine`（此前只在具体类，面向接口的接入方要强转才能注册），并修掉 `remove` 对副本操作导致「注销失效」的 bug。
 
 > 全部改动三套仓储（InMemory / JPA / MyBatis）一致 + 全量测试绿；v3.25.1 追加 businessKey 并发幂等锁 + WfAuditLogEntity 显式登记。多实例节点「整体进出」改道语义由 `MultiInstanceJumpTest` 回归覆盖（Flowable 的「只移部分 MI execution」属模型差异，由 facade 层组合承担）。
+
+---
+
+## 33. 持久化异步作业执行器（v3.26）
+
+补齐与 Flowable 等成熟引擎相比最实在的一块缺口：**作业持久化 + 重试 + 死信 + 跨重启 + 多节点安全**。
+此前超时靠内存 JDK 定时器：回调抛异常就**永久丢失**（只打一行 error log，该任务此后永不超时、审批静默卡死），
+重启要靠「扫描任务 + 按 createTime 重算到期时刻」做派生式恢复，多节点各自扫描会重复触发。
+
+### 33.1 用法（三行接入，引擎零改动）
+
+```java
+JobExecutor executor = new JobExecutor(jpa.jobRepo());          // 1. 作业仓储（三套一致）
+PersistentJobTimeoutScheduler scheduler =                        // 2. 超时作业化
+        new PersistentJobTimeoutScheduler(executor, timeoutHandler::onTaskTimeout);
+WorkflowEngine engine = WorkflowEngineBuilder.builder(procRepo, instRepo, taskRepo)
+        .timeoutScheduler(scheduler)                             //    实现既有接口
+        .build();
+executor.start();                                                // 3. 启动轮询
+// 应用退出：executor.close();
+```
+
+`PersistentJobTimeoutScheduler` 实现的是既有 `TimeoutScheduler` 接口 → **引擎 30+ 调用点零改动**，换实现只是换一行注入。
+
+### 33.2 作业模型
+
+| 字段 | 作用 |
+|---|---|
+| `id` | 幂等键（超时作业 = taskId，任务完成时按 id 删作业，天然幂等） |
+| `type` | `TIMEOUT` / `SERVICE_TASK` / `NOTIFICATION_RETRY` |
+| `instanceId` | 关联实例（排他执行 + 实例结束清理） |
+| `payload` | JSON 参数（超时作业存策略与目标用户） |
+| `dueAt` | 到期时刻 |
+| `state` | `READY` / `FAILED`（死信，**行保留**可查可重放） |
+| `retries` / `maxRetries` | 重试计数与上限 |
+| `lockOwner` / `lockExpiresAt` | 领取者与**租约**（节点崩溃后作业可被别人接管，不丢） |
+
+### 33.3 关键保证
+
+- **原子领取**：带条件 `UPDATE`（受影响行数 > 0 才算领到）→ 多节点下同一作业只被一个节点执行；
+- **租约**：节点崩溃后租约到期，作业自动可被接管（内存版没有这个概念，作业会随进程一起消失）；
+- **退避重试**：base × 2^n（封顶），失败不丢；
+- **死信可见**：重试耗尽转 `FAILED`，`JobExecutor.deadLetters()` 可查 —— 不再有"打完日志就消失"的静默失败；
+- **执行在独立事务**：不在领取事务里跑（作业可能写多张表、耗时不定），领取只靠租约。
+
+### 33.4 仓储
+
+`JobRepository` 是**抽象**接口（不 default），InMemory / JPA / MyBatis 三套实现，
+`JobRepositoryConsistencyTest` 跨三套验证同一答案 —— 含**真库并发领取互斥**与租约接管。
+Flyway **V15** 建 `wf_job` 表（多方言安全：不使用 `ADD COLUMN IF NOT EXISTS`）。
 
 ---
 

@@ -14,6 +14,7 @@ import com.workflow.persistence.mybatis.mapper.WfDecisionTableMapper;
 import com.workflow.persistence.mybatis.mapper.WfEventMapper;
 import com.workflow.persistence.mybatis.mapper.WfHistActivityMapper;
 import com.workflow.persistence.mybatis.mapper.WfHistTaskMapper;
+import com.workflow.persistence.mybatis.mapper.WfJobMapper;
 import com.workflow.persistence.mybatis.mapper.WfTaskMapper;
 import com.workflow.persistence.mybatis.mapper.WfTokenMapper;
 import com.workflow.persistence.mybatis.repository.MybatisAuditLogRepository;
@@ -25,6 +26,7 @@ import com.workflow.persistence.mybatis.repository.MybatisDecisionHistoryReposit
 import com.workflow.persistence.mybatis.repository.MybatisDecisionRepository;
 import com.workflow.persistence.mybatis.repository.MybatisEventRepository;
 import com.workflow.persistence.mybatis.repository.MybatisHistoryRepository;
+import com.workflow.persistence.mybatis.repository.MybatisJobRepository;
 import com.workflow.persistence.mybatis.repository.MybatisProcessRepository;
 import com.workflow.persistence.mybatis.repository.MybatisTaskRepository;
 import com.workflow.repository.AuditLogRepository;
@@ -32,6 +34,7 @@ import com.workflow.repository.CommentRepository;
 import com.workflow.repository.EventRepository;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
+import com.workflow.repository.JobRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
 import com.workflow.tx.ExternalTransactionProvider;
@@ -100,6 +103,7 @@ public final class MybatisPersistence {
     private volatile MybatisProcessRepository processRepo;
     private volatile MybatisInstanceRepository instanceRepo;
     private volatile MybatisTaskRepository taskRepo;
+    private volatile MybatisJobRepository jobRepo;
     private volatile MybatisAuditLogRepository auditLogRepo;
 
     private MybatisPersistence() {
@@ -234,6 +238,8 @@ public final class MybatisPersistence {
         // 历史活动：漏掉这行不会编译报错，只在 getMapper 时抛运行时异常
         configuration.addMapper(WfHistActivityMapper.class);
         configuration.addMapper(WfHistTaskMapper.class);
+        // 异步作业
+        configuration.addMapper(WfJobMapper.class);
         // 事件网关
         configuration.addMapper(WfEventMapper.class);
         // DMN 决策表和历史
@@ -432,6 +438,14 @@ public final class MybatisPersistence {
             taskRepo = new MybatisTaskRepository(this);
         }
         return taskRepo;
+    }
+
+    /** 提供 JobRepository（异步作业执行器的存储底座）。 */
+    public JobRepository jobRepo() {
+        if (jobRepo == null) {
+            jobRepo = new MybatisJobRepository(this);
+        }
+        return jobRepo;
     }
 
     public AuditLogRepository auditLogRepo() {

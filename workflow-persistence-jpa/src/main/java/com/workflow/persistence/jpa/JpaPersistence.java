@@ -10,6 +10,7 @@ import com.workflow.persistence.jpa.repository.JpaDecisionRepository;
 import com.workflow.persistence.jpa.repository.JpaEventRepository;
 import com.workflow.persistence.jpa.repository.JpaHistoryRepository;
 import com.workflow.persistence.jpa.repository.JpaInstanceRepository;
+import com.workflow.persistence.jpa.repository.JpaJobRepository;
 import com.workflow.persistence.jpa.repository.JpaProcessRepository;
 import com.workflow.persistence.jpa.repository.JpaTaskRepository;
 import com.workflow.persistence.migrate.FlywayMigrator;
@@ -18,6 +19,7 @@ import com.workflow.repository.CommentRepository;
 import com.workflow.repository.EventRepository;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
+import com.workflow.repository.JobRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
 import com.workflow.tx.TransactionContext;
@@ -232,6 +234,11 @@ public class JpaPersistence {
     /** 提供 TaskRepository */
     public TaskRepository taskRepo() {
         return new JpaTaskRepository(this);
+    }
+
+    /** 提供 JobRepository（异步作业执行器的存储底座）。 */
+    public JobRepository jobRepo() {
+        return new JpaJobRepository(this);
     }
 
     /** 提供 AuditLogRepository */
