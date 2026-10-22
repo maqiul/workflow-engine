@@ -18,7 +18,7 @@ version = projectVersion
 // 统一依赖版本
 val fastjson2Version = "2.0.65"
 val slf4jVersion = "2.0.19"
-val junitVersion = "5.10.2"
+val junitVersion = "6.1.3"
 // Gradle 9 起，测试运行时不再隐式提供 JUnit Platform Launcher，必须显式声明，
 // 否则 :workflow-core:test / :workflow-rest:test 会以
 // "Failed to load JUnit Platform" 失败。1.10.2 与 junit-jupiter 5.10.2 配套，
