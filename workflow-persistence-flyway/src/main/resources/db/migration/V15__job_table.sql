@@ -1,12 +1,15 @@
 -- V15: 异步作业表（持久化作业执行器）
 -- 作业落库 → 进程重启后仍在、执行失败可重试、最终进死信可查、多节点靠原子领取互斥。
--- 方言约束（勿改回）：不使用 ADD COLUMN IF NOT EXISTS（MariaDB 扩展，MySQL 会抛语法错误）；
---   CREATE INDEX 不加 IF NOT EXISTS（MySQL 不支持）。Flyway 保证每版本仅执行一次。
+-- 方言约束（勿改回）：
+--   * 不使用 ADD COLUMN IF NOT EXISTS（MariaDB 扩展，MySQL 会抛语法错误）；
+--   * **不使用 CLOB**（MySQL 5.0+ 已移除该类型，只剩 TEXT/LONGTEXT）——
+--     大字段一律用 TEXT，与 V1 的约定一致（H2 2.x / MySQL / PG 三库通用）；
+--   * CREATE INDEX 不加 IF NOT EXISTS（MySQL 不支持）。Flyway 保证每版本仅执行一次。
 CREATE TABLE wf_job (
     id              VARCHAR(64)   NOT NULL,
     type            VARCHAR(32)   NOT NULL,
     instance_id     VARCHAR(64),
-    payload         CLOB,
+    payload         TEXT,
     due_at          BIGINT        NOT NULL,
     state           VARCHAR(16)   NOT NULL,
     retries         INT           NOT NULL DEFAULT 0,

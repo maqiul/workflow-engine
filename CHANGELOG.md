@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.26.1**
+项目状态：**v3.26.2**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -16,6 +16,21 @@
 - v3.25.0 — 接入缺口补齐（监听口进接口 + 修 remove 静默失效 / onCancelled 事件 / claim·setAssignee 一等公民 / deleteInstance）
 - v3.25.1 — businessKey 启动幂等（补 v3.25.0 的语义尾巴）+ WfAuditLogEntity 显式登记（消除隐式扫描隐患）
 - v3.25.2 — 历史/意见 seq 改用数据库序列（技术债 J13，跨重启/节点单调）
+
+---
+
+## [3.26.2] - 2026-10-22
+
+### 修复
+- **V15 迁移用了 MySQL 不支持的 `CLOB` 类型** —— `wf_job.payload CLOB` 在真 MySQL 8.4 上直接语法错误，导致**两个 MySQL 跨库测试全挂、PG 全过**（PG 支持 CLOB，症状与当初 V8 的 `ADD COLUMN IF NOT EXISTS` 一模一样，只在 nightly 抓得到）。
+  改为 `TEXT`（与 V1 的约定一致：TEXT 三库通用）。**这是同类问题的第二次**（V8 / V15），故一并加了自动化守卫。
+  - 注：V15 从未在任何库上成功应用过（MySQL 直接失败、PG 侧为临时容器），直接改内容不影响 checksum 校验。
+
+### 新增
+- **迁移脚本三库方言守卫**（`MigrationDialectGuardTest`）：扫描 `db/migration/*.sql` 的**非注释行**，禁止出现单库专属语法
+  —— `ADD COLUMN IF NOT EXISTS`（MariaDB 扩展）、`COMMENT ON COLUMN`（PG 专属）、`CLOB`（MySQL 5.0+ 已移除）、
+  `CREATE INDEX IF NOT EXISTS`、`SERIAL`（PG 专有）。报错带**文件名 + 行号 + 原因 + 正确写法**。
+  已做**变异校验**（故意放回 `CLOB` → 守卫确实报红 → 还原转绿），确保它不是"从不会响的假保险"。
 
 ---
 
