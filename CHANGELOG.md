@@ -2,7 +2,7 @@
 
 自研工作流引擎（workflow-engine）变更日志。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-项目状态：**v3.26.0**
+项目状态：**v3.26.1**
 - v3.15.0 — 进生产底盘加固（① 超时调度重启恢复 ✅ / ② REST 鉴权 ✅ / ③ 集群乐观锁 ✅ / ④ 批量迁移 ✅）
 - v3.16.0 — Flowable BPMN 导入兼容性加固（修硬失败 / 消除会签静默降级 / 未知属性不再静默丢弃）
 - v3.17.0 — 候选组组织架构支持（模型层 `groupIds` / 展开失败即抛出 / 导出往返对称 / 管理员改派通道）
@@ -19,7 +19,20 @@
 
 ---
 
-## [3.26.0] - 2026-10-09
+## [3.26.1] - 2026-10-22
+
+### 修复 / 补全
+- **G-17：MyBatis-Plus 不再向消费方传递版本**。此前 `api("com.baomidou:mybatis-plus:3.5.17")` 会把版本顶给消费方 —— 消费方若自带其它版本（如 Spring Boot 生态的 3.5.7），Gradle 的冲突解决默认「选最高版本」，会被强制抬到 3.5.17，可能触发 `NoSuchMethodError`。
+  - **取证**：`MybatisPersistence` 的公开签名只暴露 `org.apache.ibatis.*`（`SqlSession`/`SqlSessionFactory`），**零 `com.baomidou.*`**；原先"必须用 api"的说法混淆了「暴露的类型」与「内部 ORM」。
+  - **改法**：`api("org.mybatis:mybatis:3.5.19")`（真正暴露的类型）+ `compileOnly("com.baomidou:mybatis-plus:3.5.17")`（内部 ORM，与本模块 HikariCP / H2 的处理一致）。测试侧显式补 `testRuntimeOnly`。
+  - **验证**：生成的 POM 里 `mybatis-plus` **完全消失**，`mybatis` = compile scope。
+  - **版本安全**：`FieldStrategy.ALWAYS`（引擎唯一用到的较新 API）自 3.5.7 起即存在（javap 实测校验）。
+  - ⚠️ 消费方使用 MyBatis 持久化模块时**需自行引入 mybatis-plus**（用 MyBatis 实现却没装 MyBatis-Plus 本身就是缺依赖）。
+- **作业与实例生命周期绑定**：实例进终态（完成 / 终止 / 撤回）时清掉该实例遗留的作业，避免「实例已结束、作业还在库里等着触发」的孤儿作业。引擎新增可选 `jobRepository`（`WorkflowEngineBuilder.jobRepository(...)`），未注入时行为不变。
+
+---
+
+## [3.26.0] - 2026-10-22
 
 定位：**补齐持久化异步作业执行器** —— 这是与 Flowable 等成熟引擎相比最实在的一块缺口
 （Flowable 有 async executor：作业持久化 + 重试 + 死信 + 跨重启；本项目此前只有内存定时器）。

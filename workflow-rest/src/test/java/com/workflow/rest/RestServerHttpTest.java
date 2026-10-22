@@ -1,14 +1,17 @@
 package com.workflow.rest;
 
 import com.workflow.builder.ProcessBuilder;
+import com.workflow.concurrency.LocalInstanceLocks;
 import com.workflow.definition.Candidate;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.enums.HistoryKind;
+import com.workflow.enums.TaskStatus;
+import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InMemoryHistoryRepository;
 import com.workflow.repository.InMemoryInstanceRepository;
 import com.workflow.repository.InMemoryProcessRepository;
 import com.workflow.repository.InMemoryTaskRepository;
-import com.workflow.repository.HistoryRepository;
-import com.workflow.enums.TaskStatus;
+import com.workflow.tx.UndoLogTransactionRunner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +22,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.EnumSet;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,9 +54,9 @@ class RestServerHttpTest {
         taskRepo = new InMemoryTaskRepository();
         histRepo = new InMemoryHistoryRepository();
         engine = new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, null, null,
-                histRepo, java.util.EnumSet.allOf(com.workflow.enums.HistoryKind.class),
-                null, null, null, new com.workflow.concurrency.LocalInstanceLocks(),
-                new com.workflow.tx.UndoLogTransactionRunner(), 0, 0L);
+                histRepo, EnumSet.allOf(HistoryKind.class),
+                null, null, null, null, new LocalInstanceLocks(),
+                new UndoLogTransactionRunner(), 0, 0L);
         procRepo.save(ProcessBuilder.create("http-leave")
                 .version(1)
                 .start("start")

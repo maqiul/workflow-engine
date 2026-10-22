@@ -1,18 +1,22 @@
 package com.workflow.rest;
 
 import com.workflow.builder.ProcessBuilder;
+import com.workflow.concurrency.LocalInstanceLocks;
 import com.workflow.definition.Candidate;
 import com.workflow.definition.ProcessDefinition;
 import com.workflow.engine.WorkflowEngine;
+import com.workflow.enums.HistoryKind;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InMemoryHistoryRepository;
 import com.workflow.repository.InMemoryInstanceRepository;
 import com.workflow.repository.InMemoryProcessRepository;
 import com.workflow.repository.InMemoryTaskRepository;
+import com.workflow.tx.UndoLogTransactionRunner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
@@ -57,9 +61,9 @@ class RestApiTest {
     /** 用给定历史仓储装配引擎；hr 传 null 即不记历史。 */
     private WorkflowEngine engine(HistoryRepository hr) {
         return new WorkflowEngine(procRepo, instRepo, taskRepo, null, null, null, null, null, null,
-                hr, java.util.EnumSet.allOf(com.workflow.enums.HistoryKind.class), 
-                null, null, null, new com.workflow.concurrency.LocalInstanceLocks(),
-                new com.workflow.tx.UndoLogTransactionRunner(), 0, 0L);
+                hr, EnumSet.allOf(HistoryKind.class),
+                null, null, null, null, new LocalInstanceLocks(),
+                new UndoLogTransactionRunner(), 0, 0L);
     }
 
     private String startInstance() {

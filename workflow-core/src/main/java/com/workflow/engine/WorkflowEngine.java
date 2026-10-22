@@ -31,6 +31,7 @@ import com.workflow.repository.DelegationRepository;
 import com.workflow.repository.EventRepository;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
+import com.workflow.repository.JobRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskFilter;
 import com.workflow.repository.TaskRepository;
@@ -116,6 +117,13 @@ public class WorkflowEngine implements IWorkflowEngine {
     private final DecisionRepository decisionRepo;
     /** 决策历史仓储，可为 null（不记录决策历史）。 */
     private final DecisionHistoryRepository decisionHistoryRepo;
+    /**
+     * 异步作业仓储，可为 null（引擎不管作业）。
+     *
+     * <p>非 null 时：实例进入终态（完成 / 终止 / 撤回）会清掉该实例遗留的作业，
+     * 避免「实例已结束、作业还在库里等着触发」的孤儿作业。
+     */
+    private final JobRepository jobRepo;
 
     /**
      * 并发控制：同一棵流程树的引擎动作串行化。
@@ -180,7 +188,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                           InstanceRepository instanceRepo,
                           TaskRepository taskRepo) {
         this(processRepo, instanceRepo, taskRepo, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, 3, 20L);
+                null, null, null, null, null, null, null, null, null, 3, 20L);
     }
 
     /**
@@ -200,6 +208,7 @@ public class WorkflowEngine implements IWorkflowEngine {
                    EventRepository eventRepo,
                    DecisionRepository decisionRepo,
                    DecisionHistoryRepository decisionHistoryRepo,
+                   JobRepository jobRepo,
                    InstanceLockProvider locks,
                    TransactionRunner tx,
                    int conflictRetries,
@@ -219,6 +228,7 @@ public class WorkflowEngine implements IWorkflowEngine {
         this.eventRepo = eventRepo;
         this.decisionRepo = decisionRepo;
         this.decisionHistoryRepo = decisionHistoryRepo;
+        this.jobRepo = jobRepo;
         this.locks = locks != null ? locks : new LocalInstanceLocks();
         this.tx = tx != null ? tx : new UndoLogTransactionRunner();
         this.conflictRetries = Math.max(0, conflictRetries);
@@ -257,7 +267,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             this::startSubProcessInternal,
             this::onSubProcessCompletedInternal,
             this::afterCommitScheduleInternal,
-            listenerSupport::fireExecutionCompleted,
+            this::onProcessCompletedInternal,
             decisionRepo,
             decisionRepo != null ? new DecisionTableExecutor() : null,
             decisionHistoryRepo,
@@ -307,7 +317,7 @@ public class WorkflowEngine implements IWorkflowEngine {
     public WorkflowEngine withoutConcurrencyControl() {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
                 auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, commentRepo, historyRepo,
-                historyKinds, eventRepo, decisionRepo, decisionHistoryRepo, passthroughLocks(), TransactionRunner.noop(), 0, 0L);
+                historyKinds, eventRepo, decisionRepo, decisionHistoryRepo, jobRepo, passthroughLocks(), TransactionRunner.noop(), 0, 0L);
     }
 
     /**
@@ -321,7 +331,7 @@ public class WorkflowEngine implements IWorkflowEngine {
             EnumSet<HistoryKind> kinds) {
         return new WorkflowEngine(processRepo, instanceRepo, taskRepo, scheduler,
                 auditLogRepo, delegationRepo, notificationService, carbonCopyRepo, commentRepo,
-                historyRepo, kinds, eventRepo, decisionRepo, decisionHistoryRepo, locks, tx, conflictRetries, retryBackoffMillis);
+                historyRepo, kinds, eventRepo, decisionRepo, decisionHistoryRepo, jobRepo, locks, tx, conflictRetries, retryBackoffMillis);
     }
 
     /** 是否该写活动历史。 */
@@ -1217,7 +1227,10 @@ public class WorkflowEngine implements IWorkflowEngine {
             if (eventRepo != null) {
                 eventRepo.cancelEvents(instanceId);
             }
-            
+
+            // 清理该实例遗留的异步作业（实例已终止，作业再触发就是孤儿）
+            afterCommitSchedule(() -> cleanupInstanceJobs(instanceId));
+
             log.info("[引擎] 终止实例 {}", instanceId);
             audit(AuditEventType.PROCESS_TERMINATED, instanceId, null, "system", "流程终止");
             listenerSupport.fireExecutionTerminated(instance);
@@ -1347,6 +1360,8 @@ public class WorkflowEngine implements IWorkflowEngine {
         }
         instanceRepo.save(instance);
         afterCommitSchedule(() -> withdrawnTaskIds.forEach(scheduler::cancel));
+        // 清理该实例遗留的异步作业（实例已撤回，作业再触发就是孤儿）
+        afterCommitSchedule(() -> cleanupInstanceJobs(instanceId));
 
         log.info("[引擎] 发起人 {} 撤回流程 {}", initiator, instanceId);
         audit(AuditEventType.PROCESS_WITHDRAWN, instanceId, null, initiator, "发起人撤回流程");
@@ -1899,6 +1914,33 @@ public class WorkflowEngine implements IWorkflowEngine {
     /** 回调：事务提交后调度 */
     private void afterCommitScheduleInternal(Runnable action) {
         afterCommitSchedule(action);
+    }
+
+    /**
+     * 清理某实例遗留的异步作业 —— 实例进终态（完成 / 终止 / 撤回）时调用。
+     *
+     * <p>否则会出现「实例已结束、作业还在库里等着触发」的孤儿作业：作业到点后仍会被领取执行，
+     * 白跑一趟（更糟的是作业若带副作用，会在实例结束后改动业务数据）。
+     */
+    private void cleanupInstanceJobs(String instanceId) {
+        if (jobRepo == null) {
+            return;
+        }
+        try {
+            int removed = jobRepo.deleteByInstanceId(instanceId);
+            if (removed > 0) {
+                log.debug("[引擎] 清理实例 {} 的作业 {} 条", instanceId, removed);
+            }
+        } catch (Exception e) {
+            // 清理失败不应影响业务结果：作业到点后由幂等处理兜底（查不到待办即空转）
+            log.warn("[引擎] 清理实例 {} 的作业失败: {}", instanceId, e.getMessage());
+        }
+    }
+
+    /** 回调：流程完成 —— 触发完成事件并清理该实例的作业 */
+    private void onProcessCompletedInternal(ProcessInstance instance) {
+        listenerSupport.fireExecutionCompleted(instance);
+        cleanupInstanceJobs(instance.getId());
     }
 
     private void ensureRunning(TaskInstance task) {

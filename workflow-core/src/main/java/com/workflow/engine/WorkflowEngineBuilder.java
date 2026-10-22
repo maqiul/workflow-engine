@@ -12,6 +12,7 @@ import com.workflow.repository.DelegationRepository;
 import com.workflow.repository.EventRepository;
 import com.workflow.repository.HistoryRepository;
 import com.workflow.repository.InstanceRepository;
+import com.workflow.repository.JobRepository;
 import com.workflow.repository.ProcessRepository;
 import com.workflow.repository.TaskRepository;
 import com.workflow.tx.TransactionRunner;
@@ -62,6 +63,7 @@ public final class WorkflowEngineBuilder {
     private EventRepository eventRepository;
     private DecisionRepository decisionRepository;
     private DecisionHistoryRepository decisionHistoryRepository;
+    private JobRepository jobRepository;
     private InstanceLockProvider lockProvider;
     private TransactionRunner transactionRunner;
     private int conflictRetries = 3;
@@ -175,6 +177,18 @@ public final class WorkflowEngineBuilder {
         return this;
     }
 
+    /**
+     * 异步作业仓储；不设置时引擎不管作业（实例结束时也不会清理其作业）。
+     *
+     * <p>与 {@link JobExecutor} 配套：作业执行器负责领取与执行，引擎负责在实例进入终态
+     * （完成 / 终止 / 撤回）时清掉该实例遗留的作业，避免「实例已结束、作业还在库里等着触发」
+     * 的孤儿作业。
+     */
+    public WorkflowEngineBuilder jobRepository(JobRepository jobRepository) {
+        this.jobRepository = jobRepository;
+        return this;
+    }
+
     /** 流程树锁；不设置时使用 {@link LocalInstanceLocks} */
     public WorkflowEngineBuilder lockProvider(InstanceLockProvider lockProvider) {
         this.lockProvider = lockProvider;
@@ -214,6 +228,7 @@ public final class WorkflowEngineBuilder {
                 eventRepository,
                 decisionRepository,
                 decisionHistoryRepository,
+                jobRepository,
                 lockProvider,
                 transactionRunner,
                 conflictRetries,

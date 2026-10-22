@@ -11,6 +11,8 @@ dependencies {
     // 而引擎已把 HikariCP 与 H2 降为 compileOnly(不向消费方传递),故测试侧显式补运行时依赖
     testRuntimeOnly("com.zaxxer:HikariCP:7.1.0")
     testRuntimeOnly("com.h2database:h2:2.5.250")
+    // 同理：MyBatis-Plus 已降为 compileOnly（避免向消费方传递并顶高其版本），测试侧显式补齐
+    testRuntimeOnly("com.baomidou:mybatis-plus:3.5.17")
 
     // ---- 跨数据库测试(MySQL / PostgreSQL,基于 Testcontainers) ----
     // Testcontainers BOM 统一版本。
