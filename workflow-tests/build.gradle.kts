@@ -10,7 +10,7 @@ dependencies {
     // 引擎「自建池 / H2 内存库」路径(MybatisPersistence.init())在测试里仍要跑,
     // 而引擎已把 HikariCP 与 H2 降为 compileOnly(不向消费方传递),故测试侧显式补运行时依赖
     testRuntimeOnly("com.zaxxer:HikariCP:7.1.0")
-    testRuntimeOnly("com.h2database:h2:2.5.250")
+    testRuntimeOnly("com.h2database:h2:2.5.252")
     // 同理：MyBatis-Plus 已降为 compileOnly（避免向消费方传递并顶高其版本），测试侧显式补齐
     testRuntimeOnly("com.baomidou:mybatis-plus:3.5.17")
 
@@ -28,7 +28,7 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers-postgresql")
     // JDBC 驱动
     testImplementation("com.mysql:mysql-connector-j:8.4.0")
-    testImplementation("org.postgresql:postgresql:42.7.13")
+    testImplementation("org.postgresql:postgresql:42.7.14")
 
     // 测试相关依赖由根 build.gradle.kts 统一通过 testImplementation 引入
 }
